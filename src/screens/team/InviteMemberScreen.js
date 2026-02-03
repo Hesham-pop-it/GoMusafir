@@ -1,0 +1,287 @@
+import React, { useState } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    TouchableOpacity,
+    TextInput,
+    Modal,
+    TouchableWithoutFeedback,
+    Platform,
+    KeyboardAvoidingView,
+    ScrollView
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import { Colors } from '../../constants/Colors';
+import GradientBorderButton from '../../components/GradientBorderButton';
+
+const InviteMemberScreen = () => {
+    const navigation = useNavigation();
+    const [email, setEmail] = useState('');
+    const [selectedRole, setSelectedRole] = useState('Co-host');
+    const [successModalVisible, setSuccessModalVisible] = useState(false);
+
+    const RoleCard = ({ title, description }) => {
+        const isSelected = selectedRole === title;
+        return (
+            <TouchableOpacity
+                style={[styles.roleCard, isSelected && styles.roleCardActive]}
+                onPress={() => setSelectedRole(title)}
+                activeOpacity={0.7}
+            >
+                <View style={[styles.radioOuter, isSelected && styles.radioOuterActive]}>
+                    {isSelected && <View style={styles.radioInner} />}
+                </View>
+                <View style={styles.roleContent}>
+                    <Text style={[styles.roleTitle, isSelected && styles.roleTitleActive]}>{title}</Text>
+                    <Text style={[styles.roleDescription, isSelected && styles.roleDescriptionActive]}>
+                        {description}
+                    </Text>
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
+    return (
+        <SafeAreaView style={styles.container}>
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                style={{ flex: 1 }}
+            >
+                <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => navigation.goBack()}>
+                            <Ionicons name="chevron-back" size={28} color="#FFF" />
+                        </TouchableOpacity>
+                    </View>
+
+                    <Text style={styles.title}>Invite Team Member</Text>
+
+                    <View style={styles.inputSection}>
+                        <Text style={styles.label}>Email address</Text>
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Enter your team email address"
+                            placeholderTextColor="#666"
+                            value={email}
+                            onChangeText={setEmail}
+                            autoCapitalize="none"
+                            keyboardType="email-address"
+                        />
+                    </View>
+
+                    <View style={styles.roleSection}>
+                        <Text style={styles.sectionTitle}>Select a Role</Text>
+
+                        <RoleCard
+                            title="Co-host"
+                            description="Has all rights except deleting the organization account."
+                        />
+
+                        <RoleCard
+                            title="Manager"
+                            description="cannot delete trips or the account, cannot buy seats and cannot invite new members."
+                        />
+                    </View>
+                </ScrollView>
+
+                <View style={styles.footer}>
+                    <GradientBorderButton
+                        text="Send Invite"
+                        onPress={() => setSuccessModalVisible(true)}
+                        disabled={!email}
+                    />
+                </View>
+            </KeyboardAvoidingView>
+
+            {/* Success Bottom Sheet */}
+            <Modal
+                visible={successModalVisible}
+                transparent={true}
+                animationType="slide"
+                onRequestClose={() => setSuccessModalVisible(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setSuccessModalVisible(false)}>
+                    <View style={styles.modalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={styles.modalContent}>
+                                <View style={styles.modalIndicator} />
+                                <Text style={styles.successMessage}>
+                                    An invitation email has been sent to your new team member
+                                </Text>
+                                <TouchableOpacity
+                                    style={styles.continueButton}
+                                    onPress={() => {
+                                        setSuccessModalVisible(false);
+                                        navigation.navigate('JourneyTeam');
+                                    }}
+                                >
+                                    <Text style={styles.continueButtonText}>Continue</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+        </SafeAreaView>
+    );
+};
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#121417',
+    },
+    scrollContent: {
+        paddingHorizontal: 20,
+    },
+    header: {
+        paddingTop: 10,
+    },
+    title: {
+        fontSize: 32,
+        color: '#FFF',
+        fontFamily: 'IBMPlexSans',
+        marginTop: 20,
+        marginBottom: 40,
+    },
+    inputSection: {
+        marginBottom: 32,
+    },
+    label: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: '500',
+        marginBottom: 12,
+    },
+    input: {
+        backgroundColor: '#262626',
+        borderRadius: 12,
+        height: 56,
+        paddingHorizontal: 16,
+        color: '#FFF',
+        fontSize: 16,
+    },
+    roleSection: {
+        gap: 16,
+    },
+    sectionTitle: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    roleCard: {
+        flexDirection: 'row',
+        backgroundColor: '#23272A',
+        borderRadius: 16,
+        padding: 20,
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    roleCardActive: {
+        borderColor: '#B99A4A',
+    },
+    radioOuter: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        borderWidth: 2,
+        borderColor: '#636D77',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 16,
+        marginTop: 2,
+    },
+    radioOuterActive: {
+        borderColor: '#B99A4A',
+    },
+    radioInner: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+        backgroundColor: '#B99A4A',
+    },
+    roleContent: {
+        flex: 1,
+    },
+    roleTitle: {
+        color: '#FFF',
+        fontSize: 17,
+        fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    roleTitleActive: {
+        color: '#FFF',
+    },
+    roleDescription: {
+        color: '#9BA1A6',
+        fontSize: 14,
+        lineHeight: 20,
+    },
+    roleDescriptionActive: {
+        color: '#9BA1A6',
+    },
+    footer: {
+        padding: 24,
+        paddingBottom: 40,
+    },
+    inviteButton: {
+        height: 56,
+        backgroundColor: '#B99A4A',
+        borderRadius: 28,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    inviteButtonText: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#1E2124',
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        padding: 24,
+        paddingBottom: 50,
+        alignItems: 'center',
+    },
+    modalIndicator: {
+        width: 40,
+        height: 4,
+        backgroundColor: '#3A3F45',
+        borderRadius: 2,
+        marginBottom: 30,
+    },
+    successMessage: {
+        fontSize: 20,
+        color: '#FFF',
+        textAlign: 'center',
+        fontWeight: 'bold',
+        marginBottom: 40,
+        lineHeight: 28,
+    },
+    continueButton: {
+        width: '100%',
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 1,
+        borderColor: '#B99A4A',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    continueButtonText: {
+        color: '#FFF',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+});
+
+export default InviteMemberScreen;
