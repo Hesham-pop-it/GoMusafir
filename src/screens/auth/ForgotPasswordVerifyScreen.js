@@ -10,69 +10,72 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import GlowBackground from '../../components/GlowBackground';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const ForgotPasswordVerifyScreen = () => {
     const navigation = useNavigation();
 
     return (
-        <SafeAreaView style={styles.container}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                {/* Header */}
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="chevron-back" size={28} color="#FFF" />
-                </TouchableOpacity>
+        <GlowBackground>
+            <SafeAreaView style={styles.safeArea}>
+                <ScrollView contentContainerStyle={styles.scrollContent}>
+                    {/* Header */}
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
 
-                <Text style={styles.title}>Check your business email</Text>
+                    <Text style={styles.title}>Check your business email</Text>
 
-                <Text style={styles.description}>
-                    We've sent a secure password reset link to your email. Please check your inbox.
-                </Text>
+                    <Text style={styles.description}>
+                        We've sent a secure password reset link to your email. Please check your inbox.
+                    </Text>
 
-            </ScrollView>
+                </ScrollView>
 
-            <View style={styles.footer}>
-                <GradientBorderButton
-                    text="Resend Code"
-                    onPress={() => { }}
-                    innerBg="#121417"
-                    style={styles.resendButton}
-                />
+                <View style={styles.footer}>
+                    <GradientBorderButton
+                        text="Resend Code"
+                        onPress={() => { }}
+                        innerBg="#1A1E21"
+                        style={styles.resendButton}
+                    />
 
-                <TouchableOpacity
-                    style={styles.continueButton}
-                    onPress={() => navigation.navigate('BusinessLogin')}
-                >
-                    <Text style={styles.continueButtonText}>Continue</Text>
-                </TouchableOpacity>
-            </View>
-        </SafeAreaView>
+                    <GradientBorderButton
+                        text="Continue"
+                        onPress={() => navigation.navigate('BusinessLogin')}
+                    />
+                </View>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: '#121417',
     },
     scrollContent: {
         paddingHorizontal: 24,
-        paddingTop: 10,
+        paddingTop: 30, // Consistent with others (was 10)
     },
     backButton: {
-        marginLeft: -5,
+        marginLeft: -10,
         marginBottom: 20,
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     title: {
-        fontSize: 32,
+        fontSize: responsiveFontSize(32),
         color: '#FFF',
         fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-        lineHeight: 40,
         marginBottom: 16,
     },
     description: {
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         color: '#9BA1A6',
         lineHeight: 24,
         marginTop: 10,
@@ -84,18 +87,6 @@ const styles = StyleSheet.create({
     },
     resendButton: {
         marginBottom: 0,
-    },
-    continueButton: {
-        backgroundColor: '#B99A4A',
-        height: 56,
-        borderRadius: 28,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    continueButtonText: {
-        color: '#FFF',
-        fontSize: 18,
-        fontWeight: 'bold',
     },
 });
 

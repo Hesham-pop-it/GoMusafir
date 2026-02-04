@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import GlowBackground from '../../components/GlowBackground';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
@@ -93,77 +95,83 @@ const BusinessVerificationScreen = ({ route }) => {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="chevron-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-            </View>
-
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={styles.content}
-            >
-                <ScrollView contentContainerStyle={styles.scrollContent}>
-                    {/* Title */}
-                    <Text style={styles.title}>{title}</Text>
-
-                    <Text style={styles.description}>
-                        {description}
-                    </Text>
-
-                    {/* Hidden TextInput for OTP handling */}
-                    <TextInput
-                        ref={inputRef}
-                        value={otp}
-                        onChangeText={handleOtpChange}
-                        keyboardType="number-pad"
-                        maxLength={6}
-                        style={styles.hiddenInput}
-                        caretHidden={true}
-                    />
-
-                    {/* Visual Code Input */}
-                    <Pressable
-                        style={styles.codeContainer}
-                        onPress={() => inputRef.current?.focus()}
-                    >
-                        <View style={[
-                            styles.codeBox,
-                            isError ? styles.codeBoxError : styles.codeBoxNormal,
-                            otp.length === 0 && styles.codeBoxEmpty
-                        ]}>
-                            {[0, 1, 2, 3, 4, 5].map(renderDigit)}
-                        </View>
-                        {isError && <Text style={styles.errorText}>Wrong code</Text>}
-                    </Pressable>
-                </ScrollView>
-
-                {/* Footer Buttons */}
-                <View style={styles.footer}>
-                    <GradientBorderButton
-                        text={resendText}
-                        onPress={() => { }}
-                        innerBg="#121417"
-                    />
-
-                    <GradientBorderButton
-                        text={buttonText}
-                        onPress={handleContinue}
-                        disabled={otp.length !== 6}
-                        style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
-                    />
+        <GlowBackground>
+            <SafeAreaView style={styles.safeArea}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
                 </View>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    style={styles.content}
+                >
+                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                        {/* Title */}
+                        <Text style={styles.title}>{title}</Text>
+
+                        <Text style={styles.description}>
+                            {description}
+                        </Text>
+
+                        {/* Hidden TextInput for OTP handling */}
+                        <TextInput
+                            ref={inputRef}
+                            value={otp}
+                            onChangeText={handleOtpChange}
+                            keyboardType="number-pad"
+                            maxLength={6}
+                            style={styles.hiddenInput}
+                            caretHidden={true}
+                        />
+
+                        {/* Visual Code Input */}
+                        <Pressable
+                            style={styles.codeContainer}
+                            onPress={() => inputRef.current?.focus()}
+                        >
+                            <View style={[
+                                styles.codeBox,
+                                isError ? styles.codeBoxError : styles.codeBoxNormal,
+                                otp.length === 0 && styles.codeBoxEmpty
+                            ]}>
+                                {[0, 1, 2, 3, 4, 5].map(renderDigit)}
+                            </View>
+                            {isError && <Text style={styles.errorText}>Wrong code</Text>}
+                        </Pressable>
+                    </ScrollView>
+
+                    {/* Footer Buttons */}
+                    <View style={styles.footer}>
+                        <GradientBorderButton
+                            text={resendText}
+                            onPress={() => { }}
+                            innerBg="#1A1E21"
+                        />
+
+                        <TouchableOpacity
+                            style={[
+                                styles.primaryButton,
+                                otp.length !== 6 && { opacity: 0.5 },
+                                { marginBottom: isKeyboardVisible ? 0 : 100 }
+                            ]}
+                            onPress={handleContinue}
+                            disabled={otp.length !== 6}
+                        >
+                            <Text style={styles.primaryButtonText}>{buttonText}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: '#121417',
     },
     header: {
         paddingHorizontal: 20,
@@ -184,13 +192,13 @@ const styles = StyleSheet.create({
         marginLeft: -10,
     },
     title: {
-        fontSize: 28,
+        fontSize: responsiveFontSize(28),
         color: '#FFF',
-        fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+        fontFamily: 'CormorantGaramond_700Bold', // Consistent font family
         marginBottom: 16,
     },
     description: {
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         color: '#9BA1A6',
         lineHeight: 22,
         marginBottom: 40,
@@ -227,7 +235,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#23272A',
     },
     codeDigit: {
-        fontSize: 32,
+        fontSize: responsiveFontSize(32),
         color: '#FFF',
         fontWeight: '500',
         width: 25,
@@ -241,13 +249,26 @@ const styles = StyleSheet.create({
     },
     errorText: {
         color: '#FF7D7D',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         marginTop: 12,
     },
     footer: {
         paddingHorizontal: 24,
-        paddingBottom: 20,
         gap: 16,
+    },
+    primaryButton: {
+        backgroundColor: '#B99A4A',
+        height: 56,
+        borderRadius: 28,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+    },
+    primaryButtonText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(18),
+        fontWeight: 'bold',
+        fontFamily: 'Manrope',
     },
 });
 

@@ -14,6 +14,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const { width } = Dimensions.get('window');
 
@@ -342,7 +343,7 @@ const styles = StyleSheet.create({
         paddingVertical: 15,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: responsiveFontSize(22),
         color: '#FFF',
         fontFamily: 'IBMPlexSans',
         fontWeight: 'bold',
@@ -355,7 +356,7 @@ const styles = StyleSheet.create({
         paddingTop: 10,
     },
     sectionTitle: {
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         color: '#FFF',
         marginBottom: 15,
         fontWeight: '600',
@@ -363,7 +364,7 @@ const styles = StyleSheet.create({
         marginTop: 10,
     },
     statsSectionTitle: {
-        fontSize: 27,
+        fontSize: responsiveFontSize(27),
         color: '#FFF',
         fontFamily: 'CormorantGaramond_400Regular',
         marginBottom: 30,
@@ -380,20 +381,20 @@ const styles = StyleSheet.create({
     },
     statsLabel: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: 'bold',
         marginBottom: 15,
         fontFamily: 'IBMPlexSans',
     },
     statsValue: {
         color: '#FFF',
-        fontSize: 32,
+        fontSize: responsiveFontSize(32),
         fontWeight: 'bold',
         fontFamily: 'IBMPlexSans',
     },
     statsValueText: {
         color: '#FFF',
-        fontSize: 32,
+        fontSize: responsiveFontSize(32),
         fontWeight: 'bold',
         fontFamily: 'IBMPlexSans',
     },
@@ -428,7 +429,7 @@ const styles = StyleSheet.create({
     },
     increaseBtnText: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: 'bold',
         fontFamily: 'IBMPlexSans',
     },
@@ -446,7 +447,7 @@ const styles = StyleSheet.create({
     },
     visibilityLabel: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: '600',
     },
     visibilityValueContainer: {
@@ -456,7 +457,7 @@ const styles = StyleSheet.create({
     },
     visibilityValue: {
         color: '#B99A4A',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
     },
     deleteButton: {
         backgroundColor: '#2A1C1C',
@@ -468,7 +469,7 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         color: '#E57373',
         fontWeight: '600',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
     },
     modalOverlay: {
         flex: 1,
@@ -489,7 +490,7 @@ const styles = StyleSheet.create({
     },
     modalOptionText: {
         color: '#E0E0E0',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
     },
     deleteModalOverlay: {
         flex: 1,
@@ -507,14 +508,14 @@ const styles = StyleSheet.create({
     },
     deleteWarningText: {
         color: '#FFF',
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
         textAlign: 'center',
         lineHeight: 20,
         marginBottom: 16,
     },
     deleteQuestionText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
         textAlign: 'center',
         marginBottom: 24,
@@ -529,7 +530,7 @@ const styles = StyleSheet.create({
     },
     deleteConfirmButtonText: {
         color: '#FFF',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         fontWeight: 'bold',
     },
     cancelButtonWrapper: {
@@ -547,7 +548,7 @@ const styles = StyleSheet.create({
     },
     cancelButtonText: {
         color: '#FFF',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         fontWeight: 'bold',
     },
     modalOverlayFull: {
@@ -566,7 +567,7 @@ const styles = StyleSheet.create({
     },
     seatModalTitle: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         textAlign: 'center',
         marginBottom: 30,
     },
@@ -595,7 +596,7 @@ const styles = StyleSheet.create({
     },
     countText: {
         color: '#FFF',
-        fontSize: 24,
+        fontSize: responsiveFontSize(24),
         fontWeight: 'bold',
     },
     requestButton: {
@@ -603,7 +604,7 @@ const styles = StyleSheet.create({
     },
     requestButtonText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
     },
     resendGradientBorder: {
@@ -619,14 +620,14 @@ const styles = StyleSheet.create({
     },
     sentModalTitle: {
         color: '#FFF',
-        fontSize: 20,
+        fontSize: responsiveFontSize(20),
         fontWeight: 'bold',
         textAlign: 'center',
         marginBottom: 20,
     },
     sentModalDesc: {
         color: '#9BA1A6',
-        fontSize: 15,
+        fontSize: responsiveFontSize(15),
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 30,

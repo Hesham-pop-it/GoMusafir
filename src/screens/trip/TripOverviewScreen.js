@@ -22,6 +22,7 @@ import { Colors } from '../../constants/Colors';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const { width, height } = Dimensions.get('window');
 
@@ -518,7 +519,7 @@ const TripOverviewScreen = () => {
                     <View style={styles.emergencyContent}>
                         <Text style={styles.emergencyTitle}>Notifying Host</Text>
                         <Text style={styles.emergencySubtitle}>Emergency alert will be sent in</Text>
-                        <Text style={styles.countdownText}>{countdown} <Text style={{ color: '#942F31', fontSize: 32 }}>seconds</Text></Text>
+                        <Text style={styles.countdownText}>{countdown} <Text style={{ color: '#942F31', fontSize: responsiveFontSize(32) }}>seconds</Text></Text>
 
                         <TouchableOpacity
                             style={styles.emergencyCancelBtn}
@@ -709,7 +710,7 @@ const styles = StyleSheet.create({
         paddingVertical: 15,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: responsiveFontSize(22),
         color: '#FFF',
         fontFamily: 'IBMPlexSans',
         fontWeight: 'bold',
@@ -735,7 +736,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     tripTitle: {
-        fontSize: 24,
+        fontSize: responsiveFontSize(24),
         color: '#FFF',
         fontFamily: 'IBMPlexSans',
         marginBottom: 12,
@@ -748,7 +749,7 @@ const styles = StyleSheet.create({
     },
     infoText: {
         color: '#E0E0E0',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
     },
     chatIconWrapper: {
         position: 'relative',
@@ -777,18 +778,18 @@ const styles = StyleSheet.create({
     },
     badgeText: {
         color: '#FFFFFF',
-        fontSize: 10,
+        fontSize: responsiveFontSize(10),
         fontWeight: 'bold',
     },
     chatTitle: {
         color: '#FFFFFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: 'bold',
         marginBottom: 8,
     },
     chatPreview: {
         color: '#71717A',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         lineHeight: 20,
     },
     prayerTimesContainer: {
@@ -802,12 +803,12 @@ const styles = StyleSheet.create({
     },
     prayerName: {
         color: '#A1A1AA',
-        fontSize: 12,
+        fontSize: responsiveFontSize(12),
         marginBottom: 4,
     },
     prayerTime: {
         color: '#A1A1AA',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         fontWeight: '600',
     },
     sectionCard: {
@@ -853,12 +854,12 @@ const styles = StyleSheet.create({
     },
     channelStatus: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
     },
     activeSpeaker: {
         color: '#9BA1A6',
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
     },
     controlsGrid: {
         flexDirection: 'row',
@@ -882,7 +883,7 @@ const styles = StyleSheet.create({
     },
     controlText: {
         color: '#FFF',
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
         fontWeight: '500',
     },
     rowContainer: {
@@ -900,7 +901,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     sectionTitle: {
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         color: '#FFF',
         fontWeight: 'bold',
         flex: 1,
@@ -944,16 +945,16 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     participantName: {
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         color: '#FFF',
         fontWeight: '600',
     },
     participantStatus: {
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
         color: '#9BA1A6',
     },
     participantStatusMuted: {
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
         color: '#636D77',
     },
     quickMsgCard: {
@@ -969,7 +970,7 @@ const styles = StyleSheet.create({
     },
     quickMsgText: {
         color: '#E0E0E0',
-        fontSize: 12,
+        fontSize: responsiveFontSize(12),
     },
     alertCard: {
         backgroundColor: '#2A2121', // Dark reddish tint background
@@ -991,7 +992,7 @@ const styles = StyleSheet.create({
         width: '100%',
     },
     alertTitle: {
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         color: '#FFF',
         fontWeight: 'bold',
     },
@@ -1050,7 +1051,7 @@ const styles = StyleSheet.create({
     },
     sheetTitle: {
         color: '#FFF',
-        fontSize: 28,
+        fontSize: responsiveFontSize(28),
         fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
         marginBottom: 16,
     },
@@ -1072,7 +1073,7 @@ const styles = StyleSheet.create({
     },
     detailName: {
         color: '#FFF',
-        fontSize: 20,
+        fontSize: responsiveFontSize(20),
         fontWeight: 'bold',
     },
     mapPlaceholder: {
@@ -1114,7 +1115,7 @@ const styles = StyleSheet.create({
     },
     actionButtonText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
     },
     deleteButtonPill: {
@@ -1143,7 +1144,7 @@ const styles = StyleSheet.create({
     },
     confirmTitle: {
         color: '#FFF',
-        fontSize: 20,
+        fontSize: responsiveFontSize(20),
         fontWeight: 'bold',
         textAlign: 'center',
         marginBottom: 30,
@@ -1163,7 +1164,7 @@ const styles = StyleSheet.create({
     },
     confirmDeleteText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
     },
     // Quick Alert Styles
@@ -1198,12 +1199,12 @@ const styles = StyleSheet.create({
     },
     quickAlertTitle: {
         color: '#FFF',
-        fontSize: 20,
+        fontSize: responsiveFontSize(20),
         fontWeight: 'bold',
     },
     quickAlertMsg: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: '600',
         textAlign: 'center',
         marginBottom: 30,
@@ -1225,7 +1226,7 @@ const styles = StyleSheet.create({
     },
     quickAlertBtnText: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: 'bold',
     },
     // Emergency Modal Styles
@@ -1245,18 +1246,18 @@ const styles = StyleSheet.create({
     },
     emergencyTitle: {
         color: '#FFF',
-        fontSize: 22,
+        fontSize: responsiveFontSize(22),
         fontWeight: 'bold',
         marginBottom: 25,
     },
     emergencySubtitle: {
         color: '#FFF',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         marginBottom: 10,
     },
     countdownText: {
         color: '#942F31',
-        fontSize: 48,
+        fontSize: responsiveFontSize(48),
         fontWeight: 'bold',
         marginBottom: 30,
     },
@@ -1277,7 +1278,7 @@ const styles = StyleSheet.create({
     },
     emergencyCancelText: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: 'bold',
     },
 });

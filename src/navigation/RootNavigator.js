@@ -22,7 +22,7 @@ import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
 import HelpSupportScreen from '../screens/support/HelpSupportScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ForgotPasswordVerifyScreen from '../screens/auth/ForgotPasswordVerifyScreen';
-import ParticipantsScreen from '../screens/trip/ParticipantsScreen';
+import ParticipantsScreen from '../screens/participants/ParticipantsScreen';
 import EditParticipantScreen from '../screens/trip/EditParticipantScreen';
 import AlertHistoryScreen from '../screens/trip/AlertHistoryScreen';
 

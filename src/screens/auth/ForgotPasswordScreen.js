@@ -12,74 +12,79 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import { Colors } from '../../constants/Colors';
+import GradientBorderButton from '../../components/GradientBorderButton';
+import GlowBackground from '../../components/GlowBackground';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const ForgotPasswordScreen = () => {
     const navigation = useNavigation();
     const [email, setEmail] = useState('');
 
     return (
-        <SafeAreaView style={styles.container}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ flex: 1 }}
-            >
-                <ScrollView contentContainerStyle={styles.scrollContent}>
-                    {/* Header */}
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={28} color="#FFF" />
-                    </TouchableOpacity>
+        <GlowBackground>
+            <SafeAreaView style={styles.safeArea}>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1 }}
+                >
+                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                        {/* Header */}
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        </TouchableOpacity>
 
-                    <Text style={styles.title}>Forgot Password</Text>
+                        <Text style={styles.title}>Forgot Password</Text>
 
-                    {/* Email Input */}
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Business email</Text>
-                        <View style={styles.inputWrapper}>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Enter your business email"
-                                placeholderTextColor="#636D77"
-                                keyboardType="email-address"
-                                autoCapitalize="none"
-                                value={email}
-                                onChangeText={setEmail}
-                            />
+                        {/* Email Input */}
+                        <View style={styles.inputGroup}>
+                            <Text style={styles.label}>Business email</Text>
+                            <View style={styles.inputWrapper}>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter your business email"
+                                    placeholderTextColor="#71717A"
+                                    keyboardType="email-address"
+                                    autoCapitalize="none"
+                                    value={email}
+                                    onChangeText={setEmail}
+                                />
+                            </View>
                         </View>
+
+                    </ScrollView>
+
+                    <View style={styles.footer}>
+                        <GradientBorderButton
+                            text="Send link"
+                            onPress={() => navigation.navigate('ForgotPasswordVerify')}
+                            disabled={!email}
+                            style={{ width: '100%' }}
+                        />
                     </View>
-
-                </ScrollView>
-
-                <View style={styles.footer}>
-                    <TouchableOpacity
-                        style={[styles.sendButton, !email && { opacity: 0.6 }]}
-                        onPress={() => navigation.navigate('ForgotPasswordVerify')}
-                        disabled={!email}
-                    >
-                        <Text style={styles.sendButtonText}>Send link</Text>
-                    </TouchableOpacity>
-                </View>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: '#121417',
     },
     scrollContent: {
-        paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingHorizontal: 24,
+        paddingTop: 30, // Consistent with others
     },
     backButton: {
-        marginTop: 10,
-        marginLeft: -5,
+        width: 40,
+        height: 40,
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: -10,
         marginBottom: 20,
     },
     title: {
-        fontSize: 32,
+        fontSize: responsiveFontSize(32),
         color: '#FFF',
         fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
         marginBottom: 35,
@@ -88,38 +93,29 @@ const styles = StyleSheet.create({
         marginBottom: 24,
     },
     label: {
-        color: '#FFF',
-        fontSize: 14,
+        color: '#FFFBF3',
+        fontSize: responsiveFontSize(14),
         fontWeight: '500',
         marginBottom: 12,
+        fontFamily: 'Manrope',
     },
     inputWrapper: {
-        backgroundColor: '#262626',
+        backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 12,
         height: 56,
         paddingHorizontal: 16,
         justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#2C2E33',
     },
     input: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
     },
     footer: {
-        paddingHorizontal: 20,
+        paddingHorizontal: 24,
         paddingBottom: 40,
         paddingTop: 10,
-    },
-    sendButton: {
-        backgroundColor: '#B99A4A',
-        height: 56,
-        borderRadius: 28,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    sendButtonText: {
-        color: '#FFF',
-        fontSize: 18,
-        fontWeight: 'bold',
     },
 });
 

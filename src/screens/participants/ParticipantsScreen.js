@@ -225,19 +225,19 @@ const ParticipantsScreen = ({ navigation }) => {
                         </View>
                         <View style={styles.headerIcons}>
                             <TouchableOpacity style={styles.iconButton}>
-                                <FontAwesome name="language" size={20} color={Colors.dark.primary} />
+                                <FontAwesome name="language" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
                                 onPress={() => navigation.navigate('Notifications')}
                             >
-                                <Ionicons name="notifications-outline" size={22} color={Colors.dark.primary} />
+                                <Ionicons name="notifications-outline" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
                                 onPress={() => navigation.navigate('Settings')}
                             >
-                                <Ionicons name="settings-outline" size={22} color={Colors.dark.primary} />
+                                <Ionicons name="settings-outline" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -296,7 +296,7 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         marginBottom: 20,
     },
     titleText: {

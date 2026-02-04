@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import { responsiveFontSize } from '../../utils/responsive';
 
 
 
@@ -103,7 +104,7 @@ const WelcomeScreen = ({ navigation }) => {
                         <GradientBorderButton
                             text="Log In With Your Business Account"
                             onPress={() => navigation.navigate('BusinessLogin')}
-                            style={{ borderRadius: 30 }}
+                            style={{ borderRadius: 30, fontSize: responsiveFontSize(28) }}
                         />
                     </View>
                 </SafeAreaView>
@@ -209,7 +210,7 @@ const styles = StyleSheet.create({
     },
     languageText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: '600',
     },
     logoContainer: {
@@ -225,7 +226,7 @@ const styles = StyleSheet.create({
     },
     appName: {
         color: '#B99A4A',
-        fontSize: 26,
+        fontSize: responsiveFontSize(26),
         fontWeight: 'bold',
 
         letterSpacing: 1,
@@ -250,7 +251,7 @@ const styles = StyleSheet.create({
     },
     primaryButtonText: {
         color: '#FFF',
-        fontSize: 17,
+        fontSize: responsiveFontSize(17),
         fontWeight: 'bold',
     },
     secondaryButton: {
@@ -258,12 +259,12 @@ const styles = StyleSheet.create({
     },
     secondaryButtonText: {
         color: '#000',
-        fontSize: 17,
+        fontSize: responsiveFontSize(17),
         fontWeight: 'bold',
     },
     outlinedButtonText: {
         color: '#FFF',
-        fontSize: 17,
+        fontSize: responsiveFontSize(17),
         fontWeight: '600',
     },
     modalOverlay: {
@@ -290,7 +291,7 @@ const styles = StyleSheet.create({
     },
     languageItemText: {
         color: '#9BA1A6',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: '500',
     },
     languageItemTextSelected: {
@@ -313,7 +314,7 @@ const styles = StyleSheet.create({
     },
     joinModalTitle: {
         color: '#FFF',
-        fontSize: 18,
+        fontSize: responsiveFontSize(18),
         fontWeight: '600',
         marginBottom: 30,
         textAlign: 'center',
@@ -327,7 +328,7 @@ const styles = StyleSheet.create({
 
     joinOptionText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: '600',
     },
 });

@@ -15,6 +15,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import GlowBackground from '../../components/GlowBackground';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const JoinWithLinkScreen = ({ navigation }) => {
     const [invitationLink, setInvitationLink] = useState('');
@@ -56,59 +58,60 @@ const JoinWithLinkScreen = ({ navigation }) => {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="chevron-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-            </View>
-
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={styles.content}
-            >
-                <Text style={styles.title}>Join as Participant</Text>
-
-                <View style={styles.inputContainer}>
-                    <Text style={styles.label}>Invitation Link</Text>
-                    <View style={styles.inputWrapper}>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Paste your invitation link here"
-                            placeholderTextColor="#71717A"
-                            value={invitationLink}
-                            onChangeText={handleLinkChange}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                        />
-                        <TouchableOpacity style={styles.copyIcon}>
-                            <Ionicons name="copy-outline" size={20} color="#9BA1A6" />
-                        </TouchableOpacity>
-                    </View>
-                    {!isValid && (
-                        <Text style={styles.errorText}>Invalid link. Please check the link and try again</Text>
-                    )}
+        <GlowBackground>
+            <SafeAreaView style={styles.safeArea}>
+                {/* Header */}
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
                 </View>
 
-                {/* Spacer to push button to bottom */}
-                <View style={{ flex: 1 }} />
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    style={styles.content}
+                >
+                    <Text style={styles.title}>Join as Participant</Text>
 
-                <GradientBorderButton
-                    text="Continue"
-                    onPress={handleContinue}
-                    disabled={invitationLink.trim().length === 0}
-                    style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
-                />
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+                    <View style={styles.inputContainer}>
+                        <Text style={styles.label}>Invitation Link</Text>
+                        <View style={styles.inputWrapper}>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Paste your invitation link here"
+                                placeholderTextColor="#71717A"
+                                value={invitationLink}
+                                onChangeText={handleLinkChange}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                            />
+                            <TouchableOpacity style={styles.copyIcon}>
+                                <Ionicons name="copy-outline" size={20} color="#9BA1A6" />
+                            </TouchableOpacity>
+                        </View>
+                        {!isValid && (
+                            <Text style={styles.errorText}>Invalid link. Please check the link and try again</Text>
+                        )}
+                    </View>
+
+                    {/* Spacer to push button to bottom */}
+                    <View style={{ flex: 1 }} />
+
+                    <GradientBorderButton
+                        text="Continue"
+                        onPress={handleContinue}
+                        disabled={invitationLink.trim().length === 0}
+                        style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
+                    />
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
+    safeArea: {
         flex: 1,
-        backgroundColor: '#1A1E21',
     },
     header: {
         paddingHorizontal: 20,
@@ -127,7 +130,7 @@ const styles = StyleSheet.create({
         paddingTop: 20,
     },
     title: {
-        fontSize: 28,
+        fontSize: responsiveFontSize(28),
         color: '#FFF',
         fontFamily: 'CormorantGaramond_700Bold',
         marginBottom: 40
@@ -137,7 +140,7 @@ const styles = StyleSheet.create({
     },
     label: {
         color: '#FFFBF3',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         marginBottom: 10,
         fontFamily: 'Manrope',
     },
@@ -154,17 +157,16 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
     },
     copyIcon: {
         padding: 5,
     },
     errorText: {
         color: '#FF4B4B',
-        fontSize: 12,
+        fontSize: responsiveFontSize(12),
         marginTop: 8,
     },
-
 });
 
 export default JoinWithLinkScreen;

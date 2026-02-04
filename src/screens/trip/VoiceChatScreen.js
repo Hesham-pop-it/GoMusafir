@@ -16,6 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import { responsiveFontSize } from '../../utils/responsive';
 
 const { width } = Dimensions.get('window');
 
@@ -201,7 +202,7 @@ const styles = StyleSheet.create({
         paddingVertical: 15,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: responsiveFontSize(22),
         color: '#FFF',
         fontFamily: 'IBMPlexSans',
         fontWeight: 'bold',
@@ -254,7 +255,7 @@ const styles = StyleSheet.create({
     controlButtonText: {
         color: '#FFF',
         fontWeight: 'bold',
-        fontSize: 15,
+        fontSize: responsiveFontSize(15),
     },
     statusRow: {
         flexDirection: 'row',
@@ -272,7 +273,7 @@ const styles = StyleSheet.create({
         marginRight: 8,
     },
     statusText: {
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         fontWeight: '500',
     },
     headerAvatars: {
@@ -287,7 +288,7 @@ const styles = StyleSheet.create({
         borderColor: '#121417',
     },
     sectionTitle: {
-        fontSize: 28,
+        fontSize: responsiveFontSize(28),
         color: '#FFF',
         fontFamily: 'CormorantGaramond_700Bold',
         marginTop: 10,
@@ -324,13 +325,13 @@ const styles = StyleSheet.create({
     },
     nameText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
         marginBottom: 2,
     },
     statusSubText: {
         color: '#9BA1A6',
-        fontSize: 13,
+        fontSize: responsiveFontSize(13),
     },
     rightActions: {
         flexDirection: 'row',

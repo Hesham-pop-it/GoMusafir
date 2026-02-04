@@ -11,8 +11,11 @@ import {
     Platform,
     Dimensions,
     Modal,
-    TouchableWithoutFeedback
+    TouchableWithoutFeedback,
+    ScrollView,
+    KeyboardAvoidingView
 } from 'react-native';
+import { Calendar } from 'react-native-calendars';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, MaterialIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -70,119 +73,179 @@ const TRIPS_DATA = [
 
 // Redundant TabBarBackground removed
 
+const destinations = ['Makkah', 'Madinah', 'Jeddah'];
+const sortOptions = [
+    'A-Z',
+    'Z-A',
+    'Newest',
+    'Oldest',
+    'Most participants',
+    'Fewest Participants',
+    'Likes'
+];
+
 const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
-    const sortOptions = [
-        'A-Z', 'Z-A', 'Newest', 'Oldest',
-        'Most participants', 'Fewest Participants', 'Likes'
-    ];
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [activeDateInput, setActiveDateInput] = useState(null);
+
+    const [showCalendar, setShowCalendar] = useState(false);
+    const [showDestinations, setShowDestinations] = useState(false);
+
+    const [destination, setDestination] = useState('Makkah');
+    const [participants, setParticipants] = useState('90');
+
+    const onDateSelect = (day) => {
+        if (activeDateInput === 'start') setStartDate(day.dateString);
+        if (activeDateInput === 'end') setEndDate(day.dateString);
+        setShowCalendar(false);
+    };
 
     return (
-        <Modal
-            visible={visible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={onClose}
-        >
-            <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
-                    {/* Header */}
-                    <View style={styles.modalHeader}>
-                        <Text style={styles.modalTitle}>Filters</Text>
-                        <TouchableOpacity onPress={onClose}>
-                            <Ionicons name="close" size={24} color="#FFF" />
-                        </TouchableOpacity>
-                    </View>
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+            <TouchableWithoutFeedback onPress={onClose}>
+                <View style={styles.overlay}>
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                        style={{ width: '100%' }}
+                    >
+                        <TouchableWithoutFeedback>
+                            <View style={styles.filterModalContainer}>
+                                <ScrollView showsVerticalScrollIndicator={false}>
+                                    {/* Dates */}
+                                    <View style={styles.filterRow}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.filterLabel}>Start Date</Text>
+                                            <TouchableOpacity
+                                                style={styles.filterInput}
+                                                onPress={() => {
+                                                    setActiveDateInput('start');
+                                                    setShowCalendar(true);
+                                                    setShowDestinations(false);
+                                                }}
+                                            >
+                                                <Feather name="calendar" size={18} color="#9BA1A6" />
+                                                <Text style={styles.filterInputText}>
+                                                    {startDate || 'Start date'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </View>
 
-                    {/* Date Inputs */}
-                    <View style={styles.filterSection}>
-                        <View style={styles.inputRow}>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.label}>Start Date</Text>
-                                <View style={styles.inputContainer}>
-                                    <Feather name="calendar" size={18} color="#9BA1A6" style={styles.inputIcon} />
-                                    <TextInput
-                                        style={styles.inputText}
-                                        placeholder="Start date"
-                                        placeholderTextColor="#636D77"
-                                        editable={false} // Demo only
-                                    />
-                                </View>
+                                        <View style={{ width: 12 }} />
+
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.filterLabel}>End Date</Text>
+                                            <TouchableOpacity
+                                                style={styles.filterInput}
+                                                onPress={() => {
+                                                    setActiveDateInput('end');
+                                                    setShowCalendar(true);
+                                                    setShowDestinations(false);
+                                                }}
+                                            >
+                                                <Feather name="calendar" size={18} color="#9BA1A6" />
+                                                <Text style={styles.filterInputText}>
+                                                    {endDate || 'End date'}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        </View>
+                                    </View>
+
+                                    {showCalendar && (
+                                        <View style={styles.calendarBox}>
+                                            <Calendar
+                                                onDayPress={onDateSelect}
+                                                theme={{
+                                                    backgroundColor: '#1C2226',
+                                                    calendarBackground: '#1C2226',
+                                                    dayTextColor: '#fff',
+                                                    monthTextColor: '#fff',
+                                                    arrowColor: '#E6C27A',
+                                                    selectedDayBackgroundColor: '#E6C27A',
+                                                    selectedDayTextColor: '#000'
+                                                }}
+                                            />
+                                        </View>
+                                    )}
+
+                                    {/* Destination */}
+                                    <View style={styles.filterSectionContainer}>
+                                        <Text style={styles.filterLabel}>Destination</Text>
+                                        <TouchableOpacity
+                                            style={styles.filterInput}
+                                            onPress={() => {
+                                                setShowDestinations(!showDestinations);
+                                                setShowCalendar(false);
+                                            }}
+                                        >
+                                            <Ionicons name="location-outline" size={20} color="#9BA1A6" />
+                                            <Text style={styles.filterInputText}>{destination}</Text>
+                                        </TouchableOpacity>
+
+                                        {showDestinations && (
+                                            <View style={styles.filterDropdown}>
+                                                {destinations.map(item => (
+                                                    <TouchableOpacity
+                                                        key={item}
+                                                        style={styles.filterDropdownItem}
+                                                        onPress={() => {
+                                                            setDestination(item);
+                                                            setShowDestinations(false);
+                                                        }}
+                                                    >
+                                                        <Text style={styles.filterDropdownText}>{item}</Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        )}
+                                    </View>
+
+                                    {/* Participants */}
+                                    <View style={styles.filterSectionContainer}>
+                                        <Text style={styles.filterLabel}>Total Participants</Text>
+                                        <View style={styles.filterInput}>
+                                            <Ionicons name="people-outline" size={20} color="#9BA1A6" />
+                                            <TextInput
+                                                style={styles.filterTextInputStyle}
+                                                keyboardType="numeric"
+                                                value={participants}
+                                                onChangeText={setParticipants}
+                                                placeholderTextColor="#636D77"
+                                            />
+                                        </View>
+                                    </View>
+
+                                    {/* Sort */}
+                                    <View style={styles.filterSectionContainer}>
+                                        <Text style={styles.filterLabel}>Sort by</Text>
+                                        <View style={styles.filterGrid}>
+                                            {sortOptions.map(opt => (
+                                                <TouchableOpacity
+                                                    key={opt}
+                                                    style={[
+                                                        styles.filterChip,
+                                                        sortOption === opt && styles.filterChipActive
+                                                    ]}
+                                                    onPress={() => setSortOption(opt)}
+                                                >
+                                                    <Text
+                                                        style={[
+                                                            styles.filterChipText,
+                                                            sortOption === opt && styles.filterChipTextActive
+                                                        ]}
+                                                    >
+                                                        {opt}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            ))}
+                                        </View>
+                                    </View>
+                                </ScrollView>
                             </View>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.label}>End Date</Text>
-                                <View style={styles.inputContainer}>
-                                    <Feather name="calendar" size={18} color="#9BA1A6" style={styles.inputIcon} />
-                                    <TextInput
-                                        style={styles.inputText}
-                                        placeholder="End date"
-                                        placeholderTextColor="#636D77"
-                                        editable={false}
-                                    />
-                                </View>
-                            </View>
-                        </View>
-                    </View>
-
-                    {/* Destination */}
-                    <View style={styles.filterSection}>
-                        <Text style={styles.label}>Destination</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="location-outline" size={20} color="#9BA1A6" style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.inputText}
-                                value="Makkah"
-                                placeholderTextColor="#636D77"
-                            />
-                        </View>
-                    </View>
-
-                    {/* Participants */}
-                    <View style={styles.filterSection}>
-                        <Text style={styles.label}>Total Participants</Text>
-                        <View style={styles.inputContainer}>
-                            <Ionicons name="people-outline" size={20} color="#9BA1A6" style={styles.inputIcon} />
-                            <TextInput
-                                style={styles.inputText}
-                                value="90"
-                                keyboardType="numeric"
-                                placeholderTextColor="#636D77"
-                            />
-                        </View>
-                    </View>
-
-                    {/* Sort By */}
-                    <View style={styles.filterSection}>
-                        <Text style={styles.label}>Sort by</Text>
-                        <View style={styles.sortGrid}>
-                            {sortOptions.map((opt) => (
-                                <TouchableOpacity
-                                    key={opt}
-                                    style={[
-                                        styles.sortChip,
-                                        sortOption === opt && styles.sortChipSelected
-                                    ]}
-                                    onPress={() => setSortOption(opt)}
-                                >
-                                    <Text style={[
-                                        styles.sortChipText,
-                                        sortOption === opt && styles.sortChipTextSelected
-                                    ]}>{opt}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    {/* Apply Button */}
-                    <TouchableOpacity style={styles.applyButton} onPress={onClose}>
-                        <LinearGradient
-                            colors={[Colors.dark.primary, '#E6C870']}
-                            style={styles.applyButtonGradient}
-                        >
-                            <Text style={styles.applyButtonText}>Apply Filter</Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
+                        </TouchableWithoutFeedback>
+                    </KeyboardAvoidingView>
                 </View>
-            </View>
+            </TouchableWithoutFeedback>
         </Modal>
     );
 };
@@ -375,19 +438,19 @@ const HomeScreen = ({ navigation }) => {
                                 style={styles.iconButton}
                                 onPress={() => setLanguageVisible(true)}
                             >
-                                <FontAwesome name="language" size={20} color={Colors.dark.primary} />
+                                <FontAwesome name="language" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
                                 onPress={() => navigation.navigate('Notifications')}
                             >
-                                <Ionicons name="notifications-outline" size={22} color={Colors.dark.primary} />
+                                <Ionicons name="notifications-outline" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
                                 onPress={() => navigation.navigate('Settings')}
                             >
-                                <Ionicons name="settings-outline" size={22} color={Colors.dark.primary} />
+                                <Ionicons name="settings-outline" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -395,11 +458,11 @@ const HomeScreen = ({ navigation }) => {
                     {/* Search Bar */}
                     <View style={styles.searchSectionWrapper}>
                         <View style={styles.searchContainer}>
-                            <Ionicons name="search" size={20} color={Colors.dark.textSecondary} style={styles.searchIcon} />
+                            <Ionicons name="search" size={20} color="#A1A1AA" style={styles.searchIcon} />
                             <TextInput
                                 style={styles.searchInput}
                                 placeholder="Search your trip"
-                                placeholderTextColor={Colors.dark.textSecondary}
+                                placeholderTextColor="#A1A1AA"
                                 value={searchQuery}
                                 onChangeText={setSearchQuery}
                             />
@@ -446,7 +509,7 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'flex-start',
+        alignItems: 'center',
         marginBottom: 20,
     },
     greetingText: {
@@ -477,7 +540,7 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#2C2E33',
+        backgroundColor: '#23272A',
         borderRadius: 14,
         paddingHorizontal: 15,
         height: 52,
@@ -605,41 +668,90 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     // Filter Modal Styles
-    modalOverlay: {
+    overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.7)',
+        backgroundColor: 'rgba(0,0,0,0.6)',
         justifyContent: 'center',
-        alignItems: 'center',
+        padding: 20
     },
-    modalContent: {
-        width: '90%',
-        backgroundColor: '#23272A',
+    filterModalContainer: {
+        backgroundColor: '#1C2226',
         borderRadius: 20,
-        padding: 20,
-        elevation: 10,
+        padding: 16,
+        maxHeight: '90%'
     },
-    // ... (Keep existing Filter styles)
+    filterLabel: {
+        color: '#BFC6CC',
+        fontSize: 13,
+        marginBottom: 6
+    },
+    filterRow: {
+        flexDirection: 'row',
+        marginBottom: 12
+    },
+    filterInput: {
+        backgroundColor: '#14191D',
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        height: 48,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10
+    },
+    filterInputText: {
+        color: '#fff'
+    },
+    filterTextInputStyle: {
+        color: '#fff',
+        flex: 1
+    },
+    filterSectionContainer: {
+        marginTop: 14,
+        zIndex: 10
+    },
+    calendarBox: {
+        backgroundColor: '#1C2226',
+        borderRadius: 16,
+        overflow: 'hidden',
+        marginBottom: 10
+    },
+    filterDropdown: {
+        position: 'absolute',
+        top: 78,
+        width: '100%',
+        backgroundColor: '#14191D',
+        borderRadius: 14,
+        zIndex: 999
+    },
+    filterDropdownItem: {
+        padding: 14
+    },
+    filterDropdownText: {
+        color: '#fff'
+    },
+    filterGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10
+    },
+    filterChip: {
+        backgroundColor: '#14191D',
+        borderRadius: 16,
+        paddingVertical: 10,
+        paddingHorizontal: 14
+    },
+    filterChipActive: {
+        borderWidth: 1,
+        borderColor: '#E6C27A'
+    },
+    filterChipText: {
+        color: '#BFC6CC'
+    },
+    filterChipTextActive: {
+        color: '#E6C27A'
+    },
 
-    // Language Modal Styles (Explicitly from WelcomeScreen)
-    languageModalOverlay: {
-        flex: 1,
-        justifyContent: 'flex-start',
-        paddingTop: 90,
-        alignItems: 'flex-end',
-        paddingRight: 30, // Calculated to center 180px dropdown under the language icon
-    },
-    languageModalContent: {
-        backgroundColor: '#2C2E33',
-        borderRadius: 12,
-        width: 180,
-        maxHeight: 400,
-        paddingVertical: 8,
-        elevation: 5,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-    },
+    // Language Modal Styles
     languageItem: {
         paddingVertical: 12,
         paddingHorizontal: 20,
@@ -653,88 +765,20 @@ const styles = StyleSheet.create({
         color: '#B99A4A',
         fontWeight: 'bold',
     },
-    modalHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 20,
-    },
-    modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#FFF',
-    },
-    filterSection: {
-        marginBottom: 16,
-    },
-    label: {
-        fontSize: 14,
-        color: '#CCC',
-        marginBottom: 8,
-    },
-    inputRow: {
-        flexDirection: 'row',
-        gap: 12,
-    },
-    inputContainer: {
+    languageModalOverlay: {
         flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#2A2D33',
+        justifyContent: 'flex-start',
+        paddingTop: 90,
+        alignItems: 'flex-end',
+        paddingRight: 30,
+    },
+    languageModalContent: {
+        backgroundColor: '#2C2E33',
         borderRadius: 12,
-        paddingHorizontal: 12,
-        height: 50,
-    },
-    inputIcon: {
-        marginRight: 10,
-    },
-    inputText: {
-        color: '#FFF',
-        fontSize: 15,
-        flex: 1,
-    },
-    sortGrid: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 10,
-    },
-    sortChip: {
-        backgroundColor: '#2A2D33',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 10,
-        minWidth: '47%', // roughly 2 items per row
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    sortChipSelected: {
-        borderWidth: 1,
-        borderColor: '#B99A4A',
-        backgroundColor: '#2A2D33', // Keep dark bg but add gold border
-    },
-    sortChipText: {
-        color: '#FFF',
-        fontSize: 14,
-    },
-    sortChipTextSelected: {
-        color: '#FFF',
-        fontWeight: 'bold',
-    },
-    applyButton: {
-        marginTop: 20,
-        height: 50,
-        borderRadius: 12,
-        overflow: 'hidden',
-    },
-    applyButtonGradient: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    applyButtonText: {
-        color: '#FFF',
-        fontSize: 16,
-        fontWeight: 'bold',
+        width: 180,
+        maxHeight: 400,
+        paddingVertical: 8,
+        elevation: 5,
     },
 });
 

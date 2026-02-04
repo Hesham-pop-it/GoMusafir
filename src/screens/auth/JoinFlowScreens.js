@@ -19,6 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { COUNTRIES } from '../../constants/Countries';
+import { responsiveFontSize } from '../../utils/responsive';
+import GlowBackground from '../../components/GlowBackground';
 
 // --- Shared Layout ---
 const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = true, buttonText = "Continue" }) => {
@@ -44,35 +46,37 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
     }, []);
 
     return (
-        <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="chevron-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-            </View>
+        <GlowBackground>
+            <SafeAreaView style={styles.safeArea}>
+                <View style={styles.header}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
+                </View>
 
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                style={styles.content}
-            >
-                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
-                    <Text style={styles.title}>{title}</Text>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    style={styles.content}
+                >
+                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+                        <Text style={styles.title}>{title}</Text>
 
-                    {label && <Text style={styles.label}>{label}</Text>}
+                        {label && <Text style={styles.label}>{label}</Text>}
 
-                    <View style={{ flex: 1 }}>
-                        {children}
-                    </View>
+                        <View style={{ flex: 1 }}>
+                            {children}
+                        </View>
 
-                    <GradientBorderButton
-                        text={buttonText}
-                        onPress={onContinue}
-                        disabled={!isValid}
-                        style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
-                    />
-                </ScrollView>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
+                        <GradientBorderButton
+                            text={buttonText}
+                            onPress={onContinue}
+                            disabled={!isValid}
+                            style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
+                        />
+                    </ScrollView>
+                </KeyboardAvoidingView>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
@@ -400,6 +404,9 @@ export const JoinTermsScreen = ({ navigation, route }) => {
 
 
 const styles = StyleSheet.create({
+    safeArea: {
+        flex: 1,
+    },
     container: {
         flex: 1,
         backgroundColor: '#1A1E21',
@@ -421,14 +428,14 @@ const styles = StyleSheet.create({
         paddingTop: 20,
     },
     title: {
-        fontSize: 28,
+        fontSize: responsiveFontSize(28),
         color: '#FFF',
         fontFamily: 'CormorantGaramond_700Bold',
         marginBottom: 40,
     },
     label: {
         color: '#FFFBF3',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         marginBottom: 10,
         fontFamily: 'Manrope',
     },
@@ -444,12 +451,12 @@ const styles = StyleSheet.create({
     },
     input: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         height: '100%',
     },
     inputText: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
     },
     phoneRow: {
         flexDirection: 'row',
@@ -487,13 +494,13 @@ const styles = StyleSheet.create({
     },
     uploadTextTitle: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         fontWeight: '600',
         marginBottom: 8,
     },
     uploadTextSub: {
         color: '#9BA1A6',
-        fontSize: 12,
+        fontSize: responsiveFontSize(12),
         marginBottom: 4,
     },
     uploadBtnPill: {
@@ -507,7 +514,7 @@ const styles = StyleSheet.create({
     },
     uploadBtnText: {
         color: '#FFF',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         fontWeight: '600',
     },
     // Terms Styles
@@ -533,7 +540,7 @@ const styles = StyleSheet.create({
     },
     termsText: {
         color: '#E0E0E0',
-        fontSize: 14,
+        fontSize: responsiveFontSize(14),
         lineHeight: 22,
         flex: 1,
     },
@@ -555,15 +562,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     countryFlag: {
-        fontSize: 20,
+        fontSize: responsiveFontSize(20),
         marginRight: 15,
     },
     countryName: {
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         color: '#FFF',
     },
     countryCodeText: {
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         color: '#B99A4A',
         fontWeight: '500',
     },
