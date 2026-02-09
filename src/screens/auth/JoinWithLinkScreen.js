@@ -63,7 +63,7 @@ const JoinWithLinkScreen = ({ navigation }) => {
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                 </View>
 

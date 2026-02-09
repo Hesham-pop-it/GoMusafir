@@ -60,7 +60,7 @@ const NotificationScreen = ({ navigation }) => {
                 {/* Header */}
                 <View style={styles.headerContainer}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                     <Text style={styles.headerTitle}>Notification</Text>
                 </View>
@@ -102,16 +102,22 @@ const styles = StyleSheet.create({
         padding: 20,
     },
     card: {
-        backgroundColor: '#1E2023', // Very Dark for seen
+        // backgroundColor: '#1E2023', // Very Dark for seen
         borderRadius: 16,
+        borderBottomColor: 'rgba(255, 255, 255, 0.5)',
+        borderStartColor: Colors.dark.background,
+        borderEndColor: Colors.dark.background,
+        borderEndWidth: 0.5,
+        borderStartWidth: 0.5,
         padding: 20,
         marginBottom: 16,
-        borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderBottomWidth: 1,
     },
     cardUnseen: {
-        backgroundColor: '#2A2D33', // Lighter for unseen/highlighted
-        borderColor: '#3A3D44',
+        backgroundColor: '#333333', // Lighter for unseen/highlighted
+        borderStartColor: '#333333',
+        borderEndColor: '#333333',
+        borderBottomColor: 'rgba(255, 255, 255, 0.5)',
     },
     cardTitle: {
         fontSize: 16,
@@ -120,9 +126,10 @@ const styles = StyleSheet.create({
         marginBottom: 8,
     },
     cardDescription: {
-        fontSize: 14,
-        color: '#9BA1A6', // Grey description
+        fontSize: 13,
+        color: '#A1A1AA', // Grey description
         lineHeight: 20,
+        fontFamily: 'IBM Plex Sans_400Regular'
     },
 });
 

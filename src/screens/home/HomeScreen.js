@@ -73,7 +73,7 @@ const TRIPS_DATA = [
 
 // Redundant TabBarBackground removed
 
-const destinations = ['Makkah', 'Madinah', 'Jeddah'];
+const destinations = ['Makkah', 'Madinah', 'Jeddah', 'Riyadh', 'Dammam', 'Abha', 'Tabuk', 'Jubail', 'Yanbu', 'Hafr Al Batin'];
 const sortOptions = [
     'A-Z',
     'Z-A',
@@ -109,140 +109,168 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                         style={{ width: '100%' }}
                     >
-                        <TouchableWithoutFeedback>
-                            <View style={styles.filterModalContainer}>
-                                <ScrollView showsVerticalScrollIndicator={false}>
-                                    {/* Dates */}
-                                    <View style={styles.filterRow}>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={styles.filterLabel}>Start Date</Text>
+                        <View style={styles.filterModalContainer}>
+                            <ScrollView
+                                showsVerticalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
+                                contentContainerStyle={{ paddingBottom: 20 }}
+                            >
+                                <TouchableWithoutFeedback onPress={() => {
+                                    setShowCalendar(false);
+                                    setShowDestinations(false);
+                                }}>
+                                    <View>
+                                        {/* Dates */}
+                                        <View style={[styles.filterRow, { zIndex: 1100 }]}>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.filterLabel}>Start Date</Text>
+                                                <TouchableOpacity
+                                                    style={styles.filterInput}
+                                                    onPress={() => {
+                                                        setActiveDateInput('start');
+                                                        setShowCalendar(!showCalendar);
+                                                        setShowDestinations(false);
+                                                    }}
+                                                >
+                                                    <Feather name="calendar" size={18} color="#9BA1A6" />
+                                                    <Text style={styles.filterInputText}>
+                                                        {startDate || 'Start date'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            <View style={{ width: 12 }} />
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.filterLabel}>End Date</Text>
+                                                <TouchableOpacity
+                                                    style={styles.filterInput}
+                                                    onPress={() => {
+                                                        setActiveDateInput('end');
+                                                        setShowCalendar(!showCalendar);
+                                                        setShowDestinations(false);
+                                                    }}
+                                                >
+                                                    <Feather name="calendar" size={18} color="#9BA1A6" />
+                                                    <Text style={styles.filterInputText}>
+                                                        {endDate || 'End date'}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            </View>
+
+                                            {showCalendar && (
+                                                <View style={styles.calendarBox}>
+                                                    <Calendar
+                                                        onDayPress={onDateSelect}
+                                                        theme={{
+                                                            backgroundColor: '#1C2226',
+                                                            calendarBackground: '#1C2226',
+                                                            dayTextColor: '#fff',
+                                                            monthTextColor: '#fff',
+                                                            arrowColor: '#E6C27A',
+                                                            selectedDayBackgroundColor: '#E6C27A',
+                                                            selectedDayTextColor: '#000'
+                                                        }}
+                                                    />
+                                                </View>
+                                            )}
+                                        </View>
+
+
+                                        {/* Destination */}
+                                        <View style={[styles.filterSectionContainer, { zIndex: showDestinations ? 1000 : 10, elevation: showDestinations ? 1000 : 0 }]}>
+                                            <Text style={styles.filterLabel}>Destination</Text>
                                             <TouchableOpacity
                                                 style={styles.filterInput}
                                                 onPress={() => {
-                                                    setActiveDateInput('start');
-                                                    setShowCalendar(true);
-                                                    setShowDestinations(false);
+                                                    setShowDestinations(!showDestinations);
+                                                    setShowCalendar(false);
                                                 }}
                                             >
-                                                <Feather name="calendar" size={18} color="#9BA1A6" />
-                                                <Text style={styles.filterInputText}>
-                                                    {startDate || 'Start date'}
-                                                </Text>
+                                                <Ionicons name="location-outline" size={20} color="#9BA1A6" />
+                                                <Text style={styles.filterInputText}>{destination}</Text>
                                             </TouchableOpacity>
+
+                                            {showDestinations && (
+                                                <View style={styles.filterDropdown}>
+                                                    <ScrollView
+                                                        style={styles.dropdownScroll}
+                                                        nestedScrollEnabled={true}
+                                                        showsVerticalScrollIndicator={true}
+                                                        keyboardShouldPersistTaps="handled"
+                                                    >
+                                                        {destinations.map(item => (
+                                                            <TouchableOpacity
+                                                                key={item}
+                                                                style={styles.filterDropdownItem}
+                                                                onPress={() => {
+                                                                    setDestination(item);
+                                                                    setShowDestinations(false);
+                                                                }}
+                                                            >
+                                                                <Text style={styles.filterDropdownText}>{item}</Text>
+                                                            </TouchableOpacity>
+                                                        ))}
+                                                    </ScrollView>
+                                                </View>
+                                            )}
                                         </View>
 
-                                        <View style={{ width: 12 }} />
-
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={styles.filterLabel}>End Date</Text>
-                                            <TouchableOpacity
-                                                style={styles.filterInput}
-                                                onPress={() => {
-                                                    setActiveDateInput('end');
-                                                    setShowCalendar(true);
-                                                    setShowDestinations(false);
-                                                }}
-                                            >
-                                                <Feather name="calendar" size={18} color="#9BA1A6" />
-                                                <Text style={styles.filterInputText}>
-                                                    {endDate || 'End date'}
-                                                </Text>
-                                            </TouchableOpacity>
+                                        {/* Participants */}
+                                        <View style={styles.filterSectionContainer}>
+                                            <Text style={styles.filterLabel}>Total Participants</Text>
+                                            <View style={styles.filterInput}>
+                                                <Ionicons name="people-outline" size={20} color="#9BA1A6" />
+                                                <TextInput
+                                                    style={styles.filterTextInputStyle}
+                                                    keyboardType="numeric"
+                                                    value={participants}
+                                                    onChangeText={setParticipants}
+                                                    placeholderTextColor="#636D77"
+                                                    onFocus={() => {
+                                                        setShowCalendar(false);
+                                                        setShowDestinations(false);
+                                                    }}
+                                                />
+                                            </View>
                                         </View>
-                                    </View>
 
-                                    {showCalendar && (
-                                        <View style={styles.calendarBox}>
-                                            <Calendar
-                                                onDayPress={onDateSelect}
-                                                theme={{
-                                                    backgroundColor: '#1C2226',
-                                                    calendarBackground: '#1C2226',
-                                                    dayTextColor: '#fff',
-                                                    monthTextColor: '#fff',
-                                                    arrowColor: '#E6C27A',
-                                                    selectedDayBackgroundColor: '#E6C27A',
-                                                    selectedDayTextColor: '#000'
-                                                }}
-                                            />
-                                        </View>
-                                    )}
-
-                                    {/* Destination */}
-                                    <View style={styles.filterSectionContainer}>
-                                        <Text style={styles.filterLabel}>Destination</Text>
-                                        <TouchableOpacity
-                                            style={styles.filterInput}
-                                            onPress={() => {
-                                                setShowDestinations(!showDestinations);
-                                                setShowCalendar(false);
-                                            }}
-                                        >
-                                            <Ionicons name="location-outline" size={20} color="#9BA1A6" />
-                                            <Text style={styles.filterInputText}>{destination}</Text>
-                                        </TouchableOpacity>
-
-                                        {showDestinations && (
-                                            <View style={styles.filterDropdown}>
-                                                {destinations.map(item => (
+                                        {/* Sort */}
+                                        <View style={styles.filterSectionContainer}>
+                                            <Text style={styles.filterLabel}>Sort by</Text>
+                                            <View style={styles.filterGrid}>
+                                                {sortOptions.map(opt => (
                                                     <TouchableOpacity
-                                                        key={item}
-                                                        style={styles.filterDropdownItem}
+                                                        key={opt}
+                                                        style={styles.filterChip}
                                                         onPress={() => {
-                                                            setDestination(item);
+                                                            setSortOption(opt);
+                                                            setShowCalendar(false);
                                                             setShowDestinations(false);
                                                         }}
                                                     >
-                                                        <Text style={styles.filterDropdownText}>{item}</Text>
+                                                        {sortOption === opt ? (
+                                                            <LinearGradient
+                                                                colors={['#B99A4A', '#8E773A']}
+                                                                start={{ x: 0, y: 0 }}
+                                                                end={{ x: 1, y: 0 }}
+                                                                style={StyleSheet.absoluteFill}
+                                                            />
+                                                        ) : null}
+                                                        <Text
+                                                            style={[
+                                                                styles.filterChipText,
+                                                                sortOption === opt && styles.filterChipTextActive
+                                                            ]}
+                                                        >
+                                                            {opt}
+                                                        </Text>
                                                     </TouchableOpacity>
                                                 ))}
                                             </View>
-                                        )}
-                                    </View>
-
-                                    {/* Participants */}
-                                    <View style={styles.filterSectionContainer}>
-                                        <Text style={styles.filterLabel}>Total Participants</Text>
-                                        <View style={styles.filterInput}>
-                                            <Ionicons name="people-outline" size={20} color="#9BA1A6" />
-                                            <TextInput
-                                                style={styles.filterTextInputStyle}
-                                                keyboardType="numeric"
-                                                value={participants}
-                                                onChangeText={setParticipants}
-                                                placeholderTextColor="#636D77"
-                                            />
                                         </View>
                                     </View>
-
-                                    {/* Sort */}
-                                    <View style={styles.filterSectionContainer}>
-                                        <Text style={styles.filterLabel}>Sort by</Text>
-                                        <View style={styles.filterGrid}>
-                                            {sortOptions.map(opt => (
-                                                <TouchableOpacity
-                                                    key={opt}
-                                                    style={[
-                                                        styles.filterChip,
-                                                        sortOption === opt && styles.filterChipActive
-                                                    ]}
-                                                    onPress={() => setSortOption(opt)}
-                                                >
-                                                    <Text
-                                                        style={[
-                                                            styles.filterChipText,
-                                                            sortOption === opt && styles.filterChipTextActive
-                                                        ]}
-                                                    >
-                                                        {opt}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </View>
-                                    </View>
-                                </ScrollView>
-                            </View>
-                        </TouchableWithoutFeedback>
+                                </TouchableWithoutFeedback>
+                            </ScrollView>
+                        </View>
                     </KeyboardAvoidingView>
                 </View>
             </TouchableWithoutFeedback>
@@ -678,7 +706,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#1C2226',
         borderRadius: 20,
         padding: 16,
-        maxHeight: '90%'
+        maxHeight: '100%'
     },
     filterLabel: {
         color: '#BFC6CC',
@@ -710,10 +738,17 @@ const styles = StyleSheet.create({
         zIndex: 10
     },
     calendarBox: {
+        position: 'absolute',
+        top: 75,
+        left: 0,
+        right: 0,
         backgroundColor: '#1C2226',
         borderRadius: 16,
         overflow: 'hidden',
-        marginBottom: 10
+        zIndex: 2000,
+        elevation: 15,
+        borderWidth: 1,
+        borderColor: '#2C2E33',
     },
     filterDropdown: {
         position: 'absolute',
@@ -721,7 +756,12 @@ const styles = StyleSheet.create({
         width: '100%',
         backgroundColor: '#14191D',
         borderRadius: 14,
-        zIndex: 999
+        zIndex: 999,
+        elevation: 10,
+        overflow: 'hidden',
+    },
+    dropdownScroll: {
+        maxHeight: 160,
     },
     filterDropdownItem: {
         padding: 14
@@ -738,17 +778,20 @@ const styles = StyleSheet.create({
         backgroundColor: '#14191D',
         borderRadius: 16,
         paddingVertical: 10,
-        paddingHorizontal: 14
+        paddingHorizontal: 14,
+        overflow: 'hidden',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     filterChipActive: {
-        borderWidth: 1,
-        borderColor: '#E6C27A'
+        backgroundColor: 'transparent',
     },
     filterChipText: {
         color: '#BFC6CC'
     },
     filterChipTextActive: {
-        color: '#E6C27A'
+        color: '#FFF',
+        fontWeight: 'bold'
     },
 
     // Language Modal Styles

@@ -50,7 +50,7 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                 </View>
 
@@ -275,7 +275,7 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
                 <SafeAreaView style={styles.container}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={() => setPickerVisible(false)} style={styles.backButton}>
-                            <Ionicons name="chevron-back" size={24} color="#FFF" />
+                            <Ionicons name="chevron-back" size={22} color="#FFF" />
                         </TouchableOpacity>
                     </View>
                     <View style={styles.content}>

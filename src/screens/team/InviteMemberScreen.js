@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import GlowBackground from '../../components/GlowBackground';
 
 const InviteMemberScreen = () => {
     const navigation = useNavigation();
@@ -45,94 +46,98 @@ const InviteMemberScreen = () => {
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                style={{ flex: 1 }}
-            >
-                <ScrollView contentContainerStyle={styles.scrollContent}>
-                    <View style={styles.header}>
-                        <TouchableOpacity onPress={() => navigation.goBack()}>
-                            <Ionicons name="chevron-back" size={28} color="#FFF" />
+        <GlowBackground>
+            <SafeAreaView style={styles.container}>
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={{ flex: 1 }}
+                >
+                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                        <View style={styles.header}>
+                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                                <Ionicons name="chevron-back" size={22} color="#FFF" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={styles.title}>Invite Team Member</Text>
+
+                        <View style={styles.inputSection}>
+                            <Text style={styles.label}>Email address</Text>
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Enter your team email address"
+                                placeholderTextColor="#71717A"
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                            />
+                        </View>
+
+                        <View style={styles.roleSection}>
+                            <Text style={styles.sectionTitle}>Select a Role</Text>
+
+                            <RoleCard
+                                title="Co-host"
+                                description="Has all rights except deleting the organization account."
+                            />
+
+                            <RoleCard
+                                title="Manager"
+                                description="cannot delete trips or the account, cannot buy seats and cannot invite new members."
+                            />
+                        </View>
+                    </ScrollView>
+
+                    <View style={styles.footer}>
+                        <TouchableOpacity
+                            style={[styles.inviteButton, !email && { opacity: 0.5 }]}
+                            onPress={() => setSuccessModalVisible(true)}
+                            disabled={!email}
+                        >
+                            <Text style={styles.inviteButtonText}>Send Invite</Text>
                         </TouchableOpacity>
+
                     </View>
+                </KeyboardAvoidingView>
 
-                    <Text style={styles.title}>Invite Team Member</Text>
-
-                    <View style={styles.inputSection}>
-                        <Text style={styles.label}>Email address</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Enter your team email address"
-                            placeholderTextColor="#666"
-                            value={email}
-                            onChangeText={setEmail}
-                            autoCapitalize="none"
-                            keyboardType="email-address"
-                        />
-                    </View>
-
-                    <View style={styles.roleSection}>
-                        <Text style={styles.sectionTitle}>Select a Role</Text>
-
-                        <RoleCard
-                            title="Co-host"
-                            description="Has all rights except deleting the organization account."
-                        />
-
-                        <RoleCard
-                            title="Manager"
-                            description="cannot delete trips or the account, cannot buy seats and cannot invite new members."
-                        />
-                    </View>
-                </ScrollView>
-
-                <View style={styles.footer}>
-                    <GradientBorderButton
-                        text="Send Invite"
-                        onPress={() => setSuccessModalVisible(true)}
-                        disabled={!email}
-                    />
-                </View>
-            </KeyboardAvoidingView>
-
-            {/* Success Bottom Sheet */}
-            <Modal
-                visible={successModalVisible}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setSuccessModalVisible(false)}
-            >
-                <TouchableWithoutFeedback onPress={() => setSuccessModalVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.modalContent}>
-                                <View style={styles.modalIndicator} />
-                                <Text style={styles.successMessage}>
-                                    An invitation email has been sent to your new team member
-                                </Text>
-                                <TouchableOpacity
-                                    style={styles.continueButton}
-                                    onPress={() => {
-                                        setSuccessModalVisible(false);
-                                        navigation.navigate('JourneyTeam');
-                                    }}
-                                >
-                                    <Text style={styles.continueButtonText}>Continue</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
-            </Modal>
-        </SafeAreaView>
+                {/* Success Bottom Sheet */}
+                <Modal
+                    visible={successModalVisible}
+                    transparent={true}
+                    animationType="slide"
+                    onRequestClose={() => setSuccessModalVisible(false)}
+                >
+                    <TouchableWithoutFeedback onPress={() => setSuccessModalVisible(false)}>
+                        <View style={styles.modalOverlay}>
+                            <TouchableWithoutFeedback>
+                                <View style={styles.modalContent}>
+                                    <View style={styles.modalIndicator} />
+                                    <Text style={styles.successMessage}>
+                                        An invitation email has been sent to your new team member
+                                    </Text>
+                                    <GradientBorderButton
+                                        text="Continue"
+                                        onPress={() => {
+                                            setSuccessModalVisible(false);
+                                            navigation.navigate('JourneyTeam');
+                                        }}
+                                        innerBg="#1E2124"
+                                    />
+                                </View>
+                            </TouchableWithoutFeedback>
+                        </View>
+                    </TouchableWithoutFeedback>
+                </Modal>
+            </SafeAreaView>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121417',
+        backgroundColor: 'transparent',
     },
     scrollContent: {
         paddingHorizontal: 20,
@@ -140,10 +145,15 @@ const styles = StyleSheet.create({
     header: {
         paddingTop: 10,
     },
+    backButton: {
+        alignSelf: 'flex-start',
+        marginLeft: -10,
+        padding: 10,
+    },
     title: {
         fontSize: 32,
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: 'CormorantGaramond_400Regular',
         marginTop: 20,
         marginBottom: 40,
     },
@@ -152,12 +162,12 @@ const styles = StyleSheet.create({
     },
     label: {
         color: '#FFF',
-        fontSize: 16,
-        fontWeight: '500',
+        fontSize: 14,
+        fontWeight: '400',
         marginBottom: 12,
     },
     input: {
-        backgroundColor: '#262626',
+        backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 12,
         height: 56,
         paddingHorizontal: 16,
@@ -175,14 +185,14 @@ const styles = StyleSheet.create({
     },
     roleCard: {
         flexDirection: 'row',
-        backgroundColor: '#23272A',
+        backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 16,
         padding: 20,
         borderWidth: 1,
         borderColor: 'transparent',
     },
     roleCardActive: {
-        borderColor: '#B99A4A',
+        borderColor: 'rgba(255, 255, 255, 0.5)',
     },
     radioOuter: {
         width: 20,
@@ -210,7 +220,6 @@ const styles = StyleSheet.create({
     roleTitle: {
         color: '#FFF',
         fontSize: 17,
-        fontWeight: 'bold',
         marginBottom: 8,
     },
     roleTitleActive: {

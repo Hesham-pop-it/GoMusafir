@@ -66,7 +66,7 @@ const BusinessLoginScreen = () => {
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                 </View>
 
@@ -132,9 +132,9 @@ const BusinessLoginScreen = () => {
 
                 {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
                 {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
-                <View style={[styles.footer, ]}>
+                <View style={[styles.footer,]}>
                     <TouchableOpacity
-                        style={[styles.loginButton, !isFormValid && { opacity: 0.5 },{ marginBottom: isKeyboardVisible ? 0 : 100 }]}
+                        style={[styles.loginButton, !isFormValid && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 0 : 100 }]}
                         onPress={() => navigation.navigate('BusinessVerification')}
                         disabled={!isFormValid}
                     >

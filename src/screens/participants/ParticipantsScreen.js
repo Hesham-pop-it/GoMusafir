@@ -9,8 +9,10 @@ import {
     TouchableOpacity,
     StatusBar,
     Platform,
+    ScrollView,
     Dimensions,
-    Modal
+    Modal,
+    TouchableWithoutFeedback
 } from 'react-native';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, Feather } from '@expo/vector-icons';
@@ -32,6 +34,8 @@ const PARTICIPANTS_DATA = [
         email: 'ahmed.badawi@example.com',
         phone: '+966 50 123 4567',
         tripHistory: [
+            { name: 'Umrah Trip', status: 'Upcoming' },
+            { name: 'Hajj 2024', status: 'Complete' },
             { name: 'Umrah Trip', status: 'Upcoming' },
             { name: 'Hajj 2024', status: 'Complete' }
         ],
@@ -74,9 +78,69 @@ const PARTICIPANTS_DATA = [
     },
 ];
 
-const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
-    // Chips removed, now using regular sort labels for consistency or keeping chips if layout matches
-    // For now, making it functional
+const LANGUAGES = [
+    { code: 'AR', label: 'Arabic' },
+    { code: 'EN', label: 'English' },
+    { code: 'UR', label: 'Urdu' },
+    { code: 'ID', label: 'Indonesian' },
+    { code: 'TR', label: 'Turkish' },
+    { code: 'FR', label: 'French' },
+    { code: 'HI', label: 'Hindi' },
+    { code: 'BN', label: 'Bengali' },
+    { code: 'MS', label: 'Malay' },
+    { code: 'FA', label: 'Persian (Farsi)' },
+    { code: 'ES', label: 'Spanish' },
+    { code: 'PT', label: 'Portuguese' },
+    { code: 'RU', label: 'Russian' },
+    { code: 'DE', label: 'German' },
+    { code: 'NL', label: 'Dutch' },
+];
+
+const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
+    const renderLanguageItem = ({ item }) => (
+        <TouchableOpacity
+            style={styles.languageItem}
+            onPress={() => {
+                onSelect(item.code);
+                onClose();
+            }}
+        >
+            <Text style={[
+                styles.languageItemText,
+                selectedLanguage === item.code && styles.languageItemTextSelected
+            ]}>
+                {item.label}
+            </Text>
+        </TouchableOpacity>
+    );
+
+    return (
+        <Modal
+            animationType="fade"
+            transparent={true}
+            visible={visible}
+            onRequestClose={onClose}
+        >
+            <TouchableWithoutFeedback onPress={onClose}>
+                <View style={styles.languageModalOverlay}>
+                    <View style={styles.languageModalContent}>
+                        <FlatList
+                            data={LANGUAGES}
+                            renderItem={renderLanguageItem}
+                            keyExtractor={item => item.code}
+                            showsVerticalScrollIndicator={false}
+                        />
+                    </View>
+                </View>
+            </TouchableWithoutFeedback>
+        </Modal>
+    );
+};
+
+const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJourney, setSelectedJourney }) => {
+    const [showJourneys, setShowJourneys] = useState(false);
+    const journeys = ['Umrah Trip', 'Hajj Trip', 'Turkey Tour', 'Egypt Tour', 'Morocco Tour'];
+
     const handleSelect = (option) => {
         setSortOption(option);
         onClose();
@@ -92,12 +156,49 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
             <TouchableOpacity
                 style={styles.modalOverlay}
                 activeOpacity={1}
-                onPress={onClose}
+                onPress={() => {
+                    setShowJourneys(false);
+                    onClose();
+                }}
             >
                 <View style={[styles.modalContent, styles.participantsModalContent]}>
                     <View style={styles.modalDragIndicator} />
 
+                    {/* Select Journey Section */}
+                    <Text style={styles.modalLabel}>Select Journey</Text>
+                    <View style={{ zIndex: 1000 }}>
+                        <TouchableOpacity
+                            style={styles.journeyInputContainer}
+                            onPress={() => setShowJourneys(!showJourneys)}
+                        >
+                            <Ionicons name="home-outline" size={20} color="#A1A1AA" />
+                            <Text style={styles.journeyInputText}>{selectedJourney || 'Umrah Trip'}</Text>
+                        </TouchableOpacity>
 
+                        {showJourneys && (
+                            <View style={styles.journeyDropdown}>
+                                <ScrollView
+                                    style={styles.dropdownScroll}
+                                    nestedScrollEnabled={true}
+                                    showsVerticalScrollIndicator={true}
+                                    keyboardShouldPersistTaps="handled"
+                                >
+                                    {journeys.map(item => (
+                                        <TouchableOpacity
+                                            key={item}
+                                            style={styles.dropdownItem}
+                                            onPress={() => {
+                                                setSelectedJourney(item);
+                                                setShowJourneys(false);
+                                            }}
+                                        >
+                                            <Text style={styles.dropdownText}>{item}</Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                        )}
+                    </View>
 
                     {/* Sort By Section */}
                     <Text style={styles.modalLabel}>Sort by</Text>
@@ -116,12 +217,14 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                 <Text style={[styles.chipText, sortOption === 'Z-A' && styles.chipTextSelected]}>Z-A</Text>
                             </TouchableOpacity>
                         </View>
+
                         <TouchableOpacity
                             style={[styles.chip, styles.chipFullWidth, sortOption === 'Journey' && styles.chipSelected]}
                             onPress={() => handleSelect('Journey')}
                         >
                             <Text style={[styles.chipText, sortOption === 'Journey' && styles.chipTextSelected]}>Search Journey</Text>
                         </TouchableOpacity>
+
                         <View style={styles.row}>
                             <TouchableOpacity
                                 style={[styles.chip, { flex: 0.5 }, sortOption === 'Likes' && styles.chipSelected]}
@@ -129,6 +232,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                             >
                                 <Text style={[styles.chipText, sortOption === 'Likes' && styles.chipTextSelected]}>Likes</Text>
                             </TouchableOpacity>
+                            <View style={{ flex: 0.5 }} />
                         </View>
                     </View>
                 </View>
@@ -142,6 +246,9 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
 const ParticipantsScreen = ({ navigation }) => {
     const insets = useSafeAreaInsets();
     const [filterVisible, setFilterVisible] = useState(false);
+    const [languageVisible, setLanguageVisible] = useState(false);
+    const [selectedLanguage, setSelectedLanguage] = useState('EN');
+    const [selectedJourney, setSelectedJourney] = useState('Umrah Trip');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortOption, setSortOption] = useState('A-Z');
 
@@ -208,12 +315,21 @@ const ParticipantsScreen = ({ navigation }) => {
                     onClose={() => setFilterVisible(false)}
                     sortOption={sortOption}
                     setSortOption={setSortOption}
+                    selectedJourney={selectedJourney}
+                    setSelectedJourney={setSelectedJourney}
                 />
 
                 <ParticipantDetailsModal
                     visible={detailsVisible}
                     onClose={() => setDetailsVisible(false)}
                     participant={selectedParticipant}
+                />
+
+                <LanguageModal
+                    visible={languageVisible}
+                    onClose={() => setLanguageVisible(false)}
+                    onSelect={setSelectedLanguage}
+                    selectedLanguage={selectedLanguage}
                 />
 
                 <View style={styles.contentContainer}>
@@ -224,7 +340,10 @@ const ParticipantsScreen = ({ navigation }) => {
                             <Text style={styles.subtitleText}>May Allah Guide Every Step</Text>
                         </View>
                         <View style={styles.headerIcons}>
-                            <TouchableOpacity style={styles.iconButton}>
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => setLanguageVisible(true)}
+                            >
                                 <FontAwesome name="language" size={24} color={Colors.dark.primary} />
                             </TouchableOpacity>
                             <TouchableOpacity
@@ -245,11 +364,11 @@ const ParticipantsScreen = ({ navigation }) => {
                     {/* Search Bar */}
                     <View style={styles.searchSectionWrapper}>
                         <View style={styles.searchContainer}>
-                            <Ionicons name="search" size={20} color={Colors.dark.textSecondary} style={styles.searchIcon} />
+                            <Ionicons name="search" size={20} color="#A1A1AA" style={styles.searchIcon} />
                             <TextInput
                                 style={styles.searchInput}
                                 placeholder="Search your trip"
-                                placeholderTextColor={Colors.dark.textSecondary}
+                                placeholderTextColor="#A1A1AA"
                                 value={searchQuery}
                                 onChangeText={setSearchQuery}
                             />
@@ -363,9 +482,9 @@ const styles = StyleSheet.create({
     card: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#2C2E33',
+        paddingVertical: 22,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: 'rgba(255, 255, 255, 0.15)',
         paddingHorizontal: 16,
     },
     avatar: {
@@ -420,55 +539,89 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     modalLabel: {
-        fontSize: 14,
-        color: '#CCC',
-        marginBottom: 10,
+        fontSize: 16,
+        color: '#FFF',
+        marginBottom: 12,
         marginTop: 10,
+        fontWeight: '500',
     },
     journeyInputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#181A1F', // Darker background for input
-        borderRadius: 12,
-        padding: 14,
-        paddingHorizontal: 16,
+        backgroundColor: '#1A1E21', // Darker background for input
+        borderRadius: 16,
+        padding: 16,
+        paddingHorizontal: 20,
         gap: 12,
-        marginBottom: 20,
+        marginBottom: 24,
     },
     journeyInputText: {
         color: '#FFF',
         fontSize: 16,
+        fontWeight: '500',
+    },
+    journeyDropdown: {
+        position: 'absolute',
+        top: 60,
+        left: 0,
+        right: 0,
+        backgroundColor: '#1A1E21',
+        borderRadius: 16,
+        maxHeight: 200,
+        zIndex: 2000,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+        overflow: 'hidden',
+    },
+    dropdownScroll: {
+        width: '100%',
+    },
+    dropdownItem: {
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+        // borderBottomWidth: 1,
+        // borderBottomColor: 'rgba(255,255,255,0.05)',
+    },
+    dropdownText: {
+        color: '#FFF',
+        fontSize: 14,
     },
     chipsContainer: {
-        gap: 10,
+        gap: 12,
     },
     row: {
         flexDirection: 'row',
-        gap: 10,
+        gap: 12,
     },
     chip: {
         flex: 1,
-        backgroundColor: '#23272A',
-        borderRadius: 12,
-        height: 50,
+        backgroundColor: '#1A1E21',
+        borderRadius: 16,
+        height: 56,
         justifyContent: 'center',
         alignItems: 'center',
+        paddingHorizontal: 20,
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     chipFullWidth: {
         width: '100%',
         flex: 0,
     },
     chipSelected: {
-        borderWidth: 1,
         borderColor: '#B99A4A',
-        backgroundColor: '#23272A',
+        backgroundColor: '#1A1E21',
     },
     chipText: {
         color: '#FFF',
-        fontSize: 14,
+        fontSize: 15,
+        fontWeight: '500',
     },
     chipTextSelected: {
-        color: '#B99A4A',
+        color: '#FFF',
         fontWeight: 'bold',
     },
 
@@ -525,6 +678,35 @@ const styles = StyleSheet.create({
         borderRadius: 35,
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    // Language Modal Styles
+    languageItem: {
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+    },
+    languageItemText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '500',
+    },
+    languageItemTextSelected: {
+        color: '#B99A4A',
+        fontWeight: 'bold',
+    },
+    languageModalOverlay: {
+        flex: 1,
+        justifyContent: 'flex-start',
+        paddingTop: 90,
+        alignItems: 'flex-end',
+        paddingRight: 30,
+    },
+    languageModalContent: {
+        backgroundColor: '#2C2E33',
+        borderRadius: 12,
+        width: 180,
+        maxHeight: 400,
+        paddingVertical: 8,
+        elevation: 5,
     },
 });
 

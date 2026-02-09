@@ -7,7 +7,6 @@ import {
     StatusBar,
     Platform,
     ScrollView,
-    Switch,
     Modal,
     TouchableWithoutFeedback
 } from 'react-native';
@@ -15,6 +14,7 @@ import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import CustomSwitch from '../../components/CustomSwitch';
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
@@ -24,7 +24,7 @@ const SettingsScreen = ({ navigation }) => {
     const LinkItem = ({ label, onPress, showArrow = true }) => (
         <TouchableOpacity style={styles.linkItem} onPress={onPress}>
             <Text style={styles.linkText}>{label}</Text>
-            {showArrow && <Ionicons name="chevron-forward" size={20} color="#636D77" />}
+            {showArrow && <Ionicons name="chevron-forward" size={20} color="#A1A1AA" />}
         </TouchableOpacity>
     );
 
@@ -41,7 +41,7 @@ const SettingsScreen = ({ navigation }) => {
                 {/* Header */}
                 <View style={styles.headerContainer}>
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="chevron-back" size={24} color="#FFF" />
+                        <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                     <View style={styles.titleWrapper}>
                         <Text style={styles.headerTitle}>Setting</Text>
@@ -58,7 +58,7 @@ const SettingsScreen = ({ navigation }) => {
                         onPress={() => navigation.navigate('JourneyTeam')}
                     >
                         <Text style={styles.addButtonText}>Add a Co-Host or Manager</Text>
-                        <Ionicons name="add" size={24} color="#9BA1A6" />
+                        <Ionicons name="add" size={24} color="#A1A1AA" />
                     </TouchableOpacity>
 
                     {/* App Settings */}
@@ -68,11 +68,10 @@ const SettingsScreen = ({ navigation }) => {
                         <View style={styles.separator} />
                         <View style={styles.switchItem}>
                             <Text style={styles.linkText}>Enable lockscreen widget</Text>
-                            <Switch
-                                trackColor={{ false: '#767577', true: '#B99A4A' }}
-                                thumbColor={isWidgetEnabled ? '#fff' : '#f4f3f4'}
-                                onValueChange={() => setIsWidgetEnabled(previousState => !previousState)}
+                            <CustomSwitch
                                 value={isWidgetEnabled}
+                                onValueChange={setIsWidgetEnabled}
+                                activeColor="#B99A4A"
                             />
                         </View>
                     </View>
@@ -213,7 +212,7 @@ const styles = StyleSheet.create({
     },
     headerSubtitle: {
         fontSize: 14,
-        color: '#636D77',
+        color: '#A1A1AA',
         marginTop: 4,
     },
     backButton: {
@@ -241,7 +240,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     addButtonText: {
-        color: '#F4F4F5',
+        color: '#fff',
         fontSize: 15,
     },
     sectionContainer: {

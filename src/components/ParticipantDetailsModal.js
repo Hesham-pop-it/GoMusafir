@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -7,13 +7,17 @@ import {
     TouchableOpacity,
     Image,
     ScrollView,
-    Dimensions
+    Dimensions,
+    TouchableWithoutFeedback
 } from 'react-native';
 import { Colors } from '../constants/Colors';
+import GradientBorderButton from './GradientBorderButton';
 
 const { height } = Dimensions.get('window');
 
 const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
     if (!participant) return null;
 
     // Split name for display
@@ -91,17 +95,59 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                             )}
                         </View>
 
+                    </ScrollView>
+                    <View style={{ marginVertical: 24 }}>
                         {/* Delete Button */}
-                        <TouchableOpacity style={styles.deleteButton}>
+                        <TouchableOpacity
+                            style={styles.deleteButton}
+                            onPress={() => setShowDeleteConfirm(true)}
+                        >
                             <Text style={styles.deleteButtonText}>Delete Participant</Text>
                         </TouchableOpacity>
 
                         {/* Bottom Spacer for scrolling */}
                         <View style={{ height: 40 }} />
-
-                    </ScrollView>
+                    </View>
                 </View>
             </View>
+
+            {/* Delete Confirmation Modal */}
+            <Modal
+                visible={showDeleteConfirm}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowDeleteConfirm(false)}
+            >
+                <TouchableWithoutFeedback onPress={() => setShowDeleteConfirm(false)}>
+                    <View style={styles.confirmOverlay}>
+                        <TouchableWithoutFeedback>
+                            <View style={styles.confirmContent}>
+                                <Text style={styles.confirmTitle}>
+                                    Are You sure you want to delete this participant
+                                </Text>
+                                <View style={styles.confirmButtons}>
+                                    <GradientBorderButton
+                                        text="Cancel"
+                                        onPress={() => setShowDeleteConfirm(false)}
+                                        style={{ flex: 1 }}
+                                        innerBg="#1E2124"
+                                    />
+                                    <TouchableOpacity
+                                        style={styles.confirmDeleteButton}
+                                        onPress={() => {
+                                            setShowDeleteConfirm(false);
+                                            onClose();
+                                            // Handle actual deletion logic here
+                                        }}
+                                    >
+                                        <Text style={styles.confirmDeleteButtonText}>Delete</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
         </Modal>
     );
 };
@@ -116,7 +162,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.7)',
     },
     modalContent: {
-        backgroundColor: '#181A1F', // Dark background matching the image
+        backgroundColor: '#1A1E21', // Dark background matching the image
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         paddingHorizontal: 20,
@@ -155,7 +201,7 @@ const styles = StyleSheet.create({
     },
     label: {
         fontSize: 14,
-        color: '#9BA1A6',
+        color: '#fff',
         marginBottom: 8,
     },
     inputContainer: {
@@ -168,7 +214,8 @@ const styles = StyleSheet.create({
     inputText: {
         color: '#FFFFFF',
         fontSize: 16,
-        fontWeight: '500',
+        fontWeight: '800',
+
     },
     tripHistoryContainer: {
         backgroundColor: '#23272A',
@@ -180,8 +227,8 @@ const styles = StyleSheet.create({
         padding: 16,
     },
     separator: {
-        height: 1,
-        backgroundColor: '#2C2E33',
+        // height: 1,
+        // backgroundColor: '#2C2E33',
         marginHorizontal: 16,
     },
     tripName: {
@@ -190,11 +237,12 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     tripStatus: {
-        color: '#9BA1A6',
+        color: '#fff',
         fontSize: 14,
         fontWeight: 'normal',
     },
     deleteButton: {
+
         backgroundColor: '#942F31', // Reddish brown color from image
         borderRadius: 30, // Pill shape
         paddingVertical: 16,
@@ -204,6 +252,47 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         color: '#FFFFFF',
         fontSize: 16,
+        fontWeight: 'bold',
+    },
+    // Confirmation Modal Styles
+    confirmOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.8)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    confirmContent: {
+        width: '90%',
+        backgroundColor: '#1E2124',
+        borderRadius: 32,
+        padding: 30,
+        alignItems: 'center',
+    },
+    confirmTitle: {
+        fontSize: 16,
+        color: '#FFF',
+        textAlign: 'center',
+        fontWeight: '600',
+        marginBottom: 40,
+        lineHeight: 32,
+        fontFamily: 'IBMPlexSans_600SemiBold',
+    },
+    confirmButtons: {
+        flexDirection: 'row',
+        gap: 16,
+        width: '100%',
+    },
+    confirmDeleteButton: {
+        flex: 1,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#942F31',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    confirmDeleteButtonText: {
+        color: '#FFF',
+        fontSize: 18,
         fontWeight: 'bold',
     },
 });

@@ -108,10 +108,12 @@ const CustomBottomTabBar = ({ state, navigation }) => {
                     colors={['#523631', '#C9A443']} // Custom Brown-Gold Gradient
                     locations={[0, 0.76]} // Matches stops 0% and 76% from screenshot
                     style={styles.fab}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
+                    start={{ x: 0, y: 1 }}
+                    end={{ x: 1, y: 0 }}
                 >
-                    <Ionicons name="add" size={42} color="#1A1C1E" />
+                    <Svg width="31" height="31" viewBox="0 0 31 31" fill="none">
+                        <Path d="M15.2832 0C16.4701 9.97129e-05 17.4326 0.962519 17.4326 2.14941V13.1338H28.417C29.6039 13.1339 30.5664 14.0963 30.5664 15.2832C30.5663 16.47 29.6038 17.4325 28.417 17.4326H17.4326V28.417C17.4325 29.6038 16.47 30.5663 15.2832 30.5664C14.0963 30.5664 13.1339 29.6039 13.1338 28.417V17.4326H2.14941C0.962519 17.4326 9.97132e-05 16.4701 0 15.2832C0 14.0962 0.962458 13.1338 2.14941 13.1338H13.1338V2.14941C13.1338 0.962458 14.0962 0 15.2832 0Z" fill="#23272A" />
+                    </Svg>
                 </LinearGradient>
             </TouchableOpacity>
 

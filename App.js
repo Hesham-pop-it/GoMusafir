@@ -29,10 +29,10 @@ export default function App() {
   const [showSplash, setShowSplash] = useState(true);
 
   const [fontsLoaded] = useFonts({
-    CormorantGaramond_400Regular,
-    CormorantGaramond_500Medium,
-    CormorantGaramond_600SemiBold,
-    CormorantGaramond_700Bold,
+    'CormorantGaramond': CormorantGaramond_400Regular,
+    'CormorantGaramond_Medium': CormorantGaramond_500Medium,
+    'CormorantGaramond_SemiBold': CormorantGaramond_600SemiBold,
+    'CormorantGaramond_Bold': CormorantGaramond_700Bold,
     'IBMPlexSans': IBMPlexSans_400Regular,
     'IBMPlexSans_Medium': IBMPlexSans_500Medium,
     'IBMPlexSans_SemiBold': IBMPlexSans_600SemiBold,
