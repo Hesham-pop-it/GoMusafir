@@ -249,20 +249,18 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                                     >
                                                         {sortOption === opt ? (
                                                             <LinearGradient
-                                                                colors={['#B99A4A', '#8E773A']}
+                                                                colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
                                                                 start={{ x: 0, y: 0 }}
                                                                 end={{ x: 1, y: 0 }}
                                                                 style={StyleSheet.absoluteFill}
-                                                            />
-                                                        ) : null}
-                                                        <Text
-                                                            style={[
-                                                                styles.filterChipText,
-                                                                sortOption === opt && styles.filterChipTextActive
-                                                            ]}
-                                                        >
-                                                            {opt}
-                                                        </Text>
+                                                            >
+                                                                <View style={styles.filterChipInnerActive}>
+                                                                    <Text style={[styles.filterChipText, styles.filterChipTextActive]}>{opt}</Text>
+                                                                </View>
+                                                            </LinearGradient>
+                                                        ) : (
+                                                            <Text style={styles.filterChipText}>{opt}</Text>
+                                                        )}
                                                     </TouchableOpacity>
                                                 ))}
                                             </View>
@@ -785,6 +783,14 @@ const styles = StyleSheet.create({
     },
     filterChipActive: {
         backgroundColor: 'transparent',
+    },
+    filterChipInnerActive: {
+        flex: 1,
+        margin: 1.5,
+        borderRadius: 14.5,
+        backgroundColor: '#14191D',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     filterChipText: {
         color: '#BFC6CC'

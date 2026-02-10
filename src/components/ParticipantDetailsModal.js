@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Colors } from '../constants/Colors';
 import GradientBorderButton from './GradientBorderButton';
+import { responsiveFontSize } from '../utils/responsive';
 
 const { height } = Dimensions.get('window');
 
@@ -269,13 +270,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     confirmTitle: {
-        fontSize: 16,
+        fontSize: responsiveFontSize(16),
         color: '#FFF',
         textAlign: 'center',
         fontWeight: '600',
         marginBottom: 40,
         lineHeight: 32,
-        fontFamily: 'IBMPlexSans_600SemiBold',
+        fontFamily: 'IBMPlexSans_SemiBold',
     },
     confirmButtons: {
         flexDirection: 'row',

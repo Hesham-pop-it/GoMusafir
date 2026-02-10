@@ -15,6 +15,7 @@ import {
     TouchableWithoutFeedback,
     Keyboard
 } from 'react-native';
+import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -22,6 +23,37 @@ import { Colors } from '../../constants/Colors';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 
 const { width } = Dimensions.get('window');
+
+const PhotoIcon = ({ size = 24 }) => (
+    <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+        <Path d="M33.998 12.9961C36.2072 12.9961 37.998 14.787 37.998 16.9961V30.9971C37.998 33.2062 36.2072 34.9971 33.998 34.9971H13.998C11.7889 34.9971 9.99805 33.2062 9.99805 30.9971V16.9961C9.99805 14.787 11.7889 12.9961 13.998 12.9961H33.998ZM30.5391 23.2598C29.3797 22.255 27.649 22.2863 26.5273 23.333L21.666 27.8711C21.2887 28.2233 20.7052 28.2305 20.3193 27.8877L18.6143 26.3721C17.427 25.3167 15.6232 25.3699 14.5 26.4932L12.293 28.6992C12.1054 28.8868 12 29.142 12 29.4072V30.9932C12.0002 32.0976 12.8956 32.9932 14 32.9932H34C35.1045 32.9932 35.9998 32.0976 36 30.9932V28.4492C36 28.1592 35.8744 27.8833 35.6553 27.6934L30.5391 23.2598ZM27.5 6C29.7091 6 31.5 7.79086 31.5 10V11.0039H14.002C10.6882 11.0039 8.00196 13.6902 8.00195 17.0039V28.501H7C4.79086 28.501 3 26.7101 3 24.501V10C3 7.79086 4.79086 6 7 6H27.5ZM20 17.4922C18.3432 17.4922 17.0001 18.8353 17 20.4922C17 22.1491 18.3431 23.4922 20 23.4922C21.6569 23.4922 23 22.1491 23 20.4922C22.9999 18.8353 21.6568 17.4922 20 17.4922Z" fill="#007BFC" />
+    </Svg>
+);
+
+const LocationIconSvg = ({ size = 24 }) => (
+    <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+        <Path d="M20 4C26.6274 4 32 9.37258 32 16C32 23.522 25.9879 30.9166 22.4746 34.5957C21.1034 36.0312 18.8966 36.0312 17.5254 34.5957C14.0121 30.9166 8 23.522 8 16C8 9.37258 13.3726 4 20 4ZM20 11C17.2386 11 15 13.2386 15 16C15 18.7614 17.2386 21 20 21C22.7614 21 25 18.7614 25 16C25 13.2386 22.7614 11 20 11Z" fill="#06CF9C" />
+    </Svg>
+);
+
+const FiveMinIcon = ({ size = 24 }) => (
+    <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+        <Path d="M7 9.61538C7 7.07692 9.04545 5 11.5455 5H27.4545C29.9545 5 32 7.07692 32 9.61538V28.0769C32 30.3846 29.7273 30.3846 29.7273 30.3846V32.6923C29.7273 33.9615 28.7045 35 27.4545 35C26.2045 35 25.1818 33.9615 25.1818 32.6923V30.3846H13.8182V32.6923C13.8182 33.9615 12.7955 35 11.5455 35C10.2955 35 9.27273 33.9615 9.27273 32.6923V30.3846C7 30.3846 7 28.0769 7 28.0769V9.61538ZM10.4091 11.9231C9.77273 11.9231 9.27273 12.4308 9.27273 13.0769V20C9.27273 20.6462 9.77273 21.1538 10.4091 21.1538H28.5909C29.2273 21.1538 29.7273 20.6462 29.7273 20V13.0769C29.7273 12.4308 29.2273 11.9231 28.5909 11.9231H10.4091ZM11.5455 23.4615C10.2955 23.4615 9.27273 24.5 9.27273 25.7692C9.27273 27.0385 10.2955 28.0769 11.5455 28.0769C12.7955 28.0769 13.8182 27.0385 13.8182 25.7692C13.8182 24.5 12.7955 23.4615 11.5455 23.4615ZM27.4545 23.4615C26.2045 23.4615 25.1818 24.5 25.1818 25.7692C25.1818 27.0385 26.2045 28.0769 27.4545 28.0769C28.7045 28.0769 29.7273 27.0385 29.7273 25.7692C29.7273 24.5 28.7045 23.4615 27.4545 23.4615ZM11.5455 8.46154C11.5455 9.10769 12.0455 9.61538 12.6818 9.61538H26.3182C26.9545 9.61538 27.4545 9.10769 27.4545 8.46154C27.4545 7.81538 26.9545 7.30769 26.3182 7.30769H12.6818C12.0455 7.30769 11.5455 7.81538 11.5455 8.46154Z" fill="#B99A4A" />
+    </Svg>
+);
+
+const CameraIconSvg = ({ size = 24 }) => (
+    <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+        <Path d="M22.3428 7C23.4036 7 24.4217 7.42173 25.1719 8.17188L26.9141 9.91406C27.2891 10.2891 27.7978 10.4999 28.3281 10.5H32C34.2091 10.5 36 12.2909 36 14.5V28.5C36 30.7091 34.2091 32.5 32 32.5H8C5.79086 32.5 4 30.7091 4 28.5V14.5C4 12.2909 5.79086 10.5 8 10.5H11.6719C12.2022 10.4999 12.7109 10.2891 13.0859 9.91406L14.8281 8.17188C15.5783 7.42173 16.5964 7 17.6572 7H22.3428ZM20 14C16.134 14 13 17.134 13 21C13 24.866 16.134 28 20 28C23.866 28 27 24.866 27 21C27 17.134 23.866 14 20 14ZM20 16C22.7614 16 25 18.2386 25 21C25 23.7614 22.7614 26 20 26C17.2386 26 15 23.7614 15 21C15 18.2386 17.2386 16 20 16ZM30 14C28.8954 14 28 14.8954 28 16C28 17.1046 28.8954 18 30 18C31.1046 18 32 17.1046 32 16C32 14.8954 31.1046 14 30 14Z" fill="white" />
+    </Svg>
+);
+
+const TemplateIconSvg = ({ size = 24, color = "#FFFFFF" }) => (
+    <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
+        <Path d="M19.1973 5.80176C23.593 5.80176 27.6143 7.03689 30.5576 9.18164C33.5088 11.3322 35.3944 14.4192 35.3945 18.0596C35.3945 20.392 34.6314 22.5517 33.3076 24.4111H32.2314V22.0469C32.2314 20.5101 31.0623 19.2461 29.5664 19.0938L29.2627 19.0781C27.6238 19.0782 26.2949 20.4079 26.2949 22.0469V24.4111H23.9287C22.3917 24.4118 21.1296 25.5803 20.9775 27.0752L20.9619 27.3789L20.9619 27.6826C21.1295 29.1775 22.3917 30.347 23.9287 30.3477H24.1025C22.547 30.7412 20.897 30.9531 19.1973 30.9531C18.6508 30.9531 18.1101 30.9327 17.5771 30.8906C17.4536 30.8875 17.4101 30.9013 17.3781 30.9346C15.5319 32.8017 13.5702 33.7449 12.0771 34.2188C11.332 34.4552 10.7039 34.5741 10.2559 34.6348C10.0323 34.665 9.8527 34.6804 9.72559 34.6885C9.66217 34.6925 9.61076 34.6952 9.57422 34.6963C9.55628 34.6968 9.54138 34.6971 9.53027 34.6973H9.50879C9.23517 34.6972 8.98022 34.5536 8.83887 34.3193C8.69764 34.085 8.68875 33.7938 8.81641 33.5518L8.81738 33.5508L8.8418 33.502C8.85971 33.4673 8.88734 33.4152 8.9209 33.3486C8.9881 33.2153 9.0821 33.0222 9.19238 32.7891C9.41393 32.3206 9.69361 31.6959 9.93066 31.0566C10.172 30.4056 10.353 29.7875 10.4043 29.3203C10.4284 29.1 10.4140 28.9618 10.3975 28.8887C9.94561 28.6559 9.50786 28.4066 9.08789 28.1396C5.42608 25.8115 3.00014 22.1921 3 18.0596C3.00012 14.4192 4.88576 11.3322 7.83691 9.18164C10.7803 7.03685 14.8015 5.80178 19.1973 5.80176ZM23.8086 28.7793C23.8485 28.7827 23.8889 28.7851 23.9297 28.7852H23.9287C23.8882 28.7851 23.8482 28.7827 23.8086 28.7793ZM23.6621 28.7578C23.6338 28.7523 23.6058 28.7464 23.5781 28.7393C23.6058 28.7464 23.6338 28.7523 23.6621 28.7578ZM23.5410 28.7295C23.52 28.7234 23.4992 28.717 23.4785 28.71C23.4992 28.717 23.52 28.7234 23.5410 28.7295ZM23.4268 28.6914C23.4043 28.6828 23.3822 28.6738 23.3604 28.6641C23.3822 28.6738 23.4043 28.6828 23.4268 28.6914ZM23.3291 28.6504C23.3215 28.6468 23.3142 28.6424 23.3066 28.6387C23.3142 28.6424 23.3215 28.6468 23.3291 28.6504ZM23.1602 28.5537C23.1550 28.5503 23.1487 28.5484 23.1436 28.5449L23.1338 28.5371C23.1423 28.543 23.1515 28.548 23.1602 28.5537ZM22.8389 28.2646C22.8130 28.2328 22.7897 28.1991 22.7666 28.165C22.7896 28.1991 22.8130 28.2328 22.8389 28.2646ZM22.7363 28.1211C22.7214 28.0971 22.7088 28.0718 22.6953 28.0469C22.7088 28.0718 22.7214 28.0971 22.7363 28.1211ZM22.6562 27.9727C22.6436 27.9456 22.6330 27.9176 22.6221 27.8896C22.6330 27.9176 22.6436 27.9456 22.6562 27.9727ZM22.5938 27.8145C22.5918 27.8085 22.5888 27.8029 22.5869 27.7969L22.5527 27.6621C22.5634 27.7140 22.5776 27.7648 22.5938 27.8145ZM22.5244 27.3789L22.5312 27.5225C22.5265 27.4753 22.5234 27.4273 22.5234 27.3789C22.5234 27.3325 22.5259 27.2865 22.5303 27.2412C22.5259 27.2864 22.5244 27.3326 22.5244 27.3789ZM22.6934 26.709C22.6504 26.7886 22.6152 26.8731 22.5879 26.9609L22.5527 27.0957C22.5808 26.9585 22.6287 26.8285 22.6934 26.709ZM23.2598 26.1426L23.1436 26.2129C23.1808 26.1877 23.2192 26.1641 23.2588 26.1426L23.3818 26.083C23.34 26.1008 23.2994 26.121 23.2598 26.1426ZM23.6113 26.0098C23.6227 26.0071 23.6340 26.0033 23.6455 26.001L23.7852 25.9795C23.7260 25.9856 23.6681 25.9966 23.6113 26.0098ZM23.8008 28.7783C23.7638 28.775 23.7275 28.7698 23.6914 28.7637C23.7275 28.7698 23.7639 28.7749 23.8008 28.7783Z" fill={color} />
+        <Path d="M27.8565 32.7121V28.7844H23.9288C23.1524 28.7844 22.5225 28.1544 22.5225 27.378C22.5228 26.6019 23.1526 25.9732 23.9288 25.9732H27.8565V22.0455C27.8565 21.2693 28.4852 20.6395 29.2613 20.6392C30.0377 20.6392 30.6677 21.2691 30.6677 22.0455V25.9732H34.5954C35.3713 25.9734 35.9999 26.602 36.0002 27.378C36.0002 28.1542 35.3715 28.7841 34.5954 28.7844H30.6677V32.7121C30.6674 33.4882 30.0375 34.1169 29.2613 34.1169C28.4853 34.1166 27.8567 33.488 27.8565 32.7121Z" fill={color} />
+    </Svg>
+);
 
 const MOCK_MESSAGES = [
     {
@@ -63,14 +95,14 @@ const MOCK_MESSAGES = [
 ];
 
 const QUICK_OPTIONS = [
-    { id: 'photo', label: 'Photo', icon: 'image', type: 'ionicon', color: '#2196F3', bg: '#1A2733' },
-    { id: 'location', label: 'Location', icon: 'location', type: 'ionicon', color: '#009688', bg: '#1A2927' },
-    { id: '5min', label: '5 Minutes', icon: 'bus', type: 'font-awesome-5', color: '#FFC107', bg: '#2E2818' },
-    { id: 'camera', label: 'Camera', icon: 'camera', type: 'ionicon', color: '#ECEFF1', bg: '#26292E' },
-    { id: 'ontheway', label: 'On The Way', icon: 'chatplus', type: 'custom', color: '#FFFFFF', bg: '#2A2D33' }, // Custom icon shim
-    { id: 'template1', label: 'Template', icon: 'chatprocessing', type: 'custom', color: '#FFFFFF', bg: '#2A2D33' },
-    { id: 'template2', label: 'Template', icon: 'chatprocessing', type: 'custom', color: '#FFFFFF', bg: '#2A2D33' },
-    { id: 'template3', label: 'Template', icon: 'chatprocessing', type: 'custom', color: '#FFFFFF', bg: '#2A2D33' },
+    { id: 'photo', label: 'Photo', icon: 'custom', color: '#007BFC', bg: '#1A2733' },
+    { id: 'location', label: 'Location', icon: 'custom', color: '#06CF9C', bg: '#1A2927' },
+    { id: '5min', label: '5 Minutes', icon: 'custom', color: '#B99A4A', bg: '#2E2818' },
+    { id: 'camera', label: 'Camera', icon: 'custom', color: '#FFFFFF', bg: '#26292E' },
+    { id: 'ontheway', label: 'On The Way', icon: 'custom', color: '#FFFFFF', bg: '#2A2D33', isAdded: true },
+    { id: 'template1', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
+    { id: 'template2', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
+    { id: 'template3', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
 ];
 
 const TripChatScreen = () => {
@@ -161,10 +193,10 @@ const TripChatScreen = () => {
             const newTemplate = {
                 id: newTemplateId,
                 label: templateName, // User provided name
-                icon: 'chatprocessing', // Keep same icon or change
-                type: 'custom',
+                icon: 'custom',
                 color: '#FFFFFF',
-                bg: '#2A2D33'
+                bg: '#2A2D33',
+                isAdded: true
             };
 
             // Add to options list. Insert before the empty templates or append?
@@ -224,6 +256,17 @@ const TripChatScreen = () => {
     };
 
     const renderOptionItem = (item) => {
+        let IconComponent = null;
+
+        if (item.id === 'photo') IconComponent = <PhotoIcon size={28} />;
+        else if (item.id === 'location') IconComponent = <LocationIconSvg size={28} />;
+        else if (item.id === '5min') IconComponent = <FiveMinIcon size={28} />;
+        else if (item.id === 'camera') IconComponent = <CameraIconSvg size={28} />;
+        else if (item.id === 'ontheway' || item.id.startsWith('template')) {
+            const iconColor = item.isAdded ? "#FFFFFF" : "#1A1E21";
+            IconComponent = <TemplateIconSvg size={28} color={iconColor} />;
+        }
+
         return (
             <TouchableOpacity
                 style={styles.optionItem}
@@ -231,11 +274,7 @@ const TripChatScreen = () => {
                 onPress={() => handleOptionPress(item)}
             >
                 <View style={[styles.optionIconCircle, { backgroundColor: '#2C2F33' }]}>
-                    {item.type === 'ionicon' && <Ionicons name={item.icon} size={24} color={item.color} />}
-                    {item.type === 'font-awesome-5' && <FontAwesome5 name={item.icon} size={20} color={item.color} />}
-                    {item.type === 'custom' && (
-                        <MaterialCommunityIcons name={item.id === 'ontheway' ? "message-plus" : "message-text-outline"} size={22} color="#9BA1A6" />
-                    )}
+                    {IconComponent}
                 </View>
                 <Text style={styles.optionLabel}>{item.label}</Text>
             </TouchableOpacity>
@@ -331,11 +370,13 @@ const TripChatScreen = () => {
                                     {options.map(renderOptionItem)}
                                 </View>
 
-                                {/* Pagination Dots */}
-                                <View style={styles.paginationDots}>
-                                    <View style={[styles.dot, styles.activeDot]} />
-                                    <View style={styles.dot} />
-                                </View>
+                                {/* Pagination Dots - Only show if more than one page (8 items) is needed */}
+                                {options.length > 8 && (
+                                    <View style={styles.paginationDots}>
+                                        <View style={[styles.dot, styles.activeDot]} />
+                                        <View style={styles.dot} />
+                                    </View>
+                                )}
                             </View>
                         )}
                     </SafeAreaView>
@@ -391,7 +432,7 @@ const TripChatScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#121417',
+        backgroundColor: '#1A1E21',
     },
     headerArea: {
         backgroundColor: '#1A1E21',

@@ -205,32 +205,84 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJour
                     <View style={styles.chipsContainer}>
                         <View style={styles.row}>
                             <TouchableOpacity
-                                style={[styles.chip, sortOption === 'A-Z' && styles.chipSelected]}
+                                style={styles.chip}
                                 onPress={() => handleSelect('A-Z')}
                             >
-                                <Text style={[styles.chipText, sortOption === 'A-Z' && styles.chipTextSelected]}>A-Z</Text>
+                                {sortOption === 'A-Z' ? (
+                                    <LinearGradient
+                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={StyleSheet.absoluteFill}
+                                    >
+                                        <View style={styles.chipInnerSelected}>
+                                            <Text style={[styles.chipText, styles.chipTextSelected]}>A-Z</Text>
+                                        </View>
+                                    </LinearGradient>
+                                ) : (
+                                    <Text style={styles.chipText}>A-Z</Text>
+                                )}
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={[styles.chip, sortOption === 'Z-A' && styles.chipSelected]}
+                                style={styles.chip}
                                 onPress={() => handleSelect('Z-A')}
                             >
-                                <Text style={[styles.chipText, sortOption === 'Z-A' && styles.chipTextSelected]}>Z-A</Text>
+                                {sortOption === 'Z-A' ? (
+                                    <LinearGradient
+                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={StyleSheet.absoluteFill}
+                                    >
+                                        <View style={styles.chipInnerSelected}>
+                                            <Text style={[styles.chipText, styles.chipTextSelected]}>Z-A</Text>
+                                        </View>
+                                    </LinearGradient>
+                                ) : (
+                                    <Text style={styles.chipText}>Z-A</Text>
+                                )}
                             </TouchableOpacity>
                         </View>
 
                         <TouchableOpacity
-                            style={[styles.chip, styles.chipFullWidth, sortOption === 'Journey' && styles.chipSelected]}
+                            style={[styles.chip, styles.chipFullWidth]}
                             onPress={() => handleSelect('Journey')}
                         >
-                            <Text style={[styles.chipText, sortOption === 'Journey' && styles.chipTextSelected]}>Search Journey</Text>
+                            {sortOption === 'Journey' ? (
+                                <LinearGradient
+                                    colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={StyleSheet.absoluteFill}
+                                >
+                                    <View style={styles.chipInnerSelected}>
+                                        <Text style={[styles.chipText, styles.chipTextSelected]}>Search Journey</Text>
+                                    </View>
+                                </LinearGradient>
+                            ) : (
+                                <Text style={styles.chipText}>Search Journey</Text>
+                            )}
                         </TouchableOpacity>
 
                         <View style={styles.row}>
                             <TouchableOpacity
-                                style={[styles.chip, { flex: 0.5 }, sortOption === 'Likes' && styles.chipSelected]}
+                                style={[styles.chip, { flex: 0.5 }]}
                                 onPress={() => handleSelect('Likes')}
                             >
-                                <Text style={[styles.chipText, sortOption === 'Likes' && styles.chipTextSelected]}>Likes</Text>
+                                {sortOption === 'Likes' ? (
+                                    <LinearGradient
+                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={StyleSheet.absoluteFill}
+                                    >
+                                        <View style={styles.chipInnerSelected}>
+                                            <Text style={[styles.chipText, styles.chipTextSelected]}>Likes</Text>
+                                        </View>
+                                    </LinearGradient>
+                                ) : (
+                                    <Text style={styles.chipText}>Likes</Text>
+                                )}
                             </TouchableOpacity>
                             <View style={{ flex: 0.5 }} />
                         </View>
@@ -603,17 +655,21 @@ const styles = StyleSheet.create({
         height: 56,
         justifyContent: 'center',
         alignItems: 'center',
-        paddingHorizontal: 20,
         borderWidth: 1,
         borderColor: 'transparent',
+        overflow: 'hidden',
+    },
+    chipInnerSelected: {
+        flex: 1,
+        margin: 1.5,
+        borderRadius: 14.5, // slightly less than 16 to account for margin
+        backgroundColor: '#1A1E21',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     chipFullWidth: {
         width: '100%',
         flex: 0,
-    },
-    chipSelected: {
-        borderColor: '#B99A4A',
-        backgroundColor: '#1A1E21',
     },
     chipText: {
         color: '#FFF',

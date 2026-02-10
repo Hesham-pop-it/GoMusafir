@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#121417"
+      "backgroundColor": "#1A1E21"
     },
     "ios": {
       "supportsTablet": true,
@@ -21,7 +21,7 @@
       "edgeToEdgeEnabled": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
-        "backgroundColor": "#121417"
+        "backgroundColor": "#1A1E21"
       },
       "config": {
         "googleMaps": {

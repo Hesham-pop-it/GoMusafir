@@ -17,6 +17,7 @@ import {
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -25,6 +26,25 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 
 const { width, height } = Dimensions.get('window');
+
+const MicUnmutedIcon = ({ color = "white", size = 20 }) => (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <G clipPath="url(#clip0_mic_unmuted)">
+            <Path fillRule="evenodd" clipRule="evenodd" d="M12 16.5C14.4842 16.4974 16.4974 14.4842 16.5 12V6C16.5 3.51472 14.4853 1.5 12 1.5C9.51472 1.5 7.5 3.51472 7.5 6V12C7.50258 14.4842 9.51579 16.4974 12 16.5ZM9 6C9 4.34315 10.3431 3 12 3C13.6569 3 15 4.34315 15 6V12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12V6ZM12.75 19.4625V21.75C12.75 22.1642 12.4142 22.5 12 22.5C11.5858 22.5 11.25 22.1642 11.25 21.75V19.4625C7.41988 19.0728 4.50473 15.8499 4.5 12C4.5 11.5858 4.83579 11.25 5.25 11.25C5.66421 11.25 6 11.5858 6 12C6 15.3137 8.68629 18 12 18C15.3137 18 18 15.3137 18 12C18 11.5858 18.3358 11.25 18.75 11.25C19.1642 11.25 19.5 11.5858 19.5 12C19.4953 15.8499 16.5801 19.0728 12.75 19.4625Z" fill={color} />
+        </G>
+        <Defs>
+            <ClipPath id="clip0_mic_unmuted">
+                <Rect width="24" height="24" fill="white" />
+            </ClipPath>
+        </Defs>
+    </Svg>
+);
+
+const MicMutedIcon = ({ color = "white", size = 20 }) => (
+    <Svg width={size} height={size} viewBox="0 0 28 28" fill="none">
+        <Path fillRule="evenodd" clipRule="evenodd" d="M22.0552 21.7457L7.0552 5.24568C6.87596 5.04363 6.60193 4.95357 6.33777 5.00988C6.07362 5.0662 5.86015 5.2602 5.7789 5.51778C5.69765 5.77536 5.76117 6.05674 5.9452 6.25443L9.5002 10.1647V14.0001C9.50042 15.6452 10.3983 17.159 11.8419 17.9481C13.2854 18.7371 15.0444 18.6756 16.4293 17.7876L17.4493 18.9126C15.6167 20.2 13.2196 20.3596 11.2325 19.3265C9.24544 18.2934 7.99911 16.2397 8.0002 14.0001C8.0002 13.5858 7.66442 13.2501 7.2502 13.2501C6.83599 13.2501 6.5002 13.5858 6.5002 14.0001C6.50493 17.85 9.42008 21.0728 13.2502 21.4626V23.7501C13.2502 24.1643 13.586 24.5001 14.0002 24.5001C14.4144 24.5001 14.7502 24.1643 14.7502 23.7501V21.4616C16.0953 21.3278 17.379 20.8318 18.4646 20.0263L20.9452 22.7544C21.1244 22.9565 21.3985 23.0465 21.6626 22.9902C21.9268 22.9339 22.1403 22.7399 22.2215 22.4823C22.3028 22.2247 22.2392 21.9434 22.0552 21.7457ZM14.0002 17.0001C12.3433 17.0001 11.0002 15.6569 11.0002 14.0001V11.8147L15.399 16.6541C14.9677 16.8813 14.4876 17.0001 14.0002 17.0001ZM10.1715 5.63568C11.2286 3.92384 13.2936 3.12174 15.2291 3.67119C17.1646 4.22064 18.5002 5.98809 18.5002 8.00005V13.6654C18.5002 14.0796 18.1644 14.4154 17.7502 14.4154C17.336 14.4154 17.0002 14.0796 17.0002 13.6654V8.00005C17.0009 6.65799 16.1102 5.4787 14.8192 5.11234C13.5281 4.74598 12.1507 5.28168 11.4465 6.42412C11.3105 6.66222 11.0554 6.80713 10.7812 6.80203C10.5071 6.79694 10.2576 6.64264 10.1305 6.39965C10.0035 6.15666 10.0192 5.86371 10.1715 5.63568ZM19.5915 16.1816C19.8628 15.4864 20.0015 14.7464 20.0002 14.0001C20.0002 13.5858 20.336 13.2501 20.7502 13.2501C21.1644 13.2501 21.5002 13.5858 21.5002 14.0001C21.5015 14.9331 21.3279 15.8582 20.9883 16.7272C20.8949 16.9825 20.6707 17.1672 20.4023 17.21C20.1339 17.2529 19.8634 17.1472 19.6951 16.9338C19.5268 16.7204 19.4872 16.4326 19.5915 16.1816Z" fill={color} />
+    </Svg>
+);
 
 const TripOverviewScreen = () => {
     const navigation = useNavigation();
@@ -52,6 +72,8 @@ const TripOverviewScreen = () => {
     const [emergencyModalVisible, setEmergencyModalVisible] = useState(false);
     const [countdown, setCountdown] = useState(10);
     const [isMuted, setIsMuted] = useState(true);
+    const [isAllMuted, setIsAllMuted] = useState(true);
+    const [isChannelStarted, setIsChannelStarted] = useState(true);
 
     // Mock data if trip is missing
     // Default Image if none provided
@@ -95,6 +117,13 @@ const TripOverviewScreen = () => {
         'The bus leaves in 5 min',
         'Gather at the meeting point',
         'Bus is arriving, please get ready'
+    ];
+
+    const MOCK_NOTIFICATIONS = [
+        { id: 1, name: 'Ethan Carter', message: 'ask your location' },
+        { id: 2, name: 'Ethan Carter', message: 'ask your location' },
+        { id: 3, name: 'Ethan Carter', message: 'ask your location' },
+        { id: 4, name: 'Ethan Carter', message: 'ask your location' },
     ];
 
     const handleQuickMsgPress = (msg) => {
@@ -215,7 +244,7 @@ const TripOverviewScreen = () => {
                 resizeMode="cover"
             >
                 <LinearGradient
-                    colors={['rgba(0,0,0,0.3)', '#121417']}
+                    colors={['rgba(0,0,0,0.3)', '#1A1E21']}
                     style={styles.gradientOverlay}
                     start={{ x: 0.5, y: 0 }}
                     end={{ x: 0.5, y: 0.65 }}
@@ -235,7 +264,10 @@ const TripOverviewScreen = () => {
                         <Text style={styles.headerTitle}>Overview</Text>
 
                         {isAdmin ? (
-                            <TouchableOpacity style={styles.iconButton}>
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => navigation.navigate('JourneySuccess')}
+                            >
                                 <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#FFF" />
                             </TouchableOpacity>
                         ) : (
@@ -331,28 +363,53 @@ const TripOverviewScreen = () => {
                                                 !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
                                             ]}
                                         >
-                                            <Ionicons
-                                                name={isMuted ? "mic-off-outline" : "mic"}
-                                                size={20}
-                                                color={isMuted ? "#FFF" : "#D66A77"}
-                                                style={{ marginRight: 8 }}
-                                            />
-                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                                Mute Myself
+                                            <View style={{ marginRight: 8 }}>
+                                                {isMuted ? (
+                                                    <MicMutedIcon color="#FFF" size={20} />
+                                                ) : (
+                                                    <MicUnmutedIcon color="#D66A77" size={20} />
+                                                )}
+                                            </View>
+                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77', fontWeight: 'bold' }]}>
+                                                {isMuted ? 'Mute Myself' : 'Unmute Myself'}
                                             </Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.controlButtonOutline}>
-                                            <Ionicons name="mic-off-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                                            <Text style={styles.controlText}>Mute All</Text>
+                                        <TouchableOpacity
+                                            onPress={() => setIsAllMuted(!isAllMuted)}
+                                            style={[
+                                                styles.controlButtonOutline,
+                                                !isAllMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                            ]}
+                                        >
+                                            <View style={{ marginRight: 8 }}>
+                                                {isAllMuted ? (
+                                                    <MicMutedIcon color="#FFF" size={20} />
+                                                ) : (
+                                                    <MicUnmutedIcon color="#D66A77" size={20} />
+                                                )}
+                                            </View>
+                                            <Text style={[styles.controlText, !isAllMuted && { color: '#D66A77' }]}>
+                                                {isAllMuted ? 'Mute All' : 'Unmute All'}
+                                            </Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.controlButtonOutline}>
-                                            <Ionicons name="play-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                                            <Text style={styles.controlText}>Channel Start</Text>
+                                        <TouchableOpacity
+                                            style={[
+                                                styles.controlButtonOutline,
+                                                { width: '100%', backgroundColor: isChannelStarted ? '#34C759' : '#D66A77', borderColor: isChannelStarted ? '#34C759' : '#D66A77' }
+                                            ]}
+                                            onPress={() => setIsChannelStarted(!isChannelStarted)}
+                                        >
+                                            <Ionicons
+                                                name={isChannelStarted ? "play-circle-outline" : "pause-circle-outline"}
+                                                size={20}
+                                                color={isChannelStarted ? "#FFF" : "#2D2528"}
+                                                style={{ marginRight: 8 }}
+                                            />
+                                            <Text style={[styles.controlText, { color: isChannelStarted ? "#FFF" : "#2D2528" }]}>
+                                                {isChannelStarted ? 'Channel Start' : 'Channel Pause'}
+                                            </Text>
                                         </TouchableOpacity>
-                                        <TouchableOpacity style={styles.controlButtonOutline}>
-                                            <Ionicons name="pause-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                                            <Text style={styles.controlText}>Channel Pause</Text>
-                                        </TouchableOpacity>
+
                                     </>
                                 ) : (
                                     <TouchableOpacity
@@ -363,12 +420,13 @@ const TripOverviewScreen = () => {
                                             !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
                                         ]}
                                     >
-                                        <Ionicons
-                                            name={isMuted ? "mic-off-outline" : "mic"}
-                                            size={20}
-                                            color={isMuted ? "#FFF" : "#D66A77"}
-                                            style={{ marginRight: 8 }}
-                                        />
+                                        <View style={{ marginRight: 8 }}>
+                                            {isMuted ? (
+                                                <MicMutedIcon color="#FFF" size={20} />
+                                            ) : (
+                                                <MicUnmutedIcon color="#D66A77" size={20} />
+                                            )}
+                                        </View>
                                         <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
                                             Mute Myself
                                         </Text>
@@ -421,6 +479,32 @@ const TripOverviewScreen = () => {
                             </TouchableOpacity>
                         </View>
 
+                        {/* Notifications Section */}
+                        <View style={styles.sectionCard}>
+                            <Text style={styles.notificationTitle}>Notification</Text>
+                            <View style={styles.notificationListContainer}>
+                                <ScrollView
+                                    showsVerticalScrollIndicator={false}
+                                    nestedScrollEnabled={true}
+                                >
+                                    {MOCK_NOTIFICATIONS.map((item, index) => (
+                                        <View key={item.id}>
+                                            <View style={styles.notificationItem}>
+                                                <View style={styles.notificationContent}>
+                                                    <Text style={styles.notifName}>{item.name} <Text style={styles.notifMsg}>{item.message}</Text></Text>
+                                                </View>
+                                                <TouchableOpacity style={styles.acceptButton}>
+                                                    <Ionicons name="checkmark-circle-outline" size={14} color="#FFF" style={{ marginRight: 6 }} />
+                                                    <Text style={styles.acceptButtonText}>Accept</Text>
+                                                </TouchableOpacity>
+                                            </View>
+                                            {index < MOCK_NOTIFICATIONS.length - 1 && <View style={styles.notificationSeparator} />}
+                                        </View>
+                                    ))}
+                                </ScrollView>
+                            </View>
+                        </View>
+
 
                         {/* Participants List */}
                         <View
@@ -429,9 +513,9 @@ const TripOverviewScreen = () => {
                             <View style={styles.sectionHeaderRow}>
                                 <Text style={styles.sectionTitle}>Participants</Text>
                                 <View style={styles.searchBar}>
-                                    <Ionicons name="search" size={16} color="#9BA1A6" />
+                                    <Ionicons name="search" size={16} color="#A1A1AA" />
                                 </View>
-                                <TouchableOpacity onPress={() => navigation.navigate('Participants')}>
+                                <TouchableOpacity onPress={() => navigation.navigate('TripParticipants')}>
                                     <Ionicons name="chevron-forward" size={20} color="#fff" />
                                 </TouchableOpacity>
                             </View>
@@ -491,7 +575,7 @@ const TripOverviewScreen = () => {
                                 }}
                             >
                                 <View style={styles.alertIconContainer}>
-                                    <Ionicons name="information-outline" size={24} color="#FFF" />
+                                    <Ionicons name="information-circle-outline" size={24} color="#FDF3DC" />
                                 </View>
                                 <View style={styles.alertContent}>
                                     {/* <Ionicons name="chevron-forward" size={20} color="#FFF" style={{ alignSelf: 'flex-end', marginBottom: 20 }} /> */}
@@ -586,14 +670,22 @@ const TripOverviewScreen = () => {
 
                                         {isAdmin && (
                                             <>
-                                                <TouchableOpacity
-                                                    style={styles.actionButtonGreen}
+                                                <GradientBorderButton
+                                                    text="Edit Participant"
                                                     onPress={() => {
                                                         setDetailVisible(false);
                                                         navigation.navigate('EditParticipant', { participant: selectedParticipant });
                                                     }}
+                                                    style={{ marginBottom: 16 }}
+                                                    innerBg="#1E2124"
+                                                />
+
+                                                <TouchableOpacity
+                                                    style={styles.deleteButtonPill}
+                                                    onPress={handleDeletePress}
                                                 >
-                                                    <Text style={styles.actionButtonText}>Edit Participant</Text>
+                                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
+                                                    <Text style={{ color: '#fff' }}>Delete for this trip</Text>
                                                 </TouchableOpacity>
 
                                                 <TouchableOpacity
@@ -601,15 +693,7 @@ const TripOverviewScreen = () => {
                                                     onPress={handleDeletePress}
                                                 >
                                                     <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                                    <Text style={styles.deleteButtonText}>Delete for this trip</Text>
-                                                </TouchableOpacity>
-
-                                                <TouchableOpacity
-                                                    style={styles.deleteButtonPill}
-                                                    onPress={handleDeletePress}
-                                                >
-                                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                                    <Text style={styles.deleteButtonText}>Delete for all trip</Text>
+                                                    <Text style={{ color: '#fff' }}>Delete for all trip</Text>
                                                 </TouchableOpacity>
                                             </>
                                         )}
@@ -761,7 +845,7 @@ const styles = StyleSheet.create({
         width: 54,
         height: 54,
         borderRadius: 32,
-        backgroundColor: '#23272A',
+        backgroundColor: '#2D3134',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -812,12 +896,59 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     sectionCard: {
-        backgroundColor: '#2D3134',
-        borderRadius: 20,
-        padding: 16,
-        marginVertical: 5,
-        borderWidth: 1,
-        borderColor: '#2C2E33',
+        backgroundColor: '#23272A',
+        borderRadius: 24,
+        padding: 20,
+        marginVertical: 6,
+        // borderWidth: 1,
+        // borderColor: 'rgba(255,255,255,0.05)',
+    },
+    notificationTitle: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(22),
+        fontWeight: 'bold',
+        marginBottom: 10,
+    },
+    notificationListContainer: {
+        height: 160,
+    },
+    notificationItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingVertical: 14,
+    },
+    notificationContent: {
+        flex: 1,
+        marginRight: 10,
+    },
+    notifName: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(15),
+        fontWeight: 'bold'
+    },
+    notifMsg: {
+        color: '#9BA1A6',
+        fontWeight: '400',
+    },
+    acceptButton: {
+        backgroundColor: '#34C759',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 14,
+        minWidth: 100,
+    },
+    acceptButtonText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(14),
+        fontWeight: 'bold',
+    },
+    notificationSeparator: {
+        height: 1,
+        backgroundColor: 'rgba(255,255,255,0.08)',
     },
     channelHeader: {
         flexDirection: 'row',
@@ -909,7 +1040,7 @@ const styles = StyleSheet.create({
     searchBar: {
         width: "50%",
         height: 40,
-        backgroundColor: '#23272A',
+        backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 15,
         justifyContent: 'center',
         paddingHorizontal: 10,
@@ -973,7 +1104,7 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(12),
     },
     alertCard: {
-        backgroundColor: '#2A2121', // Dark reddish tint background
+        backgroundColor: '#2D2528', // Dark reddish tint background
         justifyContent: 'flex-start',
         alignItems: 'flex-start',
         padding: 20,
@@ -982,7 +1113,7 @@ const styles = StyleSheet.create({
         width: 50,
         height: 50,
         borderRadius: 25,
-        backgroundColor: '#D32F2F', // Red alert color
+        backgroundColor: '#D92D20', // Red alert color
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 10,
@@ -1052,12 +1183,12 @@ const styles = StyleSheet.create({
     sheetTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(28),
-        fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+        fontFamily: 'CormorantGaramond',
         marginBottom: 16,
     },
     divider: {
-        height: 1,
-        backgroundColor: '#2C2E33',
+        height: 0.2,
+        backgroundColor: '#eeeeee',
         marginBottom: 24,
     },
     detailHeader: {
@@ -1073,7 +1204,7 @@ const styles = StyleSheet.create({
     },
     detailName: {
         color: '#FFF',
-        fontSize: responsiveFontSize(20),
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
     },
     mapPlaceholder: {
@@ -1104,20 +1235,6 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
-    actionButtonGreen: {
-        width: '100%',
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: '#2AB060', // Vibrant green
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 16,
-    },
-    actionButtonText: {
-        color: '#FFF',
-        fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
-    },
     deleteButtonPill: {
         width: '100%',
         height: 56,
@@ -1144,7 +1261,7 @@ const styles = StyleSheet.create({
     },
     confirmTitle: {
         color: '#FFF',
-        fontSize: responsiveFontSize(20),
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
         textAlign: 'center',
         marginBottom: 30,
@@ -1299,7 +1416,7 @@ const mapDarkStyle = [
     {
         "featureType": "landscape",
         "elementType": "geometry",
-        "stylers": [{ "color": "#121417" }]
+        "stylers": [{ "color": "#1A1E21" }]
     },
     {
         "featureType": "poi",

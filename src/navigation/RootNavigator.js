@@ -23,8 +23,10 @@ import HelpSupportScreen from '../screens/support/HelpSupportScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ForgotPasswordVerifyScreen from '../screens/auth/ForgotPasswordVerifyScreen';
 import ParticipantsScreen from '../screens/participants/ParticipantsScreen';
+import TripParticipantsScreen from '../screens/trip/ParticipantsScreen';
 import EditParticipantScreen from '../screens/trip/EditParticipantScreen';
 import AlertHistoryScreen from '../screens/trip/AlertHistoryScreen';
+import JourneySuccessScreen from '../screens/trip/JourneySuccessScreen';
 
 import JoinWithLinkScreen from '../screens/auth/JoinWithLinkScreen';
 import ScanQrScreen from '../screens/auth/ScanQrScreen';
@@ -76,8 +78,10 @@ export default function RootNavigator() {
                 <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
                 <Stack.Screen name="ForgotPasswordVerify" component={ForgotPasswordVerifyScreen} />
                 <Stack.Screen name="Participants" component={ParticipantsScreen} />
+                <Stack.Screen name="TripParticipants" component={TripParticipantsScreen} />
                 <Stack.Screen name="EditParticipant" component={EditParticipantScreen} />
                 <Stack.Screen name="AlertHistory" component={AlertHistoryScreen} />
+                <Stack.Screen name="JourneySuccess" component={JourneySuccessScreen} />
             </Stack.Navigator>
         </NavigationContainer>
     );

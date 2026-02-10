@@ -25,12 +25,11 @@ const TripSettingsScreen = () => {
     const invitationCode = directCode || trip?.invitationCode;
     const isAdmin = !invitationCode;
 
-    const [visibilityModalVisible, setVisibilityModalVisible] = useState(false);
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [seatModalVisible, setSeatModalVisible] = useState(false);
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [seatCount, setSeatCount] = useState(1);
-    const [selectedField, setSelectedField] = useState(null);
+    const [expandedField, setExpandedField] = useState(null);
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
         lastname: 'Show to organizer',
@@ -47,17 +46,13 @@ const TripSettingsScreen = () => {
         'Custom choice'
     ];
 
-    const openVisibilityModal = (field) => {
-        setSelectedField(field);
-        setVisibilityModalVisible(true);
+    const toggleExpand = (field) => {
+        setExpandedField(expandedField === field ? null : field);
     };
 
-    const handleSelectVisibility = (option) => {
-        if (selectedField) {
-            setVisibilitySettings(prev => ({ ...prev, [selectedField]: option }));
-            setVisibilityModalVisible(false);
-            setSelectedField(null);
-        }
+    const handleSelectVisibility = (field, option) => {
+        setVisibilitySettings(prev => ({ ...prev, [field]: option }));
+        setExpandedField(null);
     };
 
     const handleDeleteTrip = () => {
@@ -74,15 +69,42 @@ const TripSettingsScreen = () => {
         setRequestSentVisible(true);
     };
 
-    const VisibilityItem = ({ label, field }) => (
-        <TouchableOpacity style={styles.visibilityRow} onPress={() => openVisibilityModal(field)}>
-            <Text style={styles.visibilityLabel}>{label}</Text>
-            <View style={styles.visibilityValueContainer}>
-                <Text style={styles.visibilityValue}>{visibilitySettings[field]}</Text>
-                <Ionicons name="chevron-forward" size={16} color="#B99A4A" />
+    const VisibilityItem = ({ label, field }) => {
+        const isExpanded = expandedField === field;
+        return (
+            <View style={styles.visibilityItemContainer}>
+                <TouchableOpacity
+                    style={styles.visibilityRow}
+                    onPress={() => toggleExpand(field)}
+                    activeOpacity={0.7}
+                >
+                    <Text style={styles.visibilityLabel}>{label}</Text>
+                    <View style={styles.visibilityValueContainer}>
+                        <Text style={styles.visibilityValue}>{visibilitySettings[field]}</Text>
+                        <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={16} color="#B99A4A" />
+                    </View>
+                </TouchableOpacity>
+                {isExpanded && (
+                    <View style={styles.expandedOptions}>
+                        {visibilityOptions.map((option, index) => (
+                            <TouchableOpacity
+                                key={index}
+                                style={styles.optionItem}
+                                onPress={() => handleSelectVisibility(field, option)}
+                            >
+                                <Text style={[
+                                    styles.optionText,
+                                    visibilitySettings[field] === option && { color: '#B99A4A' }
+                                ]}>
+                                    {option}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                )}
             </View>
-        </TouchableOpacity>
-    );
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -145,7 +167,7 @@ const TripSettingsScreen = () => {
                 )}
 
                 {/* Visibility Settings */}
-                <Text style={styles.sectionTitle}>Privacy Visibility</Text>
+                <Text style={styles.sectionTitle}>Data visibility</Text>
                 <View style={styles.visibilityCard}>
                     <VisibilityItem label="First Name" field="name" />
                     <VisibilityItem label="Last Name" field="lastname" />
@@ -168,34 +190,7 @@ const TripSettingsScreen = () => {
                 <View style={{ height: 100 }} />
             </ScrollView>
 
-            {/* Visibility Selection Modal */}
-            <Modal
-                visible={visibilityModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setVisibilityModalVisible(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setVisibilityModalVisible(false)}
-                >
-                    <View style={styles.modalContent}>
-                        {visibilityOptions.map((option, index) => (
-                            <TouchableOpacity
-                                key={index}
-                                style={styles.modalOption}
-                                onPress={() => handleSelectVisibility(option)}
-                            >
-                                <Text style={[
-                                    styles.modalOptionText,
-                                    visibilitySettings[selectedField] === option && { color: '#B99A4A', fontWeight: 'bold' }
-                                ]}>{option}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </TouchableOpacity>
-            </Modal>
+            {/* Modal references removed for inline visibility logic */}
 
             {/* Delete Confirmation Modal */}
             <Modal
@@ -345,8 +340,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: responsiveFontSize(22),
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
-        fontWeight: 'bold',
+        fontFamily: 'IBMPlexSans'
     },
     iconButton: {
         padding: 5,
@@ -356,20 +350,19 @@ const styles = StyleSheet.create({
         paddingTop: 10,
     },
     sectionTitle: {
-        fontSize: responsiveFontSize(18),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
         marginBottom: 15,
-        fontWeight: '600',
         fontFamily: 'IBMPlexSans',
         marginTop: 10,
+        fontWeight: 'bold'
     },
     statsSectionTitle: {
         fontSize: responsiveFontSize(27),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_400Regular',
+        fontFamily: 'CormorantGaramond',
         marginBottom: 30,
         marginTop: 10,
-        fontWeight: 'bold',
     },
     totalSeatsOutlineCard: {
         borderWidth: 1,
@@ -448,7 +441,8 @@ const styles = StyleSheet.create({
     visibilityLabel: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: '600',
+        fontWeight: 'bold',
+        fontFamily: 'IBMPlexSans',
     },
     visibilityValueContainer: {
         flexDirection: 'row',
@@ -458,39 +452,44 @@ const styles = StyleSheet.create({
     visibilityValue: {
         color: '#B99A4A',
         fontSize: responsiveFontSize(14),
+        fontFamily: 'IBMPlexSans',
+        fontWeight: 'bold',
     },
     deleteButton: {
-        backgroundColor: '#2A1C1C',
+        backgroundColor: '#2D2528',
         borderRadius: 30,
         paddingVertical: 16,
         alignItems: 'center',
         marginBottom: 20,
     },
     deleteButtonText: {
-        color: '#E57373',
+        color: '#D66A77',
         fontWeight: '600',
         fontSize: responsiveFontSize(16),
+    },
+    visibilityItemContainer: {
+        marginBottom: 10,
+    },
+    expandedOptions: {
+        paddingLeft: 0,
+        paddingBottom: 10,
+    },
+    optionItem: {
+        paddingVertical: 10,
+        paddingHorizontal: 0,
+    },
+    optionText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(16),
+        fontFamily: 'IBMPlexSans',
+        textAlign: 'right',
+        marginRight: 24, // Align with chevron
     },
     modalOverlay: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    modalContent: {
-        backgroundColor: '#23272A',
-        borderRadius: 12,
-        padding: 10,
-        minWidth: 200,
-        elevation: 10,
-    },
-    modalOption: {
-        paddingVertical: 12,
-        paddingHorizontal: 15,
-    },
-    modalOptionText: {
-        color: '#E0E0E0',
-        fontSize: responsiveFontSize(14),
     },
     deleteModalOverlay: {
         flex: 1,

@@ -7,7 +7,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const GradientBorderButton = ({ text, onPress, style, innerBg = '#121417', children, innerStyle, disabled }) => {
+const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', children, innerStyle, disabled }) => {
     const [isActive, setIsActive] = useState(false);
 
     const activeColor = '#B99A4A';

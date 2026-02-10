@@ -2,6 +2,8 @@ import React from 'react';
 import { View, StyleSheet, Dimensions } from 'react-native';
 import Svg, { Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 
+import { Colors } from '../constants/Colors';
+
 const { width, height } = Dimensions.get('window');
 
 const GlowBackground = ({ children }) => {
@@ -18,8 +20,8 @@ const GlowBackground = ({ children }) => {
                             ry="500"
                             gradientUnits="userSpaceOnUse"
                         >
-                            <Stop offset="0" stopColor="#B99A4A" stopOpacity="0.2" />
-                            <Stop offset="1" stopColor="#1A1E21" stopOpacity="0" />
+                            <Stop offset="0" stopColor={Colors.dark.primary} stopOpacity="0.2" />
+                            <Stop offset="1" stopColor={Colors.dark.background} stopOpacity="0" />
                         </RadialGradient>
                     </Defs>
                     <Rect x="0" y="0" width={width} height={height} fill="url(#grad)" />
@@ -35,7 +37,7 @@ const GlowBackground = ({ children }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#1A1E21',
+        backgroundColor: Colors.dark.background,
     },
     glowContainer: {
         ...StyleSheet.absoluteFillObject,
