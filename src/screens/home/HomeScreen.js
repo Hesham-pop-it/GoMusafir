@@ -9,7 +9,6 @@ import {
     TouchableOpacity,
     StatusBar,
     Platform,
-    Dimensions,
     Modal,
     TouchableWithoutFeedback,
     ScrollView,
@@ -19,12 +18,10 @@ import { Calendar } from 'react-native-calendars';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, MaterialIcons, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Path } from 'react-native-svg';
 import CustomBottomTabBar from '../../components/CustomBottomTabBar';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import * as NavigationBar from 'expo-navigation-bar';
-
-const { width } = Dimensions.get('window');
 
 const TRIPS_DATA = [
     {
@@ -541,11 +538,12 @@ const styles = StyleSheet.create({
     greetingText: {
         fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.bold,
     },
     subtitleText: {
         fontSize: 14,
         color: Colors.dark.textSecondary,
+        fontFamily: Typography.sans.regular,
         marginTop: 4,
     },
     headerIcons: {
@@ -578,6 +576,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: 16,
+        fontFamily: Typography.sans.regular,
         paddingVertical: 10,
     },
     filterButton: {
@@ -746,7 +745,7 @@ const styles = StyleSheet.create({
         zIndex: 2000,
         elevation: 15,
         borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderColor: '#23272A',
     },
     filterDropdown: {
         position: 'absolute',
@@ -765,7 +764,8 @@ const styles = StyleSheet.create({
         padding: 14
     },
     filterDropdownText: {
-        color: '#fff'
+        color: '#fff',
+        fontFamily: Typography.sans.regular,
     },
     filterGrid: {
         flexDirection: 'row',
@@ -793,26 +793,27 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     filterChipText: {
-        color: '#BFC6CC'
+        color: '#BFC6CC',
+        fontFamily: Typography.sans.medium,
     },
     filterChipTextActive: {
         color: '#FFF',
-        fontWeight: 'bold'
+        fontFamily: Typography.sans.bold,
     },
 
     // Language Modal Styles
     languageItem: {
-        paddingVertical: 12,
+        paddingVertical: 7,
         paddingHorizontal: 20,
     },
     languageItemText: {
-        color: '#9BA1A6',
+        color: '#fff',
         fontSize: 16,
-        fontWeight: '500',
+        fontFamily: Typography.sans.medium,
     },
     languageItemTextSelected: {
         color: '#B99A4A',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     languageModalOverlay: {
         flex: 1,
@@ -822,7 +823,7 @@ const styles = StyleSheet.create({
         paddingRight: 30,
     },
     languageModalContent: {
-        backgroundColor: '#2C2E33',
+        backgroundColor: '#23272A',
         borderRadius: 12,
         width: 180,
         maxHeight: 400,

@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(28),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: 'CormorantGaramond',
         marginBottom: 40,
         lineHeight: 36,
     },
@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderColor: '#23272A',
         height: 56,
         paddingHorizontal: 16,
     },

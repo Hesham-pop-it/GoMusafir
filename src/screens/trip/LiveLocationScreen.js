@@ -13,11 +13,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import Svg, { Path } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import { Typography } from '../../constants/Typography';
 
 const { width, height } = Dimensions.get('window');
 
@@ -96,28 +97,18 @@ const LiveLocationScreen = () => {
     }, []);
 
     const getUserLocation = async () => {
-        try {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                console.log('Permission denied');
-                return;
-            }
-
-            const location = await Location.getCurrentPositionAsync({});
-            const userCoords = {
-                latitude: location.coords.latitude,
-                longitude: location.coords.longitude,
-            };
-            setUserLocation(userCoords);
-            if (mapRef.current) {
-                mapRef.current.animateToRegion({
-                    ...userCoords,
-                    latitudeDelta: 0.01,
-                    longitudeDelta: 0.01,
-                }, 1000);
-            }
-        } catch (error) {
-            console.log('Error getting location:', error);
+        // Using mock location as requested to ensure markers are visible in the demo area
+        const userCoords = {
+            latitude: 37.78525,
+            longitude: -122.4294,
+        };
+        setUserLocation(userCoords);
+        if (mapRef.current) {
+            mapRef.current.animateToRegion({
+                ...userCoords,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+            }, 1000);
         }
     };
 
@@ -133,12 +124,20 @@ const LiveLocationScreen = () => {
 
     const handleQuestionPress = (participant) => {
         setSelectedParticipant(participant);
-        setLocationRequestModal(true);
+        setShowParticipantsList(false);
+        // Small delay to ensure the first modal starts closing before the next opens (iOS requirement)
+        setTimeout(() => {
+            setLocationRequestModal(true);
+        }, 500);
     };
 
     const handleLocationPress = (participant) => {
         setSelectedParticipant(participant);
-        setGoogleMapsModal(true);
+        setShowParticipantsList(false);
+        // Small delay to ensure the first modal starts closing before the next opens (iOS requirement)
+        setTimeout(() => {
+            setGoogleMapsModal(true);
+        }, 500);
     };
 
     const openGoogleMaps = () => {
@@ -168,23 +167,7 @@ const LiveLocationScreen = () => {
                 initialRegion={mapRegion}
                 customMapStyle={darkMapStyle}
                 onPress={() => setSelectedMarker(null)}
-                onMarkerPress={(e) => {
-                    const id = e.nativeEvent.id;
-                    const participant = MOCK_PARTICIPANTS.find(p => p.id === id);
-                    if (participant) {
-                        setSelectedMarker(participant);
-                    }
-                }}
             >
-                {/* User Location Marker */}
-                {userLocation && (
-                    <Marker coordinate={userLocation}>
-                        <View style={styles.userMarker}>
-                            <LocationPinIcon />
-                        </View>
-                    </Marker>
-                )}
-
                 {/* Participant Markers */}
                 {MOCK_PARTICIPANTS.map((participant) => (
                     <Marker
@@ -194,13 +177,19 @@ const LiveLocationScreen = () => {
                             latitude: participant.latitude,
                             longitude: participant.longitude,
                         }}
-                        zIndex={10}
-                        tracksViewChanges={false}
+                        zIndex={selectedMarker?.id === participant.id ? 100 : 10}
+                        tracksViewChanges={true}
+                        onPress={() => {
+                            setSelectedMarker(participant);
+                        }}
                     >
-                        <View style={[
-                            styles.participantMarker,
-                            selectedMarker?.id === participant.id && styles.selectedMarkerGlow
-                        ]}>
+                        <View
+                            style={[
+                                styles.participantMarker,
+                                selectedMarker?.id === participant.id && styles.selectedMarkerGlow
+                            ]}
+                            pointerEvents="none"
+                        >
                             <View style={styles.markerCircle}>
                                 <Image
                                     source={{ uri: participant.avatar }}
@@ -209,6 +198,20 @@ const LiveLocationScreen = () => {
                                 />
                             </View>
                         </View>
+
+                        <Callout
+                            tooltip
+                            onPress={() => handleQuestionPress(participant)}
+                        >
+                            <View style={styles.calloutContainer}>
+                                <View style={styles.calloutContent}>
+                                    <View style={styles.requestBtn}>
+                                        <Text style={styles.requestBtnText}>Request Location</Text>
+                                    </View>
+                                </View>
+                                <View style={styles.calloutPointer} />
+                            </View>
+                        </Callout>
                     </Marker>
                 ))}
             </MapView>
@@ -228,16 +231,6 @@ const LiveLocationScreen = () => {
                     <SafetyIcon color={isSafetyActive ? "#942F31" : "white"} size={26} />
                 </TouchableOpacity>
             </View>
-
-            {/* Request Location Button */}
-            {selectedMarker && (
-                <TouchableOpacity
-                    style={styles.requestLocationBtn}
-                    onPress={() => setLocationRequestModal(true)}
-                >
-                    <Text style={styles.requestLocationBtnText}>Request Location</Text>
-                </TouchableOpacity>
-            )}
 
             {/* List Participant Button */}
             <TouchableOpacity
@@ -273,7 +266,22 @@ const LiveLocationScreen = () => {
 
                         <ScrollView style={styles.participantsList}>
                             {MOCK_PARTICIPANTS.map((participant) => (
-                                <View key={participant.id} style={styles.participantItem}>
+                                <TouchableOpacity
+                                    key={participant.id}
+                                    style={styles.participantItem}
+                                    onPress={() => {
+                                        setSelectedMarker(participant);
+                                        setShowParticipantsList(false);
+                                        if (mapRef.current) {
+                                            mapRef.current.animateToRegion({
+                                                latitude: participant.latitude,
+                                                longitude: participant.longitude,
+                                                latitudeDelta: 0.01,
+                                                longitudeDelta: 0.01,
+                                            }, 1000);
+                                        }
+                                    }}
+                                >
                                     <Image
                                         source={{ uri: participant.avatar }}
                                         style={styles.participantAvatar}
@@ -295,7 +303,7 @@ const LiveLocationScreen = () => {
                                             <LocationPinIcon />
                                         </TouchableOpacity>
                                     </View>
-                                </View>
+                                </TouchableOpacity>
                             ))}
                         </ScrollView>
                     </View>
@@ -528,7 +536,7 @@ const styles = StyleSheet.create({
     controlButtons: {
         position: 'absolute',
         right: 20,
-        top: height * 0.6,
+        top: height * 0.5,
         gap: 15,
     },
     controlBtn: {
@@ -551,6 +559,7 @@ const styles = StyleSheet.create({
         right: '20%',
         backgroundColor: '#B99A4A',
         borderRadius: 30,
+        marginBottom: "5%",
         width: '60%',
         paddingVertical: 16,
         flexDirection: 'row',
@@ -705,7 +714,7 @@ const styles = StyleSheet.create({
     alertTitle: {
         fontSize: 18,
         color: '#FFF',
-        fontWeight: 'semibold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 24,
         textAlign: 'center',
     },
@@ -747,6 +756,45 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 18,
         fontWeight: 'bold',
+    },
+    // Callout Styles
+    calloutContainer: {
+        alignItems: 'center',
+        width: 240,
+    },
+    calloutContent: {
+        width: '100%',
+        alignItems: 'center',
+    },
+    calloutTitle: {
+        color: '#FFF',
+        fontSize: 14,
+        fontWeight: 'bold',
+        marginBottom: 8,
+        textAlign: 'center',
+    },
+    requestBtn: {
+        backgroundColor: '#B99A4A',
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        borderRadius: 20,
+    },
+    requestBtnText: {
+        color: '#FFF',
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    calloutPointer: {
+        width: 0,
+        height: 0,
+        backgroundColor: 'transparent',
+        borderStyle: 'solid',
+        borderLeftWidth: 8,
+        borderRightWidth: 8,
+        borderTopWidth: 8,
+        borderLeftColor: 'transparent',
+        borderRightColor: 'transparent',
+        borderTopColor: '#B99A4A',
     },
 });
 

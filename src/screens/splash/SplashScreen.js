@@ -2,7 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, Image, StyleSheet, Animated, Dimensions } from 'react-native';
 import { Colors } from '../../constants/Colors';
 
+
 const { width, height } = Dimensions.get('window');
+
 
 const SplashScreen = ({ onFinish }) => {
     const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -38,16 +40,17 @@ const SplashScreen = ({ onFinish }) => {
     return (
         <View style={styles.container}>
             <View style={styles.centerContent}>
-                <Animated.Image
-                    source={require('../../../assets/logo.png')}
-                    style={[
-                        styles.logo,
-                        {
-                            opacity: fadeAnim,
-                            transform: [{ scale: scaleAnim }],
-                        },
-                    ]}
-                />
+                <Animated.View
+                    style={{
+                        opacity: fadeAnim,
+                        transform: [{ scale: scaleAnim }],
+                    }}
+                >
+                    <Image
+                        source={require('../../../assets/logo.png')}
+                        style={styles.logo}
+                    />
+                </Animated.View>
             </View>
             <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
                 <Text style={styles.appName}>GoMusāfir</Text>

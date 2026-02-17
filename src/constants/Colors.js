@@ -28,7 +28,7 @@ export const Colors = {
         textSecondary: '#9BA1A6',
         background: '#1A1E21',
         card: '#1A1C1E',
-        border: '#2C2E33',
+        border: '#23272A',
         tint: tintColorDark,
         icon: '#9BA1A6',
         tabIconDefault: '#636D77',

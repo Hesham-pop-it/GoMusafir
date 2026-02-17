@@ -6,6 +6,7 @@ import {
     View,
     Text,
 } from 'react-native';
+import { Typography } from '../constants/Typography';
 
 const CustomSwitch = ({ value, onValueChange, activeColor = '#B99A4A', inactiveColor = '#A1A1AA' }) => {
     const animatedValue = useRef(new Animated.Value(value ? 1 : 0)).current;
@@ -88,7 +89,7 @@ const styles = StyleSheet.create({
     indicator: {
         color: '#FFF',
         fontSize: 14,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         position: 'absolute',
     },
     onIndicator: {

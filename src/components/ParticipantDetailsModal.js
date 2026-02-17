@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Colors } from '../constants/Colors';
 import GradientBorderButton from './GradientBorderButton';
+import { Typography } from '../constants/Typography';
 import { responsiveFontSize } from '../utils/responsive';
 
 const { height } = Dimensions.get('window');
@@ -190,7 +191,7 @@ const styles = StyleSheet.create({
         height: 100,
         borderRadius: 50,
         borderWidth: 3,
-        borderColor: '#2C2E33', // Slight border
+        borderColor: '#23272A', // Slight border
     },
     row: {
         flexDirection: 'row',
@@ -203,6 +204,7 @@ const styles = StyleSheet.create({
     label: {
         fontSize: 14,
         color: '#fff',
+        fontFamily: Typography.sans.regular,
         marginBottom: 8,
     },
     inputContainer: {
@@ -215,8 +217,7 @@ const styles = StyleSheet.create({
     inputText: {
         color: '#FFFFFF',
         fontSize: 16,
-        fontWeight: '800',
-
+        fontFamily: Typography.sans.bold,
     },
     tripHistoryContainer: {
         backgroundColor: '#23272A',
@@ -229,18 +230,18 @@ const styles = StyleSheet.create({
     },
     separator: {
         // height: 1,
-        // backgroundColor: '#2C2E33',
+        // backgroundColor: '#23272A',
         marginHorizontal: 16,
     },
     tripName: {
         color: '#FFFFFF',
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     tripStatus: {
         color: '#fff',
         fontSize: 14,
-        fontWeight: 'normal',
+        fontFamily: Typography.sans.regular,
     },
     deleteButton: {
 
@@ -253,7 +254,7 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         color: '#FFFFFF',
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     // Confirmation Modal Styles
     confirmOverlay: {
@@ -273,10 +274,9 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(16),
         color: '#FFF',
         textAlign: 'center',
-        fontWeight: '600',
+        fontFamily: Typography.sans.semiBold,
         marginBottom: 40,
         lineHeight: 32,
-        fontFamily: 'IBMPlexSans_SemiBold',
     },
     confirmButtons: {
         flexDirection: 'row',
@@ -294,7 +294,7 @@ const styles = StyleSheet.create({
     confirmDeleteButtonText: {
         color: '#FFF',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
 });
 

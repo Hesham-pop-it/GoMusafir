@@ -18,6 +18,7 @@ import { Colors } from '../../constants/Colors';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { responsiveFontSize } from '../../utils/responsive';
+import { Typography } from '../../constants/Typography';
 
 const { width } = Dimensions.get('window');
 
@@ -62,6 +63,7 @@ const VoiceChatScreen = () => {
     const [isMuted, setIsMuted] = useState(true);
     const [isAllMuted, setIsAllMuted] = useState(true);
     const [isChannelStarted, setIsChannelStarted] = useState(true);
+    const [isHoldingToTalk, setIsHoldingToTalk] = useState(false);
 
     const SignalBars = ({ type }) => {
         if (type === 'none') return null;
@@ -187,12 +189,20 @@ const VoiceChatScreen = () => {
                                         </Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
-                                        style={[styles.controlButtonOutline, { flex: 1 }]}
+                                        activeOpacity={1}
+                                        onPressIn={() => setIsHoldingToTalk(true)}
+                                        onPressOut={() => setIsHoldingToTalk(false)}
+                                        style={[
+                                            styles.controlButtonOutline,
+                                            { 
+                                                borderColor: '#3F4346',
+                                                backgroundColor: '#23272A',
+                                                flex: 1
+                                            },
+                                            isHoldingToTalk && { backgroundColor: '#087443', borderColor: '#34C759' }
+                                        ]}
                                     >
-                                        <View style={{ marginRight: 8 }}>
-                                            <MicUnmutedIcon color="#FFF" size={20} />
-                                        </View>
-                                        <Text style={styles.controlText}>Hold to Talk</Text>
+                                        <Text style={[styles.controlText, { color: '#fff', opacity: 0.35 }]}>Hold to Talk</Text>
                                     </TouchableOpacity>
                                 </View>
                             )}
@@ -234,12 +244,14 @@ const VoiceChatScreen = () => {
                                         <View style={styles.participantInfo}>
                                             <View style={styles.nameRow}>
                                                 <Text style={styles.nameText}>{item.name}</Text>
-                                                {item.network !== 'none' && (
+                                                
                                                     <View style={styles.inlineStats}>
-                                                        <View style={[styles.miniDot, { backgroundColor: item.network === 'good' ? '#34C759' : '#FFC107' }]} />
-                                                        <SignalBars type={item.network} />
+                                                        <View style={[styles.miniDot, { backgroundColor: item.network === 'good' ? '#34C759' : item.network === 'poor' ? '#FFCC00' : '#942F31' }]} />
+                                                        {item.network !== 'none' && (
+                                                            <SignalBars type={item.network} />
+                                                        )}
                                                     </View>
-                                                )}
+                                                
                                             </View>
                                             <Text style={styles.statusSubText}>{item.status}</Text>
                                         </View>
@@ -247,10 +259,10 @@ const VoiceChatScreen = () => {
                                         <View style={styles.rightActions}>
                                             {item.isSpeaking ? (
                                                 <View style={styles.micCircle}>
-                                                    <MicUnmutedIcon color="#FFF" size={24} />
+                                                    <MicUnmutedIcon color="#FFF" size={25} />
                                                 </View>
                                             ) : (
-                                                <MicMutedIcon color="#A1A1AA" size={24} />
+                                                <MicMutedIcon color="#D66A77" size={25} />
                                             )}
                                         </View>
                                     </View>
@@ -342,7 +354,7 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: responsiveFontSize(13),
         fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     statusRow: {
         flexDirection: 'row',
@@ -391,9 +403,25 @@ const styles = StyleSheet.create({
         padding: 2,
         borderRadius: 28,
     },
+    glowWrapper: {
+        width: 104, // Avatar width + padding
+        height: 104,
+        borderRadius: 52,
+        backgroundColor: 'rgba(52, 199, 89, 0.2)', // Light green "blur"
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     speakingAvatarBorder: {
         borderWidth: 2,
         borderColor: '#34C759',
+        elevation: 34,
+        shadowColor: '#34C759',
+        shadowOffset: {
+            width: 0,
+            height: 0,
+        },
+        shadowOpacity: 0.8,
+        shadowRadius: 10
     },
     avatar: {
         width: 48,
@@ -438,8 +466,8 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     miniDot: {
-        width: 6,
-        height: 6,
+        width: 7,
+        height: 7,
         borderRadius: 3,
     },
     signalBars: {
@@ -452,9 +480,10 @@ const styles = StyleSheet.create({
         borderRadius: 1,
     },
     rowSeparator: {
-        height: 1,
+        height: 0.2,
         backgroundColor: '#34C759',
         marginVertical: 5,
+        opacity: 0.5,
     },
 });
 

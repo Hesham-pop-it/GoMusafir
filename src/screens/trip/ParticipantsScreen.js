@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
     },
     divider: {
         height: 1,
-        backgroundColor: '#2C2E33',
+        backgroundColor: '#23272A',
         marginBottom: 24,
     },
     detailHeader: {

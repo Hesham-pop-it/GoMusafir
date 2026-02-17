@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -8,6 +8,7 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
+    Keyboard
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,12 +20,32 @@ import { responsiveFontSize } from '../../utils/responsive';
 const ForgotPasswordScreen = () => {
     const navigation = useNavigation();
     const [email, setEmail] = useState('');
+    const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+
+    useEffect(() => {
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+        const keyboardDidShowListener = Keyboard.addListener(
+            showEvent,
+            () => setKeyboardVisible(true)
+        );
+        const keyboardDidHideListener = Keyboard.addListener(
+            hideEvent,
+            () => setKeyboardVisible(false)
+        );
+
+        return () => {
+            keyboardDidHideListener.remove();
+            keyboardDidShowListener.remove();
+        };
+    }, []);
 
     return (
         <GlowBackground>
             <SafeAreaView style={styles.safeArea}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     style={{ flex: 1 }}
                 >
                     <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -50,20 +71,24 @@ const ForgotPasswordScreen = () => {
                                 />
                             </View>
                         </View>
-
                     </ScrollView>
-
-                    <View style={styles.footer}>
-                        <GradientBorderButton
-                            text="Send link"
-                            onPress={() => navigation.navigate('ForgotPasswordVerify')}
-                            disabled={!email}
-                            style={{ width: '100%' }}
-                        />
-                    </View>
                 </KeyboardAvoidingView>
+
+                <View style={styles.footer}>
+                    <TouchableOpacity
+                        style={[
+                            styles.loginButton,
+                            email.trim().length === 0 && { opacity: 0.5 },
+                            { marginBottom: isKeyboardVisible ? 0 : 100 }
+                        ]}
+                        onPress={() => navigation.navigate('ForgotPasswordVerify')}
+                        disabled={email.trim().length === 0}
+                    >
+                        <Text style={styles.loginButtonText}>Send link</Text>
+                    </TouchableOpacity>
+                </View>
             </SafeAreaView>
-        </GlowBackground>
+        </GlowBackground >
     );
 };
 
@@ -86,11 +111,19 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(32),
         color: '#FFF',
-        fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+        fontFamily: 'CormorantGaramond',
         marginBottom: 35,
     },
     inputGroup: {
         marginBottom: 24,
+    },
+    loginButton: {
+        backgroundColor: '#B99A4A',
+        height: 56,
+        borderRadius: 28, // Fully rounded
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
     },
     label: {
         color: '#FFFBF3',
@@ -106,7 +139,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         justifyContent: 'center',
         borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderColor: '#23272A',
     },
     input: {
         color: '#FFF',
@@ -114,9 +147,15 @@ const styles = StyleSheet.create({
     },
     footer: {
         paddingHorizontal: 24,
-        paddingBottom: 40,
+        // paddingBottom: 40,
         paddingTop: 10,
     },
+    loginButtonText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(18),
+        fontWeight: 'bold',
+        fontFamily: 'Manrope', // Consistent font
+    }
 });
 
 export default ForgotPasswordScreen;

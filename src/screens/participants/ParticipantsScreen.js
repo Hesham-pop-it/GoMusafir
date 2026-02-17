@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
     },
     separator: {
         height: 1,
-        backgroundColor: '#2C2E33',
+        backgroundColor: '#23272A',
         marginVertical: 4,
     },
     // Modal Styles
@@ -737,7 +737,7 @@ const styles = StyleSheet.create({
     },
     // Language Modal Styles
     languageItem: {
-        paddingVertical: 12,
+        paddingVertical: 7,
         paddingHorizontal: 20,
     },
     languageItemText: {
@@ -757,7 +757,7 @@ const styles = StyleSheet.create({
         paddingRight: 30,
     },
     languageModalContent: {
-        backgroundColor: '#2C2E33',
+        backgroundColor: '#23272A',
         borderRadius: 12,
         width: 180,
         maxHeight: 400,

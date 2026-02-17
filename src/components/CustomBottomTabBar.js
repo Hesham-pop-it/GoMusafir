@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/Colors';
+import { Typography } from '../constants/Typography';
 import { useState } from 'react';
 import EmailConfirmationModal from './EmailConfirmationModal';
 
@@ -164,7 +165,7 @@ const styles = StyleSheet.create({
     navText: {
         fontSize: 12, // Slightly bigger and cleaner
         marginTop: 4,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     fabPlaceholder: {
         width: 80,

@@ -17,6 +17,7 @@ import { useNavigation } from '@react-navigation/native';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
+import { Typography } from '../../constants/Typography';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
@@ -194,12 +195,12 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(28),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold', // Consistent font family
+        fontFamily: Typography.serif.regular, // Consistent font family
         marginBottom: 16,
     },
     description: {
         fontSize: responsiveFontSize(14),
-        color: '#9BA1A6',
+        color: '#F7F7F7',
         lineHeight: 22,
         marginBottom: 40,
     },
@@ -216,23 +217,23 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        borderWidth: 1,
+        // borderWidth: 1,
         borderRadius: 12,
-        paddingVertical: 24,
-        paddingHorizontal: 30,
-        minHeight: 90,
+        paddingTop: 24,
+        paddingHorizontal: 50,
+        minHeight: 80,
     },
     codeBoxNormal: {
-        borderColor: '#3A3A3A',
-        backgroundColor: '#23272A',
+        // borderColor: '#3A3A3A',
+        backgroundColor: 'rgba(253, 253, 253, 0.10)',
     },
     codeBoxError: {
-        borderColor: '#FF7D7D',
+        borderColor: '#D66A77',
         backgroundColor: 'transparent',
     },
     codeBoxEmpty: {
         borderColor: 'transparent',
-        backgroundColor: '#23272A',
+        backgroundColor: 'rgba(253, 253, 253, 0.10)',
     },
     codeDigit: {
         fontSize: responsiveFontSize(32),
@@ -248,7 +249,7 @@ const styles = StyleSheet.create({
         borderRadius: 1,
     },
     errorText: {
-        color: '#FF7D7D',
+        color: '#D66A77',
         fontSize: responsiveFontSize(14),
         marginTop: 12,
     },

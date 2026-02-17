@@ -6,16 +6,23 @@ import {
     TouchableOpacity,
     Dimensions,
     Linking,
-    StyleSheet
+    StyleSheet,
+    Platform
 } from 'react-native';
-import Svg, { Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
+import { Typography } from '../constants/Typography';
+import GradientBorderButton from './GradientBorderButton';
 
 const { width } = Dimensions.get('window');
 
 const EmailConfirmationModal = ({ visible, onClose }) => {
     const handleOpenEmail = () => {
-        // Attempt to open email app
-        Linking.openURL('mailto:');
+        if (Platform.OS === 'ios') {
+            Linking.openURL('message://').catch(() => {
+                Linking.openURL('mailto:');
+            });
+        } else {
+            Linking.openURL('mailto:');
+        }
         onClose();
     };
 
@@ -33,38 +40,19 @@ const EmailConfirmationModal = ({ visible, onClose }) => {
                     </Text>
 
                     <View style={styles.buttonRow}>
-                        <TouchableOpacity
-                            style={styles.closeButton}
+                        <GradientBorderButton
+                            text="Close"
                             onPress={onClose}
-                        >
-                            <Svg height="100%" width="100%" style={StyleSheet.absoluteFill}>
-                                <Defs>
-                                    <LinearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <Stop offset="0%" stopColor="#B99A4A" stopOpacity="1" />
-                                        <Stop offset="76%" stopColor="#B99A4A" stopOpacity="0.44" />
-                                    </LinearGradient>
-                                </Defs>
-                                <Rect
-                                    x="1"
-                                    y="1"
-                                    width="98%"
-                                    height="94%"
-                                    rx="30"
-                                    ry="30"
-                                    stroke="url(#grad)"
-                                    strokeWidth="1.5"
-                                    fill="transparent"
-                                />
-                            </Svg>
-                            <Text style={styles.closeButtonText}>Close</Text>
-                        </TouchableOpacity>
+                            innerBg="#23272A"
+                            style={{ flex: 1 }}
+                        />
 
-                        <TouchableOpacity
-                            style={styles.emailButton}
+                        <GradientBorderButton
+                            text="Open Email App"
                             onPress={handleOpenEmail}
-                        >
-                            <Text style={styles.emailButtonText}>Open Email App</Text>
-                        </TouchableOpacity>
+                            innerBg="#B99A4A"
+                            style={{ flex: 1 }}
+                        />
                     </View>
                 </View>
             </View>
@@ -92,40 +80,13 @@ const styles = StyleSheet.create({
         color: '#FFFFFF',
         textAlign: 'center',
         marginBottom: 24,
-        fontWeight: '600',
+        fontFamily: Typography.sans.semiBold,
         lineHeight: 26,
     },
     buttonRow: {
         flexDirection: 'row',
         gap: 12,
         width: '100%',
-    },
-    closeButton: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: 30,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'transparent',
-        overflow: 'hidden', // Ensures the SVG doesn't bleed out if sizes mismatch slightly
-    },
-    closeButtonText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
-    emailButton: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: 30,
-        backgroundColor: '#C9A443', // Gold color from FAB
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    emailButtonText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold',
     },
 });
 

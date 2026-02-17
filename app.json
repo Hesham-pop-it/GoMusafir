@@ -30,7 +30,7 @@
       }
     },
     "androidNavigationBar": {
-      "backgroundColor": "#292B30",
+      "backgroundColor": "#1A1E21",
       "barStyle": "light-content"
     },
     "web": {
@@ -43,7 +43,8 @@
         {
           "cameraPermission": "Allow GoMusafir to access your camera to scan QR codes."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

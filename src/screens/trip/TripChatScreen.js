@@ -19,10 +19,14 @@ import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { Colors } from '../../constants/Colors';
+import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import Logo from '../../components/Logo';
+import { Typography } from '../../constants/Typography';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
+const SCREEN_WIDTH = width;
+const SCREEN_HEIGHT = height;
 
 const PhotoIcon = ({ size = 24 }) => (
     <Svg width={size} height={size} viewBox="0 0 40 40" fill="none">
@@ -116,6 +120,7 @@ const TripChatScreen = () => {
     const [showAttachments, setShowAttachments] = useState(false);
     const [options, setOptions] = useState(QUICK_OPTIONS);
     const [messages, setMessages] = useState(MOCK_MESSAGES);
+    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
 
@@ -126,7 +131,15 @@ const TripChatScreen = () => {
         const timer = setTimeout(() => {
             inputRef.current?.focus();
         }, 500);
-        return () => clearTimeout(timer);
+
+        const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
+        const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+
+        return () => {
+            clearTimeout(timer);
+            keyboardDidShowListener.remove();
+            keyboardDidHideListener.remove();
+        };
     }, []);
 
     const toggleAttachments = () => {
@@ -217,6 +230,7 @@ const TripChatScreen = () => {
     const tripData = trip || {
         title: 'The time traveler...',
         image: 'https://images.unsplash.com/photo-1534440051614-fa2934273822?q=80&w=2670&auto=format&fit=crop',
+        participantsList: 'You, Titor, Sarah, John, Mike, Elena'
     };
 
     const renderMessage = ({ item }) => {
@@ -243,9 +257,9 @@ const TripChatScreen = () => {
                         <Text style={styles.senderName}>{item.senderName}</Text>
                     )}
 
-                    <Text style={styles.messageText}>{item.text}</Text>
+                    <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
                     <View style={styles.metaRow}>
-                        <Text style={styles.timeText}>{item.time}</Text>
+                        <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }]}>{item.time}</Text>
                         {isMe && (
                             <Ionicons name="checkmark-done" size={14} color="#2196F3" style={{ marginLeft: 4 }} />
                         )}
@@ -284,23 +298,32 @@ const TripChatScreen = () => {
     return (
         <View style={styles.container}>
             {/* Header */}
-            <SafeAreaView edges={['top']} style={styles.headerArea}>
-                <View style={styles.headerContent}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
-                    </TouchableOpacity>
+            {/* Header */}
+            <LinearGradient
+                colors={['#1A1E21', '#332F2B']}
+                start={{ x: 0.5, y: 1 }}
+                end={{ x: 0.5, y: 0 }}
+            >
+                <SafeAreaView edges={['top']}>
+                    <View style={styles.headerContent}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        </TouchableOpacity>
 
-                    <Image
-                        source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
-                        style={styles.headerAvatar}
-                    />
+                        <Image
+                            source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                            style={styles.headerAvatar}
+                        />
 
-                    <View style={styles.headerInfo}>
-                        <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
-                        <Text style={styles.headerSubtitle} numberOfLines={1}>Active member: {tripData.participants}</Text>
+                        <View style={styles.headerInfo}>
+                            <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
+                            <Text style={styles.headerSubtitle} numberOfLines={1}>
+                                {tripData.participantsList || tripData.participants || 'You, Titor, Sarah, ...'}
+                            </Text>
+                        </View>
                     </View>
-                </View>
-            </SafeAreaView>
+                </SafeAreaView>
+            </LinearGradient>
 
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -312,6 +335,9 @@ const TripChatScreen = () => {
                     style={styles.chatBackground}
                     imageStyle={{ opacity: 0.1 }}
                 >
+                    <View style={styles.backgroundLogoContainer}>
+                        <Logo width={SCREEN_WIDTH * 0.7} height={SCREEN_WIDTH * 0.7} color="rgba(185, 154, 74, 0.2)" />
+                    </View>
                     <FlatList
                         ref={flatListRef}
                         data={messages}
@@ -323,7 +349,7 @@ const TripChatScreen = () => {
                     />
 
                     {/* Input Bar - wrapped in SafeAreaView */}
-                    <SafeAreaView edges={['bottom']} style={styles.inputContainer}>
+                    <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
                         {/* Input Bar */}
                         <View style={[styles.inputBar, showAttachments && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }]}>
                             <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
@@ -390,38 +416,40 @@ const TripChatScreen = () => {
                 animationType="fade"
                 onRequestClose={() => setTemplateModalVisible(false)}
             >
-                <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <TouchableWithoutFeedback onPress={() => setTemplateModalVisible(false)}>
                     <View style={styles.modalOverlay}>
-                        <View style={styles.modalContent}>
-                            <Text style={styles.modalTitle}>Create New Template</Text>
+                        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                            <View style={styles.modalContent}>
+                                <Text style={styles.modalTitle}>Create New Template</Text>
 
-                            <Text style={styles.inputLabel}>Template Name</Text>
-                            <TextInput
-                                style={styles.modalInput}
-                                placeholder="e.g., On The Way"
-                                placeholderTextColor="#666"
-                                value={templateName}
-                                onChangeText={setTemplateName}
-                            />
+                                <Text style={styles.inputLabel}>Template Name</Text>
+                                <TextInput
+                                    style={styles.modalInput}
+                                    placeholder="e.g., On The Way"
+                                    placeholderTextColor="#666"
+                                    value={templateName}
+                                    onChangeText={setTemplateName}
+                                />
 
-                            <Text style={styles.inputLabel}>Message Content</Text>
-                            <TextInput
-                                style={[styles.modalInput, styles.textArea]}
-                                placeholder="Type your message content here..."
-                                placeholderTextColor="#666"
-                                value={templateContent}
-                                onChangeText={setTemplateContent}
-                                multiline={true}
-                                textAlignVertical="top"
-                            />
+                                <Text style={styles.inputLabel}>Message Content</Text>
+                                <TextInput
+                                    style={[styles.modalInput, styles.textArea]}
+                                    placeholder="Type your message content here..."
+                                    placeholderTextColor="#666"
+                                    value={templateContent}
+                                    onChangeText={setTemplateContent}
+                                    multiline={true}
+                                    textAlignVertical="top"
+                                />
 
-                            <TouchableOpacity
-                                style={styles.addButton}
-                                onPress={handleAddTemplate}
-                            >
-                                <Text style={styles.addButtonText}>Add Template</Text>
-                            </TouchableOpacity>
-                        </View>
+                                <TouchableOpacity
+                                    style={styles.addButton}
+                                    onPress={handleAddTemplate}
+                                >
+                                    <Text style={styles.addButtonText}>Add Template</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </TouchableWithoutFeedback>
                     </View>
                 </TouchableWithoutFeedback>
             </Modal>
@@ -435,7 +463,6 @@ const styles = StyleSheet.create({
         backgroundColor: '#1A1E21',
     },
     headerArea: {
-        backgroundColor: '#1A1E21',
     },
     headerContent: {
         flexDirection: 'row',
@@ -458,14 +485,13 @@ const styles = StyleSheet.create({
     headerTitle: {
         color: '#FFF',
         fontSize: 22,
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     headerSubtitle: {
-        color: '#9BA1A6',
+        color: '#A1A1AA',
         fontSize: 12,
         marginTop: 2,
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.regular,
     },
     chatBackground: {
         flex: 1,
@@ -500,7 +526,7 @@ const styles = StyleSheet.create({
         borderBottomRightRadius: 4,
     },
     bubbleOther: {
-        backgroundColor: '#23272A',
+        backgroundColor: 'rgba(35, 39, 42, 0.7)',
         borderBottomLeftRadius: 4,
     },
     senderName: {
@@ -511,7 +537,7 @@ const styles = StyleSheet.create({
         marginBottom: 4,
     },
     messageText: {
-        color: '#FFF',
+        color: '#fff',
         fontSize: 15,
         lineHeight: 20,
     },
@@ -522,7 +548,7 @@ const styles = StyleSheet.create({
         marginTop: 4,
     },
     timeText: {
-        color: 'rgba(255,255,255,0.6)',
+        color: '#3F4346',
         fontSize: 11,
     },
 
@@ -569,7 +595,7 @@ const styles = StyleSheet.create({
     },
     textInput: {
         flex: 1,
-        backgroundColor: '#2C2F33',
+        backgroundColor: '#3F4346',
         borderRadius: 20,
         height: 40,
         paddingHorizontal: 16,
@@ -640,18 +666,18 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modalContent: {
-        backgroundColor: '#1E2124',
+        backgroundColor: '#23272A',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 24,
         paddingBottom: 40,
     },
     modalTitle: {
-        fontSize: 22,
+        fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold', // Assuming font available, else fallback
+        fontFamily: Typography.serif.regular, // Assuming font available, else fallback
         marginBottom: 24,
-        textAlign: 'center', // Or left? Screenshot shows left? No, "Create New Template" is distinct.
+        textAlign: 'left', // Or left? Screenshot shows left? No, "Create New Template" is distinct.
         // Screenshot: Title is Serif, large.
     },
     inputLabel: {
@@ -660,7 +686,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     modalInput: {
-        backgroundColor: '#2B2F33',
+        backgroundColor: 'rgba(253,253,253,0.1)',
         borderRadius: 12,
         padding: 16,
         color: '#FFF',
@@ -690,6 +716,11 @@ const styles = StyleSheet.create({
         alignSelf: 'center',
         marginTop: 20,
         marginBottom: 10,
+    },
+    backgroundLogoContainer: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
     }
 });
 

@@ -20,6 +20,7 @@ import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
@@ -337,13 +338,13 @@ const TripOverviewScreen = () => {
 
                         {/* Audio Channel Section */}
                         <View style={styles.sectionCard}>
-                            <TouchableOpacity style={styles.channelHeader}>
+                            <TouchableOpacity style={styles.channelHeader} onPress={() => navigation.navigate('VoiceChat', { trip: tripData })}>
                                 <View style={styles.avatarWrapper}>
                                     <Image
                                         source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=3387&auto=format&fit=crop' }}
                                         style={styles.speakerAvatar}
                                     />
-                                    <View style={styles.liveIndicator} />
+                                    {/* <View style={styles.liveIndicator} /> */}
                                 </View>
                                 <View style={styles.channelInfo}>
                                     <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: '#34C759' }}>Live</Text></Text>
@@ -461,7 +462,7 @@ const TripOverviewScreen = () => {
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                                style={[styles.sectionCard, styles.halfCard]}
+                                style={[styles.sectionCard, styles.halfCard,{backgroundColor:'#23272A'}]}
                                 onPress={() => navigation.navigate('TripChat', { trip })}
                             >
                                 <View style={styles.chatIconWrapper}>
@@ -610,7 +611,7 @@ const TripOverviewScreen = () => {
                             onPress={() => setEmergencyModalVisible(false)}
                         >
                             <LinearGradient
-                                colors={['#D4AF37', '#523631']}
+                                colors={['#B99A4A', '#523631']}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                                 style={styles.emergencyCancelGradient}
@@ -796,8 +797,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: responsiveFontSize(22),
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.regular,
     },
     iconButton: {
         padding: 5,
@@ -812,7 +812,7 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         overflow: 'hidden',
         marginBottom: 20,
-        height: 180,
+        height: 160,
     },
     tripCardGradient: {
         flex: 1,
@@ -822,7 +822,7 @@ const styles = StyleSheet.create({
     tripTitle: {
         fontSize: responsiveFontSize(24),
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
         marginBottom: 12,
     },
     infoRow: {
@@ -832,14 +832,15 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     infoText: {
-        color: '#E0E0E0',
+        color: '#fff',
         fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
     },
     chatIconWrapper: {
         position: 'relative',
         width: 64,
         height: 64,
-        marginBottom: 5,
+        marginBottom: 5
     },
     chatIconCircle: {
         width: 54,
@@ -863,17 +864,18 @@ const styles = StyleSheet.create({
     badgeText: {
         color: '#FFFFFF',
         fontSize: responsiveFontSize(10),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     chatTitle: {
         color: '#FFFFFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 8,
     },
     chatPreview: {
         color: '#71717A',
         fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
         lineHeight: 20,
     },
     prayerTimesContainer: {
@@ -888,15 +890,16 @@ const styles = StyleSheet.create({
     prayerName: {
         color: '#A1A1AA',
         fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
         marginBottom: 4,
     },
     prayerTime: {
         color: '#A1A1AA',
         fontSize: responsiveFontSize(14),
-        fontWeight: '600',
+        fontFamily: Typography.sans.semiBold,
     },
     sectionCard: {
-        backgroundColor: '#23272A',
+        backgroundColor: '#2D3134',
         borderRadius: 24,
         padding: 20,
         marginVertical: 6,
@@ -906,7 +909,7 @@ const styles = StyleSheet.create({
     notificationTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(22),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 10,
     },
     notificationListContainer: {
@@ -925,11 +928,11 @@ const styles = StyleSheet.create({
     notifName: {
         color: '#FFF',
         fontSize: responsiveFontSize(15),
-        fontWeight: 'bold'
+        fontFamily: Typography.sans.bold
     },
     notifMsg: {
-        color: '#9BA1A6',
-        fontWeight: '400',
+        color: '#fff',
+        fontFamily: Typography.sans.regular,
     },
     acceptButton: {
         backgroundColor: '#34C759',
@@ -944,7 +947,7 @@ const styles = StyleSheet.create({
     acceptButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     notificationSeparator: {
         height: 1,
@@ -967,6 +970,14 @@ const styles = StyleSheet.create({
         borderRadius: 25,
         borderWidth: 2,
         borderColor: '#34C759',
+        elevation: 14,
+        shadowColor: '#34C759',
+        shadowOffset: {
+            width: 0,
+            height: 0,
+        },
+        shadowOpacity: 0.8,
+        shadowRadius: 10
     },
     liveIndicator: {
         width: 12,
@@ -986,11 +997,12 @@ const styles = StyleSheet.create({
     channelStatus: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     activeSpeaker: {
         color: '#9BA1A6',
         fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular,
     },
     controlsGrid: {
         flexDirection: 'row',
@@ -1015,7 +1027,7 @@ const styles = StyleSheet.create({
     controlText: {
         color: '#FFF',
         fontSize: responsiveFontSize(13),
-        fontWeight: '500',
+        fontFamily: Typography.sans.medium,
     },
     rowContainer: {
         flexDirection: 'row',
@@ -1034,7 +1046,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: responsiveFontSize(18),
         color: '#FFF',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         flex: 1,
     },
     searchBar: {
@@ -1078,15 +1090,17 @@ const styles = StyleSheet.create({
     participantName: {
         fontSize: responsiveFontSize(16),
         color: '#FFF',
-        fontWeight: '600',
+        fontFamily: Typography.sans.semiBold,
     },
     participantStatus: {
         fontSize: responsiveFontSize(13),
         color: '#9BA1A6',
+        fontFamily: Typography.sans.regular,
     },
     participantStatusMuted: {
         fontSize: responsiveFontSize(13),
         color: '#636D77',
+        fontFamily: Typography.sans.regular,
     },
     quickMsgCard: {
         backgroundColor: '#2D3134',
@@ -1102,6 +1116,7 @@ const styles = StyleSheet.create({
     quickMsgText: {
         color: '#E0E0E0',
         fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
     },
     alertCard: {
         backgroundColor: '#2D2528', // Dark reddish tint background
@@ -1125,7 +1140,7 @@ const styles = StyleSheet.create({
     alertTitle: {
         fontSize: responsiveFontSize(18),
         color: '#FFF',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     mapBackground: {
         flex: 1,
@@ -1183,7 +1198,7 @@ const styles = StyleSheet.create({
     sheetTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(28),
-        fontFamily: 'CormorantGaramond',
+        fontFamily: Typography.serif.regular,
         marginBottom: 16,
     },
     divider: {
@@ -1205,7 +1220,7 @@ const styles = StyleSheet.create({
     detailName: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     mapPlaceholder: {
         width: '100%',
@@ -1262,7 +1277,7 @@ const styles = StyleSheet.create({
     confirmTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         textAlign: 'center',
         marginBottom: 30,
     },
@@ -1282,7 +1297,7 @@ const styles = StyleSheet.create({
     confirmDeleteText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     // Quick Alert Styles
     quickAlertOverlay: {
@@ -1317,12 +1332,12 @@ const styles = StyleSheet.create({
     quickAlertTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(20),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     quickAlertMsg: {
         color: '#FFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: '600',
+        fontFamily: Typography.sans.semiBold,
         textAlign: 'center',
         marginBottom: 30,
         lineHeight: 26,
@@ -1344,7 +1359,7 @@ const styles = StyleSheet.create({
     quickAlertBtnText: {
         color: '#FFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     // Emergency Modal Styles
     emergencyOverlay: {
@@ -1355,7 +1370,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 30,
     },
     emergencyContent: {
-        backgroundColor: '#1E2124',
+        backgroundColor: '#23272A',
         borderRadius: 24,
         padding: 30,
         width: '100%',
@@ -1364,23 +1379,25 @@ const styles = StyleSheet.create({
     emergencyTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(22),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 25,
     },
     emergencySubtitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
         marginBottom: 10,
     },
     countdownText: {
         color: '#942F31',
         fontSize: responsiveFontSize(48),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 30,
     },
     emergencyCancelBtn: {
         width: '100%',
         marginTop: 10,
+        backgroundColor: '#23272A',
     },
     emergencyCancelGradient: {
         borderRadius: 28,
@@ -1396,7 +1413,7 @@ const styles = StyleSheet.create({
     emergencyCancelText: {
         color: '#FFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
 });
 

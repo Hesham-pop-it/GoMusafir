@@ -1,28 +1,24 @@
-import { Dimensions, Platform, PixelRatio } from 'react-native';
+import { Dimensions, PixelRatio } from 'react-native';
 
 const {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
 } = Dimensions.get('window');
 
-// Standard reference width (e.g., iPhone 11 Pro / X width)
-const REFERENCE_WIDTH = 375;
+// We use 375x812 (iPhone 13 mini/11 Pro) or 390x844 (iPhone 13/14) as a standard reference
+const GUIDELINE_BASE_WIDTH = 390;
+const GUIDELINE_BASE_HEIGHT = 844;
 
 /**
- * Normalizes a size value based on the screen width.
- * Useful for font sizes, margins, sizes to be responsive across different screens.
- * 
- * @param {number} size - The size in pixels to normalize
- * @returns {number} - The normalized size
+ * Normalizes a size value based on the screen dimensions with a moderation factor.
+ * This prevents text from getting too small on tiny devices.
  */
-export function responsiveFontSize(size) {
-    const scale = SCREEN_WIDTH / REFERENCE_WIDTH;
-    const newSize = size * scale;
-    
-    if (Platform.OS === 'ios') {
-        return Math.round(PixelRatio.roundToNearestPixel(newSize));
-    } else {
-        // Android fonts can behave a bit differently
-        return Math.round(PixelRatio.roundToNearestPixel(newSize)) - 1;
-    }
+export function responsiveFontSize(size, factor = 0.5) {
+    const scale = SCREEN_WIDTH / GUIDELINE_BASE_WIDTH;
+
+    // Moderate scaling: newSize = size + (scaledSize - size) * factor
+    // If factor is 0.5, we only apply 50% of the shrinkage/growth.
+    const newSize = size + (size * scale - size) * factor;
+
+    return Math.round(PixelRatio.roundToNearestPixel(newSize));
 }

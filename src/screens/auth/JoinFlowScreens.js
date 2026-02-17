@@ -12,13 +12,15 @@ import {
     Modal,
     FlatList,
     Alert,
-    Keyboard
+    Keyboard,
+    TouchableWithoutFeedback
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { COUNTRIES } from '../../constants/Countries';
+import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
 
@@ -227,7 +229,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 export const JoinPhoneScreen = ({ navigation, route }) => {
     const [phone, setPhone] = useState('');
     const [isPickerVisible, setPickerVisible] = useState(false);
-    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]); // Default Argentina based on image
+    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES.find(c => c.name === 'Argentina') || COUNTRIES[0]);
     const previousData = route.params || {};
 
     const handleContinue = () => {
@@ -270,36 +272,38 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
             <Modal
                 visible={isPickerVisible}
                 animationType="slide"
-                transparent={false}
+                transparent={true}
+                onRequestClose={() => setPickerVisible(false)}
             >
-                <SafeAreaView style={styles.container}>
-                    <View style={styles.header}>
-                        <TouchableOpacity onPress={() => setPickerVisible(false)} style={styles.backButton}>
-                            <Ionicons name="chevron-back" size={22} color="#FFF" />
-                        </TouchableOpacity>
-                    </View>
-                    <View style={styles.content}>
-                        <Text style={styles.title}>Join as Participant</Text>
+                <TouchableWithoutFeedback onPress={() => setPickerVisible(false)}>
+                    <View style={styles.countryModalOverlay}>
+                        <TouchableWithoutFeedback>
+                            <SafeAreaView style={styles.countryModalContent}>
 
-                        <FlatList
-                            data={COUNTRIES}
-                            keyExtractor={(item) => item.name}
-                            showsVerticalScrollIndicator={false}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={styles.countryRow}
-                                    onPress={() => selectCountry(item)}
-                                >
-                                    <View style={styles.countryInfo}>
-                                        <Text style={styles.countryFlag}>{item.flag}</Text>
-                                        <Text style={styles.countryName}>{item.name}</Text>
-                                    </View>
-                                    <Text style={styles.countryCodeText}>{item.code}</Text>
-                                </TouchableOpacity>
-                            )}
-                        />
+                                <View style={styles.countryListContainer}>
+                                    <FlatList
+                                        data={COUNTRIES}
+                                        keyExtractor={(item, index) => `${item.name}-${index}`}
+                                        showsVerticalScrollIndicator={false}
+                                        contentContainerStyle={styles.countryListContent}
+                                        renderItem={({ item }) => (
+                                            <TouchableOpacity
+                                                style={styles.countryRow}
+                                                onPress={() => selectCountry(item)}
+                                            >
+                                                <View style={styles.countryInfo}>
+                                                    <Text style={styles.countryFlag}>{item.flag}</Text>
+                                                    <Text style={styles.countryName}>{item.name}</Text>
+                                                </View>
+                                                <Text style={styles.countryCodeText}>{item.code}</Text>
+                                            </TouchableOpacity>
+                                        )}
+                                    />
+                                </View>
+                            </SafeAreaView>
+                        </TouchableWithoutFeedback>
                     </View>
-                </SafeAreaView>
+                </TouchableWithoutFeedback>
             </Modal>
         </JoinLayout>
     );
@@ -342,21 +346,27 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
             onContinue={handleContinue}
             isValid={!!image} // Require image? The screenshot shows "Continue" active maybe even if empty? Assuming required.
         >
-            <TouchableOpacity style={styles.uploadContainer} onPress={pickImage}>
+            <View style={styles.uploadContainer}>
                 {image ? (
-                    <Image source={{ uri: image }} style={styles.uploadedImage} />
+                    <TouchableOpacity style={styles.uploadedImage} onPress={pickImage}>
+                        <Image source={{ uri: image }} style={styles.uploadedImage} />
+                    </TouchableOpacity>
                 ) : (
                     <View style={styles.uploadPlaceholder}>
                         <Text style={styles.uploadTextTitle}>Upload a photo</Text>
                         <Text style={styles.uploadTextSub}>Recommended size: 1080 x 1080px</Text>
                         <Text style={styles.uploadTextSub}>(JPG, PNG, GIF)</Text>
 
-                        <View style={styles.uploadBtnPill}>
+                        <GradientBorderButton
+                            onPress={pickImage}
+                            style={{ width: 100, marginTop: 20 }}
+                            innerBg="transparent"
+                        >
                             <Text style={styles.uploadBtnText}>Upload</Text>
-                        </View>
+                        </GradientBorderButton>
                     </View>
                 )}
-            </TouchableOpacity>
+            </View>
         </JoinLayout>
     );
 };
@@ -386,18 +396,17 @@ export const JoinTermsScreen = ({ navigation, route }) => {
             onContinue={handleContinue}
             isValid={accepted}
         >
-            <TouchableOpacity
+            <View
                 style={styles.termsContainer}
-                onPress={() => setAccepted(!accepted)}
-                activeOpacity={1}
+
             >
-                <View style={[styles.checkbox, accepted && styles.checkboxChecked]}>
-                    {accepted && <Ionicons name="checkmark" size={14} color="#000" />}
-                </View>
+                <TouchableOpacity onPress={() => setAccepted(!accepted)} activeOpacity={1} style={[styles.checkbox, accepted && styles.checkboxChecked]}>
+                    {accepted && <Ionicons name="checkmark" size={14} color="#fff" />}
+                </TouchableOpacity>
                 <Text style={styles.termsText}>
                     I accept <Text style={styles.linkText}>Terms & Privacy</Text> and consent to live voice and, if enabled, recording, location sharing is controllable in app.
                 </Text>
-            </TouchableOpacity>
+            </View>
         </JoinLayout>
     );
 };
@@ -430,20 +439,20 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(28),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.regular,
         marginBottom: 40,
     },
     label: {
         color: '#FFFBF3',
         fontSize: responsiveFontSize(14),
         marginBottom: 10,
-        fontFamily: 'Manrope',
+        fontFamily: Typography.sans.regular,
     },
     inputWrapper: {
         backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderColor: '#23272A',
         height: 56,
         paddingHorizontal: 16,
         justifyContent: 'center',
@@ -452,11 +461,13 @@ const styles = StyleSheet.create({
     input: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.regular,
         height: '100%',
     },
     inputText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.regular,
     },
     phoneRow: {
         flexDirection: 'row',
@@ -474,13 +485,13 @@ const styles = StyleSheet.create({
     uploadContainer: {
         width: '100%',
         aspectRatio: 1,
-        borderWidth: 1,
+        borderWidth: 2,
         borderColor: '#B99A4A',
         borderStyle: 'dashed',
         borderRadius: 20,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#1A1D20',
+        backgroundColor: 'transparent',
         marginBottom: 20,
         overflow: 'hidden',
     },
@@ -495,12 +506,13 @@ const styles = StyleSheet.create({
     uploadTextTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: '600',
+        fontFamily: Typography.sans.regular,
         marginBottom: 8,
     },
     uploadTextSub: {
-        color: '#9BA1A6',
+        color: '#fff',
         fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
         marginBottom: 4,
     },
     uploadBtnPill: {
@@ -515,25 +527,26 @@ const styles = StyleSheet.create({
     uploadBtnText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontWeight: '600',
+        fontFamily: Typography.sans.regular,
     },
     // Terms Styles
     termsContainer: {
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        marginTop: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        // marginTop: 20,
     },
     checkbox: {
         width: 20,
         height: 20,
         borderRadius: 4,
-        borderWidth: 1.5,
-        borderColor: '#B99A4A',
-        backgroundColor: '#FFA500', // Making it look like the filled state in screenshot? Actually screenshot shows yellow box with check.
+        // borderWidth: 1.5,
+        // borderColor: '#B99A4A',
+        backgroundColor: '#B99A4A', // Making it look like the filled state in screenshot? Actually screenshot shows yellow box with check.
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 12,
-        marginTop: 2,
+        // marginTop: 2,
     },
     checkboxChecked: {
         backgroundColor: '#B99A4A',
@@ -541,25 +554,62 @@ const styles = StyleSheet.create({
     termsText: {
         color: '#E0E0E0',
         fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
         lineHeight: 22,
         flex: 1,
     },
     linkText: {
         color: '#B99A4A',
-        textDecorationLine: 'underline',
+        fontFamily: Typography.sans.regular,
+        // textDecorationLine: 'underline',
     },
     // Country Picker Styles
+    countryModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+    },
+    countryModalContent: {
+        backgroundColor: 'transparent',
+        height: '82%',
+    },
+    countryModalHeader: {
+        paddingHorizontal: 24,
+        paddingTop: 20,
+        paddingBottom: 10,
+    },
+    modalBackButton: {
+        marginBottom: 15,
+        marginLeft: -5,
+    },
+    modalTitle: {
+        fontSize: responsiveFontSize(32),
+        color: '#FFF',
+        fontFamily: Typography.serif.regular,
+        marginBottom: 20,
+    },
+    countryListContainer: {
+        flex: 1,
+        backgroundColor: '#23272A', // Gray background for the actual list box
+        marginHorizontal: 0,
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
+        overflow: 'hidden',
+        paddingTop: 10,
+    },
+    countryListContent: {
+        paddingHorizontal: 20,
+    },
     countryRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingVertical: 18,
-        borderBottomWidth: 1,
-        borderBottomColor: '#23272A',
     },
     countryInfo: {
         flexDirection: 'row',
         alignItems: 'center',
+        flex: 1,
     },
     countryFlag: {
         fontSize: responsiveFontSize(20),
@@ -568,10 +618,12 @@ const styles = StyleSheet.create({
     countryName: {
         fontSize: responsiveFontSize(16),
         color: '#FFF',
+        fontFamily: Typography.sans.regular,
+        flex: 1,
     },
     countryCodeText: {
         fontSize: responsiveFontSize(16),
-        color: '#B99A4A',
-        fontWeight: '500',
+        color: '#B99A4A', // Yellow/Gold color
+        fontFamily: Typography.sans.medium,
     },
 });

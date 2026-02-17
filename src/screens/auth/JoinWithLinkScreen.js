@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
+import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 
 const JoinWithLinkScreen = ({ navigation }) => {
@@ -132,7 +133,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(28),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.regular,
         marginBottom: 40
     },
     inputContainer: {
@@ -142,7 +143,7 @@ const styles = StyleSheet.create({
         color: '#FFFBF3',
         fontSize: responsiveFontSize(14),
         marginBottom: 10,
-        fontFamily: 'Manrope',
+        fontFamily: Typography.sans.regular,
     },
     inputWrapper: {
         flexDirection: 'row',
@@ -150,7 +151,7 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(253, 253, 253, 0.1)',
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: '#2C2E33',
+        borderColor: '#23272A',
         height: 56,
         paddingHorizontal: 16,
     },
@@ -158,6 +159,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.regular,
     },
     copyIcon: {
         padding: 5,
@@ -165,6 +167,7 @@ const styles = StyleSheet.create({
     errorText: {
         color: '#FF4B4B',
         fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
         marginTop: 8,
     },
 });

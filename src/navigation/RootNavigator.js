@@ -1,6 +1,6 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
 
 // Import organized screens
 import WelcomeScreen from '../screens/welcome/WelcomeScreen';
@@ -39,11 +39,38 @@ import {
     JoinTermsScreen
 } from '../screens/auth/JoinFlowScreens';
 
+const STACK_LIMIT = 5;
+let isTrimming = false;
+
+export const navigationRef = createNavigationContainerRef();
 const Stack = createNativeStackNavigator();
 
 export default function RootNavigator() {
     return (
-        <NavigationContainer>
+        <NavigationContainer
+            ref={navigationRef}
+            onStateChange={(state) => {
+                if (!state || isTrimming) return;
+
+                if (state.routes.length > STACK_LIMIT) {
+                    isTrimming = true;
+                    const newRoutes = state.routes.slice(-STACK_LIMIT);
+
+                    // We use setTimeout to ensure the navigation transition completes 
+                    // before we reset the state to trim the older routes.
+                    setTimeout(() => {
+                        navigationRef.current?.dispatch(
+                            CommonActions.reset({
+                                ...state,
+                                routes: newRoutes,
+                                index: STACK_LIMIT - 1,
+                            })
+                        );
+                        isTrimming = false;
+                    }, 0);
+                }
+            }}
+        >
             <Stack.Navigator
                 initialRouteName="Welcome"
                 screenOptions={{

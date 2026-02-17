@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     },
     separator: {
         // height: 1,
-        // backgroundColor: '#2C2E33',
+        // backgroundColor: '#23272A',
         // marginHorizontal: 20,
     },
     contactButton: {

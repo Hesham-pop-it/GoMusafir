@@ -42,10 +42,12 @@ const ForgotPasswordVerifyScreen = () => {
                         style={styles.resendButton}
                     />
 
-                    <GradientBorderButton
-                        text="Continue"
+                    <TouchableOpacity
+                        style={styles.primaryButton}
                         onPress={() => navigation.navigate('BusinessLogin')}
-                    />
+                    >
+                        <Text style={styles.primaryButtonText}>Continue</Text>
+                    </TouchableOpacity>
                 </View>
             </SafeAreaView>
         </GlowBackground>
@@ -71,7 +73,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: responsiveFontSize(32),
         color: '#FFF',
-        fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+        fontFamily: 'CormorantGaramond',
         marginBottom: 16,
     },
     description: {
@@ -82,11 +84,25 @@ const styles = StyleSheet.create({
     },
     footer: {
         paddingHorizontal: 24,
-        paddingBottom: 40,
+        // paddingBottom: 40,
         gap: 16,
     },
     resendButton: {
         marginBottom: 0,
+    },
+    primaryButton: {
+        backgroundColor: '#B99A4A',
+        height: 56,
+        borderRadius: 28,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+        marginBottom: 100,
+    },
+    primaryButtonText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(18),
+        fontWeight: 'bold'
     },
 });
 

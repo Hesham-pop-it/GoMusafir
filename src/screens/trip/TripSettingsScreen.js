@@ -14,6 +14,7 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 
 const { width } = Dimensions.get('window');
@@ -26,6 +27,7 @@ const TripSettingsScreen = () => {
     const isAdmin = !invitationCode;
 
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+    const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     const [seatModalVisible, setSeatModalVisible] = useState(false);
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [seatCount, setSeatCount] = useState(1);
@@ -67,6 +69,14 @@ const TripSettingsScreen = () => {
     const handleRequestSeats = () => {
         setSeatModalVisible(false);
         setRequestSentVisible(true);
+    };
+
+    const handleLogout = () => {
+        setLogoutModalVisible(false);
+        navigation.reset({
+            index: 0,
+            routes: [{ name: 'Welcome' }],
+        });
     };
 
     const VisibilityItem = ({ label, field }) => {
@@ -177,15 +187,13 @@ const TripSettingsScreen = () => {
                     <VisibilityItem label="Live Location" field="location" />
                 </View>
 
-                {/* Delete Journey Button */}
-                {isAdmin && (
-                    <TouchableOpacity
-                        style={styles.deleteButton}
-                        onPress={() => setDeleteModalVisible(true)}
-                    >
-                        <Text style={styles.deleteButtonText}>Delete Journey</Text>
-                    </TouchableOpacity>
-                )}
+                {/* Action Button (Delete for Admin / Logout for Participant) */}
+                <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => isAdmin ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
+                >
+                    <Text style={styles.deleteButtonText}>{isAdmin ? 'Delete Journey' : 'Log out'}</Text>
+                </TouchableOpacity>
 
                 <View style={{ height: 100 }} />
             </ScrollView>
@@ -220,6 +228,47 @@ const TripSettingsScreen = () => {
                         <TouchableOpacity
                             style={styles.cancelButtonWrapper}
                             onPress={() => setDeleteModalVisible(false)}
+                        >
+                            <LinearGradient
+                                colors={['#D4AF37', '#B8860B', '#8B6914']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.cancelGradientBorder}
+                            >
+                                <View style={styles.cancelButtonInner}>
+                                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                                </View>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Logout Confirmation Modal */}
+            <Modal
+                visible={logoutModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setLogoutModalVisible(false)}
+            >
+                <View style={styles.deleteModalOverlay}>
+                    <View style={styles.deleteModalContent}>
+                        <Text style={[styles.deleteQuestionText, { marginBottom: 40 }]}>
+                            Are you sure you want to log out?
+                        </Text>
+
+                        {/* Logout Button */}
+                        <TouchableOpacity
+                            style={styles.deleteConfirmButton}
+                            onPress={handleLogout}
+                        >
+                            <Text style={styles.deleteConfirmButtonText}>Log Out</Text>
+                        </TouchableOpacity>
+
+                        {/* Cancel Button with Gradient Border */}
+                        <TouchableOpacity
+                            style={styles.cancelButtonWrapper}
+                            onPress={() => setLogoutModalVisible(false)}
                         >
                             <LinearGradient
                                 colors={['#D4AF37', '#B8860B', '#8B6914']}
@@ -328,7 +377,7 @@ const TripSettingsScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#23272A',
+        backgroundColor: '#1E2124',
     },
     header: {
         flexDirection: 'row',
@@ -340,7 +389,7 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: responsiveFontSize(22),
         color: '#FFF',
-        fontFamily: 'IBMPlexSans'
+        fontFamily: Typography.sans.bold,
     },
     iconButton: {
         padding: 5,
@@ -353,43 +402,39 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(20),
         color: '#FFF',
         marginBottom: 15,
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
         marginTop: 10,
-        fontWeight: 'bold'
     },
     statsSectionTitle: {
         fontSize: responsiveFontSize(27),
         color: '#FFF',
-        fontFamily: 'CormorantGaramond',
+        fontFamily: Typography.serif.regular,
         marginBottom: 30,
         marginTop: 10,
     },
     totalSeatsOutlineCard: {
         borderWidth: 1,
-        borderColor: '#E0E0E0',
+        borderColor: '#fff',
         borderRadius: 12,
         padding: 24,
         marginBottom: 20,
-        backgroundColor: 'transparent',
+        backgroundColor: '#23272A',
     },
     statsLabel: {
         color: '#FFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 15,
-        fontFamily: 'IBMPlexSans',
     },
     statsValue: {
         color: '#FFF',
         fontSize: responsiveFontSize(32),
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     statsValueText: {
         color: '#FFF',
         fontSize: responsiveFontSize(32),
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     seatsGrid: {
         flexDirection: 'row',
@@ -423,11 +468,10 @@ const styles = StyleSheet.create({
     increaseBtnText: {
         color: '#FFF',
         fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     visibilityCard: {
-        backgroundColor: '#1E2124',
+        backgroundColor: '#23272A',
         borderRadius: 16,
         padding: 20,
         marginBottom: 30,
@@ -441,8 +485,7 @@ const styles = StyleSheet.create({
     visibilityLabel: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     visibilityValueContainer: {
         flexDirection: 'row',
@@ -452,19 +495,18 @@ const styles = StyleSheet.create({
     visibilityValue: {
         color: '#B99A4A',
         fontSize: responsiveFontSize(14),
-        fontFamily: 'IBMPlexSans',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     deleteButton: {
         backgroundColor: '#2D2528',
         borderRadius: 30,
         paddingVertical: 16,
         alignItems: 'center',
-        marginBottom: 20,
+        marginVertical: 20,
     },
     deleteButtonText: {
         color: '#D66A77',
-        fontWeight: '600',
+        fontFamily: Typography.sans.bold,
         fontSize: responsiveFontSize(16),
     },
     visibilityItemContainer: {
@@ -481,7 +523,7 @@ const styles = StyleSheet.create({
     optionText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.regular,
         textAlign: 'right',
         marginRight: 24, // Align with chevron
     },
@@ -508,6 +550,7 @@ const styles = StyleSheet.create({
     deleteWarningText: {
         color: '#FFF',
         fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular,
         textAlign: 'center',
         lineHeight: 20,
         marginBottom: 16,
@@ -515,7 +558,7 @@ const styles = StyleSheet.create({
     deleteQuestionText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         textAlign: 'center',
         marginBottom: 24,
     },
@@ -530,7 +573,7 @@ const styles = StyleSheet.create({
     deleteConfirmButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     cancelButtonWrapper: {
         width: '100%',
@@ -548,7 +591,7 @@ const styles = StyleSheet.create({
     cancelButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     modalOverlayFull: {
         flex: 1,
@@ -567,6 +610,7 @@ const styles = StyleSheet.create({
     seatModalTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.regular,
         textAlign: 'center',
         marginBottom: 30,
     },
@@ -596,7 +640,7 @@ const styles = StyleSheet.create({
     countText: {
         color: '#FFF',
         fontSize: responsiveFontSize(24),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     requestButton: {
         width: '100%',
@@ -604,7 +648,7 @@ const styles = StyleSheet.create({
     requestButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     resendGradientBorder: {
         borderRadius: 28,
@@ -620,13 +664,14 @@ const styles = StyleSheet.create({
     sentModalTitle: {
         color: '#FFF',
         fontSize: responsiveFontSize(20),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         textAlign: 'center',
         marginBottom: 20,
     },
     sentModalDesc: {
         color: '#9BA1A6',
         fontSize: responsiveFontSize(15),
+        fontFamily: Typography.sans.regular,
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 30,
