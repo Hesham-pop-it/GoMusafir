@@ -15,7 +15,8 @@
       "supportsTablet": true,
       "config": {
         "googleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
-      }
+      },
+      "bundleIdentifier": "com.popit.GoMusafir"
     },
     "android": {
       "edgeToEdgeEnabled": false,
@@ -27,7 +28,12 @@
         "googleMaps": {
           "apiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
         }
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.popit.GoMusafir"
     },
     "androidNavigationBar": {
       "backgroundColor": "#1A1E21",
