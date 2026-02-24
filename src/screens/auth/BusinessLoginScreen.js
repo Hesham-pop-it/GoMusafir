@@ -17,6 +17,7 @@ import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
+import { Typography } from '../../constants/Typography';
 
 const BusinessLoginScreen = () => {
     const navigation = useNavigation();
@@ -134,7 +135,7 @@ const BusinessLoginScreen = () => {
                 {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
                 <View style={[styles.footer,]}>
                     <TouchableOpacity
-                        style={[styles.loginButton, !isFormValid && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 0 : 100 }]}
+                        style={[styles.loginButton, !isFormValid && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 20 : 100 }]}
                         onPress={() => navigation.navigate('BusinessVerification')}
                         disabled={!isFormValid}
                     >
@@ -201,6 +202,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.bold,
     },
     eyeIcon: {
         padding: 5,

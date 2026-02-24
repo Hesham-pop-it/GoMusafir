@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 
@@ -173,6 +174,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         color: '#FFF',
         fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     roleSection: {
         gap: 16,

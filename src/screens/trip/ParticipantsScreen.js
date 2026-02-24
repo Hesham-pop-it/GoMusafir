@@ -17,6 +17,7 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 
@@ -332,6 +333,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     listContent: {
         paddingHorizontal: 20,

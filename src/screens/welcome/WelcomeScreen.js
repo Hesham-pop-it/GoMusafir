@@ -262,7 +262,7 @@ const WelcomeScreen = ({ navigation }) => {
 
                     {/* Logo Section */}
                     <View style={styles.logoContainer}>
-                        <Logo width={120} height={120} />
+                        <Logo width={140} height={140} />
                     </View>
 
                     {/* Buttons Section */}
@@ -400,13 +400,13 @@ const styles = StyleSheet.create({
     languageText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.semiBold,
+        fontFamily: Typography.sans.bold,
     },
     logoContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        marginTop: -40,
+        marginTop: -90,
     },
     logo: {
         width: 100,
@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
         resizeMode: 'contain',
     },
     buttonContainer: {
-        paddingHorizontal: 25,
+        paddingHorizontal: "7%",
         paddingBottom: 40,
         gap: 16,
     },
@@ -442,11 +442,6 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
     },
-    outlinedButtonText: {
-        color: '#FFF',
-        fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.semiBold,
-    },
     modalOverlay: {
         flex: 1,
         justifyContent: 'flex-start',
@@ -466,13 +461,14 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
     },
     languageItem: {
+        
         paddingVertical: 7,
         paddingHorizontal: 20,
     },
     languageItemText: {
         color: '#fff',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.medium,
+        fontFamily: Typography.sans.bold,
     },
     languageItemTextSelected: {
         color: '#B99A4A',

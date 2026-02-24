@@ -89,10 +89,15 @@ const BusinessVerificationScreen = ({ route }) => {
 
     const renderDigit = (index) => {
         const digit = otp[index];
-        if (!digit) {
-            return <View key={index} style={styles.dash} />;
-        }
-        return <Text key={index} style={styles.codeDigit}>{digit}</Text>;
+        return (
+            <View key={index} style={styles.digitSlot}>
+                {digit ? (
+                    <Text style={styles.codeDigit}>{digit}</Text>
+                ) : (
+                    <View style={styles.dash} />
+                )}
+            </View>
+        );
     };
 
     return (
@@ -156,7 +161,7 @@ const BusinessVerificationScreen = ({ route }) => {
                             style={[
                                 styles.primaryButton,
                                 otp.length !== 6 && { opacity: 0.5 },
-                                { marginBottom: isKeyboardVisible ? 0 : 100 }
+                                { marginBottom: isKeyboardVisible ? 20 : 100 }
                             ]}
                             onPress={handleContinue}
                             disabled={otp.length !== 6}
@@ -217,11 +222,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        // borderWidth: 1,
         borderRadius: 12,
-        paddingTop: 24,
-        paddingHorizontal: 50,
-        minHeight: 80,
+        paddingHorizontal: 54,
+        height: 80,
     },
     codeBoxNormal: {
         // borderColor: '#3A3A3A',
@@ -235,11 +238,16 @@ const styles = StyleSheet.create({
         borderColor: 'transparent',
         backgroundColor: 'rgba(253, 253, 253, 0.10)',
     },
+    digitSlot: {
+        width: 30,
+        height: 48,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     codeDigit: {
         fontSize: responsiveFontSize(32),
         color: '#FFF',
-        fontWeight: '500',
-        width: 25,
+        fontFamily: Typography.sans.bold,
         textAlign: 'center',
     },
     dash: {
@@ -247,6 +255,7 @@ const styles = StyleSheet.create({
         height: 2,
         backgroundColor: '#FFF',
         borderRadius: 1,
+        transform: [{ translateY: 10 }], // Adjusted to keep it at its "place" (lower than middle)
     },
     errorText: {
         color: '#D66A77',

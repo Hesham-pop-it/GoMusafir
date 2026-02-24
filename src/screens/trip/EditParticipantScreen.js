@@ -16,6 +16,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 
 import GlowBackground from '../../components/GlowBackground';
@@ -231,6 +232,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         color: '#FFF',
         fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     footer: {
         paddingHorizontal: 20,

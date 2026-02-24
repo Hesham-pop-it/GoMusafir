@@ -102,7 +102,7 @@ const JoinWithLinkScreen = ({ navigation }) => {
                         text="Continue"
                         onPress={handleContinue}
                         disabled={invitationLink.trim().length === 0}
-                        style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
+                        style={{ marginBottom: isKeyboardVisible ? 20 : 100 }}
                     />
                 </KeyboardAvoidingView>
             </SafeAreaView>
@@ -159,7 +159,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.regular,
+        fontFamily: Typography.sans.bold,
     },
     copyIcon: {
         padding: 5,

@@ -15,7 +15,7 @@ export const Typography = {
         bold: 'IBMPlexSans_Bold',
     },
 
-    // Auxiliary Font
+    // Auxiliary Font   
     manrope: {
         regular: 'Manrope',
         medium: 'Manrope_Medium',

@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path, Rect } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { COUNTRIES } from '../../constants/Countries';
@@ -60,7 +61,12 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     style={styles.content}
                 >
-                    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+                    <ScrollView
+                        showsVerticalScrollIndicator={false}
+                        contentContainerStyle={{ flexGrow: 1 }}
+                        bounces={false}
+                        keyboardShouldPersistTaps="handled"
+                    >
                         <Text style={styles.title}>{title}</Text>
 
                         {label && <Text style={styles.label}>{label}</Text>}
@@ -68,14 +74,14 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
                         <View style={{ flex: 1 }}>
                             {children}
                         </View>
-
-                        <GradientBorderButton
-                            text={buttonText}
-                            onPress={onContinue}
-                            disabled={!isValid}
-                            style={{ marginBottom: isKeyboardVisible ? 0 : 100 }}
-                        />
                     </ScrollView>
+
+                    <GradientBorderButton
+                        text={buttonText}
+                        onPress={onContinue}
+                        disabled={!isValid}
+                        style={{ marginBottom: isKeyboardVisible ? 20 : 100 }}
+                    />
                 </KeyboardAvoidingView>
             </SafeAreaView>
         </GlowBackground>
@@ -278,7 +284,7 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
                 <TouchableWithoutFeedback onPress={() => setPickerVisible(false)}>
                     <View style={styles.countryModalOverlay}>
                         <TouchableWithoutFeedback>
-                            <SafeAreaView style={styles.countryModalContent}>
+                            <View style={styles.countryModalContent}>
 
                                 <View style={styles.countryListContainer}>
                                     <FlatList
@@ -300,7 +306,7 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
                                         )}
                                     />
                                 </View>
-                            </SafeAreaView>
+                            </View>
                         </TouchableWithoutFeedback>
                     </View>
                 </TouchableWithoutFeedback>
@@ -401,7 +407,12 @@ export const JoinTermsScreen = ({ navigation, route }) => {
 
             >
                 <TouchableOpacity onPress={() => setAccepted(!accepted)} activeOpacity={1} style={[styles.checkbox, accepted && styles.checkboxChecked]}>
-                    {accepted && <Ionicons name="checkmark" size={14} color="#fff" />}
+                    {accepted && (
+                        <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                            <Rect x="3" y="3" width="18" height="18" rx="6" fill="#B99A4A" />
+                            <Path d="M10 16.4L6 12.4L7.4 11L10 13.6L16.6 7L18 8.4L10 16.4Z" fill="white" />
+                        </Svg>
+                    )}
                 </TouchableOpacity>
                 <Text style={styles.termsText}>
                     I accept <Text style={styles.linkText}>Terms & Privacy</Text> and consent to live voice and, if enabled, recording, location sharing is controllable in app.
@@ -461,7 +472,7 @@ const styles = StyleSheet.create({
     input: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.regular,
+        fontFamily: Typography.sans.bold,
         height: '100%',
     },
     inputText: {
@@ -537,19 +548,18 @@ const styles = StyleSheet.create({
         // marginTop: 20,
     },
     checkbox: {
-        width: 20,
-        height: 20,
-        borderRadius: 4,
-        // borderWidth: 1.5,
-        // borderColor: '#B99A4A',
-        backgroundColor: '#B99A4A', // Making it look like the filled state in screenshot? Actually screenshot shows yellow box with check.
+        width: 24,
+        height: 24,
+        borderRadius: 6,
+        borderWidth: 1.5,
+        borderColor: '#49454F',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 12,
-        // marginTop: 2,
     },
     checkboxChecked: {
-        backgroundColor: '#B99A4A',
+        backgroundColor: 'transparent',
+        borderColor: 'transparent',
     },
     termsText: {
         color: '#E0E0E0',
@@ -571,7 +581,7 @@ const styles = StyleSheet.create({
     },
     countryModalContent: {
         backgroundColor: 'transparent',
-        height: '82%',
+        height: '79%',
     },
     countryModalHeader: {
         paddingHorizontal: 24,
@@ -599,6 +609,7 @@ const styles = StyleSheet.create({
     },
     countryListContent: {
         paddingHorizontal: 20,
+        paddingBottom: 40,
     },
     countryRow: {
         flexDirection: 'row',

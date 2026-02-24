@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
+import { Typography } from '../../constants/Typography';
 
 const ChangePasswordScreen = () => {
     const navigation = useNavigation();
@@ -246,6 +247,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.bold,
     },
     hint: {
         color: '#9BA1A6',

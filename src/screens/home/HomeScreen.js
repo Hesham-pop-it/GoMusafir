@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: 16,
-        fontFamily: Typography.sans.regular,
+        fontFamily: Typography.sans.bold,
         paddingVertical: 10,
     },
     filterButton: {
@@ -728,7 +728,8 @@ const styles = StyleSheet.create({
     },
     filterTextInputStyle: {
         color: '#fff',
-        flex: 1
+        flex: 1,
+        fontFamily: Typography.sans.bold,
     },
     filterSectionContainer: {
         marginTop: 14,
@@ -809,7 +810,7 @@ const styles = StyleSheet.create({
     languageItemText: {
         color: '#fff',
         fontSize: 16,
-        fontFamily: Typography.sans.medium,
+        fontFamily: Typography.sans.bold,
     },
     languageItemTextSelected: {
         color: '#B99A4A',

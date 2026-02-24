@@ -600,6 +600,7 @@ const styles = StyleSheet.create({
         height: 40,
         paddingHorizontal: 16,
         color: '#FFF',
+        fontFamily: Typography.sans.bold,
     },
     sendButton: {
         width: 42,
@@ -692,6 +693,7 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 16,
         marginBottom: 20,
+        fontFamily: Typography.sans.bold,
     },
     textArea: {
         height: 120,

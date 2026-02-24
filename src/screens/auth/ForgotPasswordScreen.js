@@ -16,6 +16,7 @@ import { useNavigation } from '@react-navigation/native';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
+import { Typography } from '../../constants/Typography';
 
 const ForgotPasswordScreen = () => {
     const navigation = useNavigation();
@@ -79,7 +80,7 @@ const ForgotPasswordScreen = () => {
                         style={[
                             styles.loginButton,
                             email.trim().length === 0 && { opacity: 0.5 },
-                            { marginBottom: isKeyboardVisible ? 0 : 100 }
+                            { marginBottom: isKeyboardVisible ? 20 : 100 }
                         ]}
                         onPress={() => navigation.navigate('ForgotPasswordVerify')}
                         disabled={email.trim().length === 0}
@@ -144,6 +145,7 @@ const styles = StyleSheet.create({
     input: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.bold,
     },
     footer: {
         paddingHorizontal: 24,

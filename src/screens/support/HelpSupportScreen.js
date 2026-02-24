@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
+import { Typography } from '../../constants/Typography';
 import GlowBackground from '../../components/GlowBackground';
 
 const FAQItem = ({ question, onPress }) => (
@@ -204,6 +205,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     scrollContent: {
         paddingHorizontal: 20,
