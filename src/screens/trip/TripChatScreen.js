@@ -11,10 +11,10 @@ import {
     Image,
     KeyboardAvoidingView,
     Platform,
-    Modal,
     TouchableWithoutFeedback,
     Keyboard
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
@@ -118,7 +118,11 @@ const TripChatScreen = () => {
 
     const [inputText, setInputText] = useState('');
     const [showAttachments, setShowAttachments] = useState(false);
-    const [options, setOptions] = useState(QUICK_OPTIONS);
+    const [options, setOptions] = useState(
+        isAdmin
+            ? QUICK_OPTIONS
+            : QUICK_OPTIONS.filter(opt => ['photo', 'location', 'camera'].includes(opt.id))
+    );
     const [messages, setMessages] = useState(MOCK_MESSAGES);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
     const inputRef = useRef(null);
@@ -318,7 +322,7 @@ const TripChatScreen = () => {
                         <View style={styles.headerInfo}>
                             <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
                             <Text style={styles.headerSubtitle} numberOfLines={1}>
-                                {tripData.participantsList || tripData.participants || 'You, Titor, Sarah, ...'}
+                                {'You, Titor, Sarah, John, Mike, Elena,...'}
                             </Text>
                         </View>
                     </View>
@@ -411,47 +415,45 @@ const TripChatScreen = () => {
 
             {/* Template Creation Modal */}
             <Modal
-                visible={templateModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setTemplateModalVisible(false)}
+                isVisible={templateModalVisible}
+                onBackdropPress={() => setTemplateModalVisible(false)}
+                onSwipeComplete={() => setTemplateModalVisible(false)}
+                swipeDirection="down"
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
+                avoidKeyboard={true}
             >
-                <TouchableWithoutFeedback onPress={() => setTemplateModalVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                            <View style={styles.modalContent}>
-                                <Text style={styles.modalTitle}>Create New Template</Text>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Create New Template</Text>
 
-                                <Text style={styles.inputLabel}>Template Name</Text>
-                                <TextInput
-                                    style={styles.modalInput}
-                                    placeholder="e.g., On The Way"
-                                    placeholderTextColor="#666"
-                                    value={templateName}
-                                    onChangeText={setTemplateName}
-                                />
+                    <Text style={styles.inputLabel}>Template Name</Text>
+                    <TextInput
+                        style={styles.modalInput}
+                        placeholder="e.g., On The Way"
+                        placeholderTextColor="#666"
+                        value={templateName}
+                        onChangeText={setTemplateName}
+                    />
 
-                                <Text style={styles.inputLabel}>Message Content</Text>
-                                <TextInput
-                                    style={[styles.modalInput, styles.textArea]}
-                                    placeholder="Type your message content here..."
-                                    placeholderTextColor="#666"
-                                    value={templateContent}
-                                    onChangeText={setTemplateContent}
-                                    multiline={true}
-                                    textAlignVertical="top"
-                                />
+                    <Text style={styles.inputLabel}>Message Content</Text>
+                    <TextInput
+                        style={[styles.modalInput, styles.textArea]}
+                        placeholder="Type your message content here..."
+                        placeholderTextColor="#666"
+                        value={templateContent}
+                        onChangeText={setTemplateContent}
+                        multiline={true}
+                        textAlignVertical="top"
+                    />
 
-                                <TouchableOpacity
-                                    style={styles.addButton}
-                                    onPress={handleAddTemplate}
-                                >
-                                    <Text style={styles.addButtonText}>Add Template</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
+                    <TouchableOpacity
+                        style={styles.addButton}
+                        onPress={handleAddTemplate}
+                    >
+                        <Text style={styles.addButtonText}>Add Template</Text>
+                    </TouchableOpacity>
+                </View>
             </Modal>
         </View >
     );
@@ -484,12 +486,12 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         color: '#FFF',
-        fontSize: 22,
-        fontFamily: Typography.sans.bold,
+        fontSize: 16,
+        fontFamily: Typography.sans.semiBold,
     },
     headerSubtitle: {
         color: '#A1A1AA',
-        fontSize: 12,
+        fontSize: 13,
         marginTop: 2,
         fontFamily: Typography.sans.regular,
     },

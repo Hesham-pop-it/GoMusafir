@@ -5,12 +5,12 @@ import {
     Text,
     Image,
     TouchableOpacity,
-    Modal,
     FlatList,
     TouchableWithoutFeedback,
     Animated,
     Platform
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -255,7 +255,7 @@ const WelcomeScreen = ({ navigation }) => {
                             style={styles.languageSelector}
                             onPress={() => setModalVisible(true)}
                         >
-                            <Text style={styles.languageText}>{selectedLanguage}</Text>
+                            <Text style={[styles.languageText, { fontFamily: Typography.sans.semiBold, fontSize: 18 }]}>{selectedLanguage}</Text>
                             <MaterialIcons name="keyboard-arrow-down" size={20} color="#FFF" />
                         </TouchableOpacity>
                     </View>
@@ -301,69 +301,71 @@ const WelcomeScreen = ({ navigation }) => {
             </View >
 
             <Modal
-                animationType="fade"
-                transparent={true}
-                visible={modalVisible}
-                onRequestClose={() => setModalVisible(false)}
+                isVisible={modalVisible}
+                onBackdropPress={() => setModalVisible(false)}
+                onSwipeComplete={() => setModalVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.3}
+                animationIn="fadeIn"
+                animationOut="fadeOut"
+                style={styles.modalOverlay}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <View style={styles.modalContent}>
-                            <FlatList
-                                data={LANGUAGES}
-                                renderItem={renderLanguageItem}
-                                keyExtractor={item => item.code}
-                                showsVerticalScrollIndicator={false}
-                            />
-                        </View>
-                    </View>
-                </TouchableWithoutFeedback>
+                <View style={styles.modalContent}>
+                    <FlatList
+                        data={LANGUAGES}
+                        renderItem={renderLanguageItem}
+                        keyExtractor={item => item.code}
+                        showsVerticalScrollIndicator={false}
+                    />
+                </View>
             </Modal>
 
             {/* Join Method Modal */}
             <Modal
-                animationType="fade"
-                transparent={true}
-                visible={joinMethodVisible}
-                onRequestClose={() => setJoinMethodVisible(false)}
+                isVisible={joinMethodVisible}
+                onBackdropPress={() => setJoinMethodVisible(false)}
+                onSwipeComplete={() => setJoinMethodVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.7}
+                animationIn="fadeIn"
+                animationOut="fadeOut"
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center' }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <TouchableWithoutFeedback onPress={() => setJoinMethodVisible(false)}>
-                    <View style={styles.joinModalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.joinModalContent}>
-                                <Text style={styles.joinModalTitle}>How would you like to join?</Text>
+                <View style={styles.joinModalContent}>
+                    <Text style={styles.joinModalTitle}>How would you like to join?</Text>
 
-                                <View style={styles.joinOptionsContainer}>
-                                    <GradientBorderButton
-                                        style={{ flex: 1 }}
-                                        innerStyle={{ flexDirection: 'row' }}
-                                        innerBg="#23272A"
-                                        onPress={() => {
-                                            setJoinMethodVisible(false);
-                                            navigation.navigate('JoinWithLink');
-                                        }}
-                                    >
-                                        <Ionicons name="link-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
-                                        <Text style={styles.joinOptionText}>Link</Text>
-                                    </GradientBorderButton>
+                    <View style={styles.joinOptionsContainer}>
+                        <GradientBorderButton
+                            style={{ flex: 1 }}
+                            innerStyle={{ flexDirection: 'row' }}
+                            innerBg="#23272A"
+                            onPress={() => {
+                                setJoinMethodVisible(false);
+                                navigation.navigate('JoinWithLink');
+                            }}
+                        >
+                            <Ionicons name="link-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.joinOptionText}>Link</Text>
+                        </GradientBorderButton>
 
-                                    <GradientBorderButton
-                                        style={{ flex: 1 }}
-                                        innerStyle={{ flexDirection: 'row' }}
-                                        innerBg="#23272A"
-                                        onPress={() => {
-                                            setJoinMethodVisible(false);
-                                            navigation.navigate('ScanQr');
-                                        }}
-                                    >
-                                        <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                                        <Text style={styles.joinOptionText}>QR</Text>
-                                    </GradientBorderButton>
-                                </View>
-                            </View>
-                        </TouchableWithoutFeedback>
+                        <GradientBorderButton
+                            style={{ flex: 1 }}
+                            innerStyle={{ flexDirection: 'row' }}
+                            innerBg="#23272A"
+                            onPress={() => {
+                                setJoinMethodVisible(false);
+                                navigation.navigate('ScanQr');
+                            }}
+                        >
+                            <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.joinOptionText}>QR</Text>
+                        </GradientBorderButton>
                     </View>
-                </TouchableWithoutFeedback>
+                </View>
             </Modal>
         </View >
     );
@@ -399,7 +401,7 @@ const styles = StyleSheet.create({
     },
     languageText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(16),
+        fontSize: 16,
         fontFamily: Typography.sans.bold,
     },
     logoContainer: {
@@ -443,16 +445,15 @@ const styles = StyleSheet.create({
         fontFamily: Typography.sans.bold,
     },
     modalOverlay: {
-        flex: 1,
+        margin: 0,
         justifyContent: 'flex-start',
-        paddingTop: Platform.OS === 'ios' ? 100 : 35,
-        paddingLeft: 21,
+        paddingTop: Platform.OS === 'ios' ? 85 : 35,
+        paddingLeft: 21
     },
     modalContent: {
         backgroundColor: '#23272A', // Dark background for dropdown
         borderRadius: 12,
         width: 180,
-        maxHeight: 400,
         // paddingVertical: 1,
         elevation: 5,
         shadowColor: '#000',
@@ -461,7 +462,7 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
     },
     languageItem: {
-        
+
         paddingVertical: 7,
         paddingHorizontal: 20,
     },
@@ -472,7 +473,8 @@ const styles = StyleSheet.create({
     },
     languageItemTextSelected: {
         color: '#B99A4A',
-        fontFamily: Typography.sans.bold,
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
     },
     // Join Modal Styles
     joinModalOverlay: {
@@ -517,7 +519,7 @@ const styles = StyleSheet.create({
     greetingText: {
         color: '#FFF',
         fontSize: responsiveFontSize(22),
-        fontFamily: 'CormorantGaramond',
+        fontFamily: Typography.serif.regular,
         letterSpacing: 0.5,
     },
     floatingTextContainer: {
@@ -526,8 +528,7 @@ const styles = StyleSheet.create({
     floatingText: {
         color: '#FFFFFF',
         fontSize: responsiveFontSize(22),
-        fontFamily: 'CormorantGaramond',
-        fontWeight: 'bold',
+        fontFamily: Typography.serif.bold,
         textShadowColor: 'rgba(0, 0, 0, 0.8)',
         textShadowOffset: { width: -1, height: 1 },
         textShadowRadius: 10,

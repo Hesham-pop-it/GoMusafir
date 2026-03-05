@@ -20,7 +20,7 @@ const GlowBackground = ({ children }) => {
                             ry="500"
                             gradientUnits="userSpaceOnUse"
                         >
-                            <Stop offset="0" stopColor={Colors.dark.primary} stopOpacity="0.2" />
+                            <Stop offset="0" stopColor={Colors.dark.primary} stopOpacity="0.1" />
                             <Stop offset="1" stopColor={Colors.dark.background} stopOpacity="0" />
                         </RadialGradient>
                     </Defs>
@@ -37,7 +37,7 @@ const GlowBackground = ({ children }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.dark.background,
+        backgroundColor: Colors.dark.background, 
     },
     glowContainer: {
         ...StyleSheet.absoluteFillObject,

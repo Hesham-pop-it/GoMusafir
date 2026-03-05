@@ -179,7 +179,7 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 32,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_Bold',
+        fontFamily: Typography.serif.bold,
         marginBottom: 8,
     },
     subtitle: {
@@ -253,7 +253,7 @@ const styles = StyleSheet.create({
     },
     contactButtonText: {
         color: '#fff',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         fontSize: 16,
     },
 });

@@ -6,10 +6,9 @@ import {
     TouchableOpacity,
     FlatList,
     Image,
-    Modal,
-    TouchableWithoutFeedback,
     Platform
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -17,6 +16,7 @@ import Svg, { Path } from 'react-native-svg';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
+import { Typography } from '../../constants/Typography';
 
 const TrashIcon = ({ color = "#FF383C" }) => (
     <Svg width="24" height="28" viewBox="0 0 24 28" fill="none">
@@ -116,42 +116,39 @@ const JourneyTeamScreen = () => {
 
                 {/* Delete Confirmation Modal */}
                 <Modal
-                    visible={deleteModalVisible}
-                    transparent={true}
-                    animationType="slide"
-                    onRequestClose={() => setDeleteModalVisible(false)}
+                    isVisible={deleteModalVisible}
+                    onBackdropPress={() => setDeleteModalVisible(false)}
+                    onSwipeComplete={() => setDeleteModalVisible(false)}
+                    swipeDirection="down"
+                    style={{ margin: 0, justifyContent: 'flex-end' }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
                 >
-                    <TouchableWithoutFeedback onPress={() => setDeleteModalVisible(false)}>
-                        <View style={styles.modalOverlay}>
-                            <TouchableWithoutFeedback>
-                                <View style={styles.modalContent}>
-                                    <View style={styles.modalIndicator} />
-                                    <Text style={styles.modalTitle}>
-                                        Are you sure want to delete Co-Host/ Manager from your team?
-                                    </Text>
-                                    <View style={styles.modalButtons}>
-                                        <GradientBorderButton
-                                            text="Cancel"
-                                            onPress={() => setDeleteModalVisible(false)}
-                                            style={{ flex: 1 }}
-                                            innerBg="#1E2124"
-                                        />
-                                        <TouchableOpacity
-                                            style={styles.confirmDeleteButton}
-                                            onPress={() => {
-                                                setDeleteModalVisible(false);
-                                                setIsDeleteMode(false);
-                                                setSelectedMembers([]);
-                                                // Real app would handle actual deletion here
-                                            }}
-                                        >
-                                            <Text style={styles.confirmDeleteButtonText}>Delete</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            </TouchableWithoutFeedback>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalIndicator} />
+                        <Text style={styles.modalTitle}>
+                            Are you sure want to delete Co-Host/ Manager from your team?
+                        </Text>
+                        <View style={styles.modalButtons}>
+                            <GradientBorderButton
+                                text="Cancel"
+                                onPress={() => setDeleteModalVisible(false)}
+                                style={{ flex: 1 }}
+                                innerBg="#1E2124"
+                            />
+                            <TouchableOpacity
+                                style={styles.confirmDeleteButton}
+                                onPress={() => {
+                                    setDeleteModalVisible(false);
+                                    setIsDeleteMode(false);
+                                    setSelectedMembers([]);
+                                    // Real app would handle actual deletion here
+                                }}
+                            >
+                                <Text style={styles.confirmDeleteButtonText}>Delete</Text>
+                            </TouchableOpacity>
                         </View>
-                    </TouchableWithoutFeedback>
+                    </View>
                 </Modal>
             </SafeAreaView>
         </GlowBackground>
@@ -175,9 +172,9 @@ const styles = StyleSheet.create({
         padding: 10,
     },
     title: {
-        fontSize: 32,
+        fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_600SemiBold',
+        fontFamily: Typography.serif.regular,
         paddingHorizontal: 20,
         marginTop: 20,
         marginBottom: 30,
@@ -202,11 +199,12 @@ const styles = StyleSheet.create({
     nameText: {
         color: '#FFF',
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 4,
     },
     roleText: {
         color: '#A1A1AA',
+        fontFamily: Typography.sans.regular,
         fontSize: 13,
     },
     separator: {
@@ -226,8 +224,8 @@ const styles = StyleSheet.create({
     },
     addButtonText: {
         color: '#FFF',
-        fontSize: 18,
-        fontWeight: 'bold',
+        fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     deleteButton: {
         height: 56,
@@ -263,7 +261,7 @@ const styles = StyleSheet.create({
     },
     modalTitle: {
         fontSize: 16,
-        fontFamily: 'IBMPlexSans_SemiBold',
+        fontFamily: Typography.sans.semiBold,
         color: '#FFF',
         textAlign: 'center',
         fontWeight: 'bold',

@@ -6,9 +6,12 @@ import {
     TouchableOpacity,
     ScrollView,
     Dimensions,
-    Modal,
-    FlatList
+    FlatList,
+    StatusBar,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -79,136 +82,216 @@ const TripSettingsScreen = () => {
         });
     };
 
+    const { height: screenHeight } = Dimensions.get('window');
+
+    // Swipe down to close logic for modals - Interactive Draggable version
+    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                animatedValue.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(animatedValue, {
+                    toValue: screenHeight,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setter(false);
+                    animatedValue.setValue(0);
+                });
+            } else {
+                Animated.spring(animatedValue, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
+    const panYDelete = React.useRef(new Animated.Value(0)).current;
+    const panYLogout = React.useRef(new Animated.Value(0)).current;
+    const panYSeat = React.useRef(new Animated.Value(0)).current;
+    const panYRequest = React.useRef(new Animated.Value(0)).current;
+
+    const deleteSwipe = createDraggableResponder(setDeleteModalVisible, panYDelete);
+    const logoutSwipe = createDraggableResponder(setLogoutModalVisible, panYLogout);
+    const seatSwipe = createDraggableResponder(setSeatModalVisible, panYSeat);
+    const requestSentSwipe = createDraggableResponder(setRequestSentVisible, panYRequest);
+
+
+
     const VisibilityItem = ({ label, field }) => {
         const isExpanded = expandedField === field;
         return (
             <View style={styles.visibilityItemContainer}>
-                <TouchableOpacity
-                    style={styles.visibilityRow}
-                    onPress={() => toggleExpand(field)}
-                    activeOpacity={0.7}
-                >
+                <View style={styles.visibilityRow}>
                     <Text style={styles.visibilityLabel}>{label}</Text>
-                    <View style={styles.visibilityValueContainer}>
-                        <Text style={styles.visibilityValue}>{visibilitySettings[field]}</Text>
-                        <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={16} color="#B99A4A" />
+                    <View style={styles.rightColumn}>
+                        <TouchableOpacity
+                            style={styles.visibilityValueContainer}
+                            onPress={() => toggleExpand(field)}
+                            activeOpacity={0.7}
+                        >
+                            <Text style={styles.visibilityValue}>{visibilitySettings[field]}</Text>
+                            <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={16} color="#B99A4A" />
+                        </TouchableOpacity>
+                        {isExpanded && (
+                            <View style={styles.expandedOptions}>
+                                {visibilityOptions.map((option, index) => (
+                                    <TouchableOpacity
+                                        key={index}
+                                        style={styles.optionItem}
+                                        onPress={() => handleSelectVisibility(field, option)}
+                                    >
+                                        <Text style={[
+                                            styles.optionText,
+                                            visibilitySettings[field] === option && { color: '#B99A4A' }
+                                        ]}>
+                                            {option}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
                     </View>
-                </TouchableOpacity>
-                {isExpanded && (
-                    <View style={styles.expandedOptions}>
-                        {visibilityOptions.map((option, index) => (
-                            <TouchableOpacity
-                                key={index}
-                                style={styles.optionItem}
-                                onPress={() => handleSelectVisibility(field, option)}
-                            >
-                                <Text style={[
-                                    styles.optionText,
-                                    visibilitySettings[field] === option && { color: '#B99A4A' }
-                                ]}>
-                                    {option}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                )}
+                </View>
             </View>
         );
     };
 
     return (
-        <SafeAreaView style={styles.container}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-                    <Ionicons name="arrow-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Setting</Text>
-                <View style={{ width: 40 }} />
-            </View>
-
-            <ScrollView contentContainerStyle={styles.scrollContent}>
-                {/* Journey Seat Statistics */}
-                <Text style={styles.statsSectionTitle}>Journey Seat Statistics</Text>
-
-                <View style={styles.totalSeatsOutlineCard}>
-                    <Text style={styles.statsLabel}>Total seats</Text>
-                    <Text style={styles.statsValue}>15</Text>
-                </View>
-
-                <View style={styles.seatsGrid}>
-                    <LinearGradient
-                        colors={['#9C781C', 'rgba(50, 53, 55, 0.6)']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[styles.gradientCard, styles.halfCard]}
-                    >
-                        <Text style={styles.statsLabel}>Filled seats</Text>
-                        <Text style={styles.statsValueText}>11</Text>
-                    </LinearGradient>
-
-                    <LinearGradient
-                        colors={['#205A4B', '#1C2426']}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={[styles.gradientCard, styles.halfCard]}
-                    >
-                        <Text style={styles.statsLabel}>Seats left</Text>
-                        <Text style={styles.statsValueText}>4</Text>
-                    </LinearGradient>
-                </View>
-
-                {isAdmin && (
-                    <TouchableOpacity
-                        style={styles.increaseBtnWrapper}
-                        onPress={() => setSeatModalVisible(true)}
-                    >
-                        <LinearGradient
-                            colors={['#D4AF37', '#73571F', '#1C1E21']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={styles.increaseGradientBorder}
-                        >
-                            <View style={styles.increaseBtnInner}>
-                                <Text style={styles.increaseBtnText}>Increase seat capacity</Text>
-                            </View>
-                        </LinearGradient>
+        <View style={styles.container}>
+            <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+            <SafeAreaView style={[styles.container, { marginTop: 20 }]}>
+                {/* Fixed Background Header Layer (Z-Index: 10) - Box-none allows touch-through */}
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }]} pointerEvents="box-none">
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
+                        <Ionicons name="arrow-back" size={24} color="#FFF" />
                     </TouchableOpacity>
-                )}
 
-                {/* Visibility Settings */}
-                <Text style={styles.sectionTitle}>Data visibility</Text>
-                <View style={styles.visibilityCard}>
-                    <VisibilityItem label="First Name" field="name" />
-                    <VisibilityItem label="Last Name" field="lastname" />
-                    <VisibilityItem label="Email" field="email" />
-                    <VisibilityItem label="Phone" field="phone" />
-                    <VisibilityItem label="Photo" field="photo" />
-                    <VisibilityItem label="Live Location" field="location" />
+                    <Text style={styles.headerTitle}>Setting</Text>
+
+                    <View style={{ width: 40 }} />
                 </View>
 
-                {/* Action Button (Delete for Admin / Logout for Participant) */}
-                <TouchableOpacity
-                    style={styles.deleteButton}
-                    onPress={() => isAdmin ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
+                <ScrollView
+                    style={{ flex: 1, zIndex: 0 }}
+                    contentContainerStyle={styles.scrollContent}
                 >
-                    <Text style={styles.deleteButtonText}>{isAdmin ? 'Delete Journey' : 'Log out'}</Text>
-                </TouchableOpacity>
+                    <View style={{ marginTop: 80 }}>
+                        {/* Journey Seat Statistics */}
+                        <Text style={styles.statsSectionTitle}>Journey Seat Statistics</Text>
 
-                <View style={{ height: 100 }} />
-            </ScrollView>
+                        <View style={styles.totalSeatsOutlineCard}>
+                            <Text style={styles.statsLabel}>Total seats</Text>
+                            <Text style={styles.statsValue}>15</Text>
+                        </View>
 
-            {/* Modal references removed for inline visibility logic */}
+                        <View style={styles.seatsGrid}>
+                            <LinearGradient
+                                colors={['#9C781C', 'rgba(50, 53, 55, 0.6)']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={[styles.gradientCard, styles.halfCard]}
+                            >
+                                <Text style={styles.statsLabel}>Filled seats</Text>
+                                <Text style={styles.statsValueText}>11</Text>
+                            </LinearGradient>
 
-            {/* Delete Confirmation Modal */}
-            <Modal
-                visible={deleteModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setDeleteModalVisible(false)}
-            >
-                <View style={styles.deleteModalOverlay}>
-                    <View style={styles.deleteModalContent}>
+                            <LinearGradient
+                                colors={['#205A4B', '#1C2426']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={[styles.gradientCard, styles.halfCard]}
+                            >
+                                <Text style={styles.statsLabel}>Seats left</Text>
+                                <Text style={styles.statsValueText}>4</Text>
+                            </LinearGradient>
+                        </View>
+
+                        {isAdmin && (
+                            <TouchableOpacity
+                                style={styles.increaseBtnWrapper}
+                                onPress={() => setSeatModalVisible(true)}
+                            >
+                                <LinearGradient
+                                    colors={['#D4AF37', '#73571F', '#1C1E21']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={styles.increaseGradientBorder}
+                                >
+                                    <View style={styles.increaseBtnInner}>
+                                        <Text style={styles.increaseBtnText}>Increase seat capacity</Text>
+                                    </View>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        )}
+
+                        {/* Visibility Settings */}
+                        <Text style={styles.sectionTitle}>Data visibility</Text>
+                        <View style={styles.visibilityCard}>
+                            <VisibilityItem label="Name" field="name" />
+                            <VisibilityItem label="Lastname" field="lastname" />
+                            <VisibilityItem label="Email address" field="email" />
+                            <VisibilityItem label="Phone number" field="phone" />
+                            <VisibilityItem label="Profile photo" field="photo" />
+                            <VisibilityItem label="Location" field="location" />
+                        </View>
+
+                        {/* Help & Support */}
+                        <TouchableOpacity
+                            style={styles.helpCard}
+                            onPress={() => navigation.navigate('HelpSupport')}
+                        >
+                            <Text style={styles.helpText}>Help & Support</Text>
+                            <Ionicons name="chevron-forward" size={20} color="#9BA1A6" />
+                        </TouchableOpacity>
+
+                        {/* Action Button (Delete for Admin / Logout for Participant) */}
+                        <TouchableOpacity
+                            style={styles.deleteButton}
+                            onPress={() => isAdmin ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
+                        >
+                            <Text style={styles.deleteButtonText}>{isAdmin ? 'Delete Journey' : 'Log Out'}</Text>
+                        </TouchableOpacity>
+
+                        <View style={{ height: 100 }} />
+                    </View>
+                </ScrollView>
+
+                {/* Delete Confirmation Modal */}
+                <Modal
+                    isVisible={deleteModalVisible}
+                    onBackdropPress={() => setDeleteModalVisible(false)}
+                    onSwipeComplete={() => setDeleteModalVisible(false)}
+                    swipeDirection="down"
+                    backdropOpacity={0.7}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                >
+                    <Animated.View
+                        style={[
+                            styles.deleteModalContent,
+                            { transform: [{ translateY: panYDelete }] }
+                        ]}
+                        {...deleteSwipe.panHandlers}
+                    >
+                        <View style={styles.modalHandle} />
                         <Text style={styles.deleteWarningText}>
                             After continuing, there will be no refund for this trip. Your seats will be cancelled, and all related data will be permanently deleted.
                         </Text>
@@ -216,7 +299,6 @@ const TripSettingsScreen = () => {
                             Are you sure you want to delete this trip?
                         </Text>
 
-                        {/* Delete Trip Button */}
                         <TouchableOpacity
                             style={styles.deleteConfirmButton}
                             onPress={handleDeleteTrip}
@@ -224,7 +306,6 @@ const TripSettingsScreen = () => {
                             <Text style={styles.deleteConfirmButtonText}>Delete Trip</Text>
                         </TouchableOpacity>
 
-                        {/* Cancel Button with Gradient Border */}
                         <TouchableOpacity
                             style={styles.cancelButtonWrapper}
                             onPress={() => setDeleteModalVisible(false)}
@@ -240,24 +321,32 @@ const TripSettingsScreen = () => {
                                 </View>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                    </Animated.View>
+                </Modal>
 
-            {/* Logout Confirmation Modal */}
-            <Modal
-                visible={logoutModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setLogoutModalVisible(false)}
-            >
-                <View style={styles.deleteModalOverlay}>
-                    <View style={styles.deleteModalContent}>
-                        <Text style={[styles.deleteQuestionText, { marginBottom: 40 }]}>
+                {/* Logout Confirmation Modal */}
+                <Modal
+                    isVisible={logoutModalVisible}
+                    onBackdropPress={() => setLogoutModalVisible(false)}
+                    onSwipeComplete={() => setLogoutModalVisible(false)}
+                    swipeDirection="down"
+                    backdropOpacity={0.7}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                >
+                    <Animated.View
+                        style={[
+                            styles.deleteModalContent,
+                            { transform: [{ translateY: panYLogout }] }
+                        ]}
+                        {...logoutSwipe.panHandlers}
+                    >
+                        <View style={styles.modalHandle} />
+                        <Text style={[styles.deleteQuestionText, { marginBottom: 30 }]}>
                             Are you sure you want to log out?
                         </Text>
 
-                        {/* Logout Button */}
                         <TouchableOpacity
                             style={styles.deleteConfirmButton}
                             onPress={handleLogout}
@@ -265,7 +354,6 @@ const TripSettingsScreen = () => {
                             <Text style={styles.deleteConfirmButtonText}>Log Out</Text>
                         </TouchableOpacity>
 
-                        {/* Cancel Button with Gradient Border */}
                         <TouchableOpacity
                             style={styles.cancelButtonWrapper}
                             onPress={() => setLogoutModalVisible(false)}
@@ -281,19 +369,28 @@ const TripSettingsScreen = () => {
                                 </View>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                    </Animated.View>
+                </Modal>
 
-            {/* Increase Seats Modal */}
-            <Modal
-                visible={seatModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setSeatModalVisible(false)}
-            >
-                <View style={styles.modalOverlayFull}>
-                    <View style={styles.seatModalContent}>
+                {/* Increase Seats Modal */}
+                <Modal
+                    isVisible={seatModalVisible}
+                    onBackdropPress={() => setSeatModalVisible(false)}
+                    onSwipeComplete={() => setSeatModalVisible(false)}
+                    swipeDirection="down"
+                    backdropOpacity={0.7}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                >
+                    <Animated.View
+                        style={[
+                            styles.seatModalContent,
+                            { transform: [{ translateY: panYSeat }] }
+                        ]}
+                        {...seatSwipe.panHandlers}
+                    >
+                        <View style={styles.modalHandle} />
                         <Text style={styles.seatModalTitle}>How many more seats do you need?</Text>
 
                         <View style={styles.counterRow}>
@@ -331,19 +428,28 @@ const TripSettingsScreen = () => {
                                 </View>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                    </Animated.View>
+                </Modal>
 
-            {/* Request Sent Modal */}
-            <Modal
-                visible={requestSentVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setRequestSentVisible(false)}
-            >
-                <View style={styles.modalOverlayFull}>
-                    <View style={styles.seatModalContent}>
+                {/* Request Sent Modal */}
+                <Modal
+                    isVisible={requestSentVisible}
+                    onBackdropPress={() => setRequestSentVisible(false)}
+                    onSwipeComplete={() => setRequestSentVisible(false)}
+                    swipeDirection="down"
+                    backdropOpacity={0.7}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                >
+                    <Animated.View
+                        style={[
+                            styles.seatModalContent,
+                            { transform: [{ translateY: panYRequest }] }
+                        ]}
+                        {...requestSentSwipe.panHandlers}
+                    >
+                        <View style={styles.modalHandle} />
                         <Text style={styles.sentModalTitle}>Request Sent</Text>
                         <Text style={styles.sentModalDesc}>
                             An email has been sent to you. Please follow the link to login to our web application to complete this process.
@@ -364,13 +470,12 @@ const TripSettingsScreen = () => {
                                 </View>
                             </LinearGradient>
                         </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal>
+                    </Animated.View>
+                </Modal>
 
-
-            <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
-        </SafeAreaView>
+                <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
+            </SafeAreaView>
+        </View>
     );
 };
 
@@ -384,12 +489,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 15,
+        paddingTop: 50,
+        paddingBottom: 5,
     },
     headerTitle: {
-        fontSize: responsiveFontSize(22),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.regular,
     },
     iconButton: {
         padding: 5,
@@ -474,33 +580,39 @@ const styles = StyleSheet.create({
         backgroundColor: '#23272A',
         borderRadius: 16,
         padding: 20,
-        marginBottom: 30,
+        marginBottom: 15,
     },
     visibilityRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         paddingVertical: 16,
     },
     visibilityLabel: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
+        marginTop: 2, // Minor adjustment to align with right side text
+    },
+    rightColumn: {
+        alignItems: 'flex-start',
+        minWidth: 160,
     },
     visibilityValueContainer: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
+        marginBottom: 8,
     },
     visibilityValue: {
         color: '#B99A4A',
-        fontSize: responsiveFontSize(14),
-        fontFamily: Typography.sans.bold,
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
     },
     deleteButton: {
         backgroundColor: '#2D2528',
         borderRadius: 30,
-        paddingVertical: 16,
+        paddingVertical: 20,
         alignItems: 'center',
         marginVertical: 20,
     },
@@ -517,15 +629,14 @@ const styles = StyleSheet.create({
         paddingBottom: 10,
     },
     optionItem: {
-        paddingVertical: 10,
+        paddingVertical: 12,
         paddingHorizontal: 0,
     },
     optionText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.regular,
-        textAlign: 'right',
-        marginRight: 24, // Align with chevron
+        fontFamily: Typography.sans.bold,
+        textAlign: 'left',
     },
     modalOverlay: {
         flex: 1,
@@ -566,14 +677,14 @@ const styles = StyleSheet.create({
         width: '100%',
         backgroundColor: '#942F31',
         borderRadius: 30,
-        paddingVertical: 16,
+        paddingVertical: 18,
         alignItems: 'center',
         marginBottom: 12,
     },
     deleteConfirmButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
     },
     cancelButtonWrapper: {
         width: '100%',
@@ -585,7 +696,7 @@ const styles = StyleSheet.create({
     cancelButtonInner: {
         backgroundColor: '#23272A',
         borderRadius: 28,
-        paddingVertical: 16,
+        paddingVertical: 18,
         alignItems: 'center',
     },
     cancelButtonText: {
@@ -675,6 +786,20 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         lineHeight: 22,
         marginBottom: 30,
+    },
+    helpCard: {
+        backgroundColor: '#23272A',
+        borderRadius: 16,
+        padding: 24,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 30,
+    },
+    helpText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.regular,
     },
 });
 

@@ -5,12 +5,11 @@ import {
     StyleSheet,
     TouchableOpacity,
     TextInput,
-    Modal,
-    TouchableWithoutFeedback,
-    Platform,
     KeyboardAvoidingView,
-    ScrollView
+    ScrollView,
+    Platform
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -104,31 +103,28 @@ const InviteMemberScreen = () => {
 
                 {/* Success Bottom Sheet */}
                 <Modal
-                    visible={successModalVisible}
-                    transparent={true}
-                    animationType="slide"
-                    onRequestClose={() => setSuccessModalVisible(false)}
+                    isVisible={successModalVisible}
+                    onBackdropPress={() => setSuccessModalVisible(false)}
+                    onSwipeComplete={() => setSuccessModalVisible(false)}
+                    swipeDirection="down"
+                    style={{ margin: 0, justifyContent: 'flex-end' }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
                 >
-                    <TouchableWithoutFeedback onPress={() => setSuccessModalVisible(false)}>
-                        <View style={styles.modalOverlay}>
-                            <TouchableWithoutFeedback>
-                                <View style={styles.modalContent}>
-                                    <View style={styles.modalIndicator} />
-                                    <Text style={styles.successMessage}>
-                                        An invitation email has been sent to your new team member
-                                    </Text>
-                                    <GradientBorderButton
-                                        text="Continue"
-                                        onPress={() => {
-                                            setSuccessModalVisible(false);
-                                            navigation.navigate('JourneyTeam');
-                                        }}
-                                        innerBg="#1E2124"
-                                    />
-                                </View>
-                            </TouchableWithoutFeedback>
-                        </View>
-                    </TouchableWithoutFeedback>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalIndicator} />
+                        <Text style={styles.successMessage}>
+                            An invitation email has been sent to your new team member
+                        </Text>
+                        <GradientBorderButton
+                            text="Continue"
+                            onPress={() => {
+                                setSuccessModalVisible(false);
+                                navigation.navigate('JourneyTeam');
+                            }}
+                            innerBg="#1E2124"
+                        />
+                    </View>
                 </Modal>
             </SafeAreaView>
         </GlowBackground>
@@ -152,9 +148,9 @@ const styles = StyleSheet.create({
         padding: 10,
     },
     title: {
-        fontSize: 32,
+        fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_400Regular',
+        fontFamily: Typography.serif.regular,
         marginTop: 20,
         marginBottom: 40,
     },
@@ -162,10 +158,10 @@ const styles = StyleSheet.create({
         marginBottom: 32,
     },
     label: {
-        color: '#FFF',
-        fontSize: 14,
-        fontWeight: '400',
+        color: '#FFFBF3',
+        fontSize: 13,
         marginBottom: 12,
+        fontFamily: Typography.sans.regular,
     },
     input: {
         backgroundColor: 'rgba(253, 253, 253, 0.1)',
@@ -181,8 +177,8 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         color: '#FFF',
-        fontSize: 18,
-        fontWeight: 'bold',
+        fontSize: 16,
+        fontFamily: Typography.sans.semiBold,
         marginBottom: 8,
     },
     roleCard: {
@@ -221,19 +217,26 @@ const styles = StyleSheet.create({
     },
     roleTitle: {
         color: '#FFF',
-        fontSize: 17,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
         marginBottom: 8,
     },
     roleTitleActive: {
         color: '#FFF',
+
     },
     roleDescription: {
-        color: '#9BA1A6',
-        fontSize: 14,
+        color: '#fff',
+        opacity: 0.5,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
         lineHeight: 20,
     },
     roleDescriptionActive: {
-        color: '#9BA1A6',
+        color: '#fff',
+        opacity: 0.5,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
     },
     footer: {
         padding: 24,
@@ -249,7 +252,7 @@ const styles = StyleSheet.create({
     inviteButtonText: {
         color: '#FFF',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     modalOverlay: {
         flex: 1,
@@ -291,7 +294,7 @@ const styles = StyleSheet.create({
     continueButtonText: {
         color: '#FFF',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
 });
 

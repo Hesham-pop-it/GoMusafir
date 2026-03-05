@@ -9,12 +9,14 @@ import {
     Platform,
     Image,
     ScrollView,
-    Modal,
     FlatList,
     Alert,
     Keyboard,
-    TouchableWithoutFeedback
+    PanResponder,
+    Animated,
+    Dimensions,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Rect } from 'react-native-svg';
@@ -238,6 +240,46 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
     const [selectedCountry, setSelectedCountry] = useState(COUNTRIES.find(c => c.name === 'Argentina') || COUNTRIES[0]);
     const previousData = route.params || {};
 
+    const { height: screenHeight } = Dimensions.get('window');
+    const panY = React.useRef(new Animated.Value(0)).current;
+
+    const swipeResponder = PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                panY.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(panY, {
+                    toValue: screenHeight,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setPickerVisible(false);
+                    panY.setValue(0);
+                });
+            } else {
+                Animated.spring(panY, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
     const handleContinue = () => {
         navigation.navigate('JoinProfilePicture', { ...previousData, phone, countryCode: selectedCountry.code });
     };
@@ -276,40 +318,43 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
             </View>
 
             <Modal
-                visible={isPickerVisible}
-                animationType="slide"
-                transparent={true}
-                onRequestClose={() => setPickerVisible(false)}
+                isVisible={isPickerVisible}
+                onBackdropPress={() => setPickerVisible(false)}
+                onSwipeComplete={() => setPickerVisible(false)}
+                swipeDirection="down"
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
+                style={{ margin: 0, justifyContent: 'flex-end' }}
             >
-                <TouchableWithoutFeedback onPress={() => setPickerVisible(false)}>
-                    <View style={styles.countryModalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.countryModalContent}>
-
-                                <View style={styles.countryListContainer}>
-                                    <FlatList
-                                        data={COUNTRIES}
-                                        keyExtractor={(item, index) => `${item.name}-${index}`}
-                                        showsVerticalScrollIndicator={false}
-                                        contentContainerStyle={styles.countryListContent}
-                                        renderItem={({ item }) => (
-                                            <TouchableOpacity
-                                                style={styles.countryRow}
-                                                onPress={() => selectCountry(item)}
-                                            >
-                                                <View style={styles.countryInfo}>
-                                                    <Text style={styles.countryFlag}>{item.flag}</Text>
-                                                    <Text style={styles.countryName}>{item.name}</Text>
-                                                </View>
-                                                <Text style={styles.countryCodeText}>{item.code}</Text>
-                                            </TouchableOpacity>
-                                        )}
-                                    />
-                                </View>
-                            </View>
-                        </TouchableWithoutFeedback>
+                <Animated.View
+                    style={[
+                        styles.countryModalContent,
+                        { transform: [{ translateY: panY }] }
+                    ]}
+                    {...swipeResponder.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <View style={styles.countryListContainer}>
+                        <FlatList
+                            data={COUNTRIES}
+                            keyExtractor={(item, index) => `${item.name}-${index}`}
+                            showsVerticalScrollIndicator={false}
+                            contentContainerStyle={styles.countryListContent}
+                            renderItem={({ item }) => (
+                                <TouchableOpacity
+                                    style={styles.countryRow}
+                                    onPress={() => selectCountry(item)}
+                                >
+                                    <View style={styles.countryInfo}>
+                                        <Text style={styles.countryFlag}>{item.flag}</Text>
+                                        <Text style={styles.countryName}>{item.name}</Text>
+                                    </View>
+                                    <Text style={styles.countryCodeText}>{item.code}</Text>
+                                </TouchableOpacity>
+                            )}
+                        />
                     </View>
-                </TouchableWithoutFeedback>
+                </Animated.View>
             </Modal>
         </JoinLayout>
     );
@@ -636,5 +681,13 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(16),
         color: '#B99A4A', // Yellow/Gold color
         fontFamily: Typography.sans.medium,
+    },
+    modalHandle: {
+        width: 60,
+        height: 5,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginVertical: 10,
     },
 });

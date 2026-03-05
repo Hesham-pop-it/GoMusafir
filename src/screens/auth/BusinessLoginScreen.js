@@ -14,7 +14,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
-import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
@@ -83,11 +82,11 @@ const BusinessLoginScreen = () => {
                         <View style={styles.form}>
                             {/* Company Name */}
                             <View style={styles.inputContainer}>
-                                <Text style={styles.label}>Company name</Text>
+                                <Text style={styles.label}>Company email</Text>
                                 <View style={styles.inputWrapper}>
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter your company name"
+                                        placeholder="Enter your company email"
                                         placeholderTextColor="#71717A"
                                         value={companyName}
                                         onChangeText={setCompanyName}
@@ -230,9 +229,8 @@ const styles = StyleSheet.create({
     },
     loginButtonText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(18),
-        fontWeight: 'bold',
-        fontFamily: 'Manrope', // Consistent font
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
     },
 });
 

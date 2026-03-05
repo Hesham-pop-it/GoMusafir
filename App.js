@@ -68,10 +68,9 @@ export default function App() {
   }, []);
 
   const onLayoutRootView = useCallback(async () => {
-    if (appIsReady && fontsLoaded) {
-      await SplashScreenNative.hideAsync();
-    }
-  }, [appIsReady, fontsLoaded]);
+    // We handle hiding the splash screen inside the custom SplashScreen component
+    // to ensure a seamless transition without flicker.
+  }, []);
 
   if (!appIsReady || !fontsLoaded) {
     return null;

@@ -9,8 +9,8 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
-    Modal
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { Ionicons, Feather } from '@expo/vector-icons';
@@ -130,35 +130,34 @@ const EditParticipantScreen = () => {
                 </KeyboardAvoidingView>
 
                 {/* Success Modal */}
-                <View style={{ justifyContent: 'center', alignItems: 'center' }}>
-                    <Modal
-                        visible={successVisible}
-                        transparent={true}
-                        animationType="fade"
-                        onRequestClose={() => setSuccessVisible(false)}
-                    >
-                        <View style={styles.modalOverlay}>
-                            <View style={styles.modalContent}>
-                                <View style={styles.successIconCircle}>
-                                    <Ionicons name="checkmark" size={40} color="#FFF" />
-                                </View>
-                                <Text style={styles.modalTitle}>Changes Saved</Text>
-                                <Text style={styles.modalDesc}>
-                                    Your participant has been updated successfully.
-                                </Text>
-
-                                <GradientBorderButton
-                                    text="OK"
-                                    onPress={() => {
-                                        setSuccessVisible(false);
-                                        navigation.goBack();
-                                    }}
-                                    innerBg="#1E2124"
-                                />
-                            </View>
+                <Modal
+                    isVisible={successVisible}
+                    onBackdropPress={() => setSuccessVisible(false)}
+                    onSwipeComplete={() => setSuccessVisible(false)}
+                    swipeDirection="down"
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                >
+                    <View style={styles.modalContent}>
+                        <View style={styles.successIconCircle}>
+                            <Ionicons name="checkmark" size={40} color="#FFF" />
                         </View>
-                    </Modal>
-                </View>
+                        <Text style={styles.modalTitle}>Changes Saved</Text>
+                        <Text style={styles.modalDesc}>
+                            Your participant has been updated successfully.
+                        </Text>
+
+                        <GradientBorderButton
+                            text="OK"
+                            onPress={() => {
+                                setSuccessVisible(false);
+                                navigation.goBack();
+                            }}
+                            innerBg="#1E2124"
+                        />
+                    </View>
+                </Modal>
             </SafeAreaView>
         </GlowBackground>
     );

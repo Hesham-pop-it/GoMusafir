@@ -7,14 +7,14 @@ import {
     StatusBar,
     Platform,
     ScrollView,
-    Modal,
-    TouchableWithoutFeedback
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import CustomSwitch from '../../components/CustomSwitch';
+import { Typography } from '../../constants/Typography';
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
@@ -31,6 +31,8 @@ const SettingsScreen = ({ navigation }) => {
     const SectionHeader = ({ title }) => (
         <Text style={styles.sectionHeader}>{title}</Text>
     );
+
+
 
     return (
         <View style={[styles.container, { backgroundColor: Colors.dark.background }]}>
@@ -119,73 +121,67 @@ const SettingsScreen = ({ navigation }) => {
 
             {/* Sign Out Modal */}
             <Modal
-                visible={signOutVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setSignOutVisible(false)}
+                isVisible={signOutVisible}
+                onBackdropPress={() => setSignOutVisible(false)}
+                onSwipeComplete={() => setSignOutVisible(false)}
+                swipeDirection="down"
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
             >
-                <TouchableWithoutFeedback onPress={() => setSignOutVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.modalContent}>
-                                <Text style={styles.modalTitle}>Sign Out</Text>
-                                <Text style={styles.modalMessage}>Are you sure you want to sign out?</Text>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalTitle}>Sign Out</Text>
+                    <Text style={styles.modalMessage}>Are you sure you want to sign out?</Text>
 
-                                <TouchableOpacity
-                                    style={styles.modalConfirmButton}
-                                    onPress={() => {
-                                        setSignOutVisible(false);
-                                        navigation.navigate('Welcome');
-                                    }}
-                                >
-                                    <Text style={styles.modalConfirmText}>Sign Out</Text>
-                                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.modalConfirmButton}
+                        onPress={() => {
+                            setSignOutVisible(false);
+                            navigation.navigate('Welcome');
+                        }}
+                    >
+                        <Text style={styles.modalConfirmText}>Sign Out</Text>
+                    </TouchableOpacity>
 
-                                <GradientBorderButton
-                                    text="Cancel"
-                                    onPress={() => setSignOutVisible(false)}
-                                    innerBg="#1E2124"
-                                />
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
+                    <GradientBorderButton
+                        text="Cancel"
+                        onPress={() => setSignOutVisible(false)}
+                        innerBg="#1E2124"
+                    />
+                </View>
             </Modal>
 
             {/* Delete Modal */}
             <Modal
-                visible={deleteVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setDeleteVisible(false)}
+                isVisible={deleteVisible}
+                onBackdropPress={() => setDeleteVisible(false)}
+                onSwipeComplete={() => setDeleteVisible(false)}
+                swipeDirection="down"
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
             >
-                <TouchableWithoutFeedback onPress={() => setDeleteVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.modalContent}>
-                                <Text style={styles.modalMessageLarge}>
-                                    Are you sure you want to delete the company account? Your data cannot be recovered after deletion.
-                                </Text>
+                <View style={styles.modalContent}>
+                    <Text style={styles.modalMessageLarge}>
+                        Are you sure you want to delete the company account? Your data cannot be recovered after deletion.
+                    </Text>
 
-                                <TouchableOpacity
-                                    style={styles.modalConfirmButton}
-                                    onPress={() => {
-                                        setDeleteVisible(false);
-                                        navigation.navigate('Welcome');
-                                    }}
-                                >
-                                    <Text style={styles.modalConfirmText}>Delete</Text>
-                                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.modalConfirmButton}
+                        onPress={() => {
+                            setDeleteVisible(false);
+                            navigation.navigate('Welcome');
+                        }}
+                    >
+                        <Text style={styles.modalConfirmText}>Delete</Text>
+                    </TouchableOpacity>
 
-                                <GradientBorderButton
-                                    text="Cancel"
-                                    onPress={() => setDeleteVisible(false)}
-                                    innerBg="#1E2124"
-                                />
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
+                    <GradientBorderButton
+                        text="Cancel"
+                        onPress={() => setDeleteVisible(false)}
+                        innerBg="#1E2124"
+                    />
+                </View>
             </Modal>
         </View>
     );
@@ -206,12 +202,13 @@ const styles = StyleSheet.create({
         marginTop: 15,
     },
     headerTitle: {
-        fontSize: 34,
+        fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.regular,
     },
     headerSubtitle: {
-        fontSize: 14,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
         color: '#A1A1AA',
         marginTop: 4,
     },
@@ -226,7 +223,7 @@ const styles = StyleSheet.create({
     },
     sectionHeader: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         color: '#FFF',
         marginTop: 24,
         marginBottom: 12,
@@ -241,7 +238,8 @@ const styles = StyleSheet.create({
     },
     addButtonText: {
         color: '#fff',
-        fontSize: 15,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
     },
     sectionContainer: {
         backgroundColor: '#23272A',
@@ -256,7 +254,8 @@ const styles = StyleSheet.create({
     },
     linkText: {
         color: '#F4F4F5',
-        fontSize: 15,
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
     },
     switchItem: {
         flexDirection: 'row',
@@ -284,7 +283,7 @@ const styles = StyleSheet.create({
     signOutButtonText: {
         color: '#FFF',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     deleteButton: {
 
@@ -298,7 +297,7 @@ const styles = StyleSheet.create({
     deleteButtonText: {
         color: '#FF383C',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     // Modal Styles
     modalOverlay: {

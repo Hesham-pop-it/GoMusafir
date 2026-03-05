@@ -11,9 +11,8 @@ import {
     Platform,
     ScrollView,
     Dimensions,
-    Modal,
-    TouchableWithoutFeedback
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -22,6 +21,7 @@ import { Colors } from '../../constants/Colors';
 import CustomBottomTabBar from '../../components/CustomBottomTabBar';
 import * as NavigationBar from 'expo-navigation-bar';
 import ParticipantDetailsModal from '../../components/ParticipantDetailsModal';
+import { Typography } from '../../constants/Typography';
 
 const { width } = Dimensions.get('window');
 
@@ -116,23 +116,29 @@ const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
 
     return (
         <Modal
-            animationType="fade"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
+            isVisible={visible}
+            onBackdropPress={onClose}
+            onBackButtonPress={onClose}
+            useNativeDriver={true}
+            hideModalContentWhileAnimating={true}
+            animationIn="fadeIn"
+            animationOut="fadeOut"
+            style={{ margin: 0, justifyContent: 'flex-start', alignItems: 'flex-end' }}
         >
-            <TouchableWithoutFeedback onPress={onClose}>
-                <View style={styles.languageModalOverlay}>
-                    <View style={styles.languageModalContent}>
-                        <FlatList
-                            data={LANGUAGES}
-                            renderItem={renderLanguageItem}
-                            keyExtractor={item => item.code}
-                            showsVerticalScrollIndicator={false}
-                        />
-                    </View>
+            <TouchableOpacity
+                style={styles.languageModalOverlay}
+                activeOpacity={1}
+                onPress={onClose}
+            >
+                <View style={styles.languageModalContent}>
+                    <FlatList
+                        data={LANGUAGES}
+                        renderItem={renderLanguageItem}
+                        keyExtractor={item => item.code}
+                        showsVerticalScrollIndicator={false}
+                    />
                 </View>
-            </TouchableWithoutFeedback>
+            </TouchableOpacity>
         </Modal>
     );
 };
@@ -148,107 +154,62 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJour
 
     return (
         <Modal
-            visible={visible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={onClose}
+            isVisible={visible}
+            onBackdropPress={onClose}
+            onSwipeComplete={onClose}
+            swipeDirection="down"
+            useNativeDriver={true}
+            hideModalContentWhileAnimating={true}
+            style={{ margin: 0, justifyContent: 'center', alignItems: 'center' }}
         >
-            <TouchableOpacity
-                style={styles.modalOverlay}
-                activeOpacity={1}
-                onPress={() => {
-                    setShowJourneys(false);
-                    onClose();
-                }}
-            >
-                <View style={[styles.modalContent, styles.participantsModalContent]}>
-                    <View style={styles.modalDragIndicator} />
+            <View style={[styles.modalContent, styles.participantsModalContent]}>
+                <View style={styles.modalDragIndicator} />
 
-                    {/* Select Journey Section */}
-                    <Text style={styles.modalLabel}>Select Journey</Text>
-                    <View style={{ zIndex: 1000 }}>
-                        <TouchableOpacity
-                            style={styles.journeyInputContainer}
-                            onPress={() => setShowJourneys(!showJourneys)}
-                        >
-                            <Ionicons name="home-outline" size={20} color="#A1A1AA" />
-                            <Text style={styles.journeyInputText}>{selectedJourney || 'Umrah Trip'}</Text>
-                        </TouchableOpacity>
+                {/* Select Journey Section */}
+                <Text style={styles.modalLabel}>Select Journey</Text>
+                <View style={{ zIndex: 1000 }}>
+                    <TouchableOpacity
+                        style={styles.journeyInputContainer}
+                        onPress={() => setShowJourneys(!showJourneys)}
+                    >
+                        <Ionicons name="home-outline" size={20} color="#A1A1AA" />
+                        <Text style={styles.journeyInputText}>{selectedJourney || 'Umrah Trip'}</Text>
+                    </TouchableOpacity>
 
-                        {showJourneys && (
-                            <View style={styles.journeyDropdown}>
-                                <ScrollView
-                                    style={styles.dropdownScroll}
-                                    nestedScrollEnabled={true}
-                                    showsVerticalScrollIndicator={true}
-                                    keyboardShouldPersistTaps="handled"
-                                >
-                                    {journeys.map(item => (
-                                        <TouchableOpacity
-                                            key={item}
-                                            style={styles.dropdownItem}
-                                            onPress={() => {
-                                                setSelectedJourney(item);
-                                                setShowJourneys(false);
-                                            }}
-                                        >
-                                            <Text style={styles.dropdownText}>{item}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-                            </View>
-                        )}
-                    </View>
-
-                    {/* Sort By Section */}
-                    <Text style={styles.modalLabel}>Sort by</Text>
-                    <View style={styles.chipsContainer}>
-                        <View style={styles.row}>
-                            <TouchableOpacity
-                                style={styles.chip}
-                                onPress={() => handleSelect('A-Z')}
+                    {showJourneys && (
+                        <View style={styles.journeyDropdown}>
+                            <ScrollView
+                                style={styles.dropdownScroll}
+                                nestedScrollEnabled={true}
+                                showsVerticalScrollIndicator={true}
+                                keyboardShouldPersistTaps="handled"
                             >
-                                {sortOption === 'A-Z' ? (
-                                    <LinearGradient
-                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                        style={StyleSheet.absoluteFill}
+                                {journeys.map(item => (
+                                    <TouchableOpacity
+                                        key={item}
+                                        style={styles.dropdownItem}
+                                        onPress={() => {
+                                            setSelectedJourney(item);
+                                            setShowJourneys(false);
+                                        }}
                                     >
-                                        <View style={styles.chipInnerSelected}>
-                                            <Text style={[styles.chipText, styles.chipTextSelected]}>A-Z</Text>
-                                        </View>
-                                    </LinearGradient>
-                                ) : (
-                                    <Text style={styles.chipText}>A-Z</Text>
-                                )}
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={styles.chip}
-                                onPress={() => handleSelect('Z-A')}
-                            >
-                                {sortOption === 'Z-A' ? (
-                                    <LinearGradient
-                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                        style={StyleSheet.absoluteFill}
-                                    >
-                                        <View style={styles.chipInnerSelected}>
-                                            <Text style={[styles.chipText, styles.chipTextSelected]}>Z-A</Text>
-                                        </View>
-                                    </LinearGradient>
-                                ) : (
-                                    <Text style={styles.chipText}>Z-A</Text>
-                                )}
-                            </TouchableOpacity>
+                                        <Text style={styles.dropdownText}>{item}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
                         </View>
+                    )}
+                </View>
 
+                {/* Sort By Section */}
+                <Text style={styles.modalLabel}>Sort by</Text>
+                <View style={styles.chipsContainer}>
+                    <View style={styles.row}>
                         <TouchableOpacity
-                            style={[styles.chip, styles.chipFullWidth]}
-                            onPress={() => handleSelect('Journey')}
+                            style={styles.chip}
+                            onPress={() => handleSelect('A-Z')}
                         >
-                            {sortOption === 'Journey' ? (
+                            {sortOption === 'A-Z' ? (
                                 <LinearGradient
                                     colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
                                     start={{ x: 0, y: 0 }}
@@ -256,39 +217,78 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJour
                                     style={StyleSheet.absoluteFill}
                                 >
                                     <View style={styles.chipInnerSelected}>
-                                        <Text style={[styles.chipText, styles.chipTextSelected]}>Search Journey</Text>
+                                        <Text style={[styles.chipText, styles.chipTextSelected]}>A-Z</Text>
                                     </View>
                                 </LinearGradient>
                             ) : (
-                                <Text style={styles.chipText}>Search Journey</Text>
+                                <Text style={styles.chipText}>A-Z</Text>
                             )}
                         </TouchableOpacity>
+                        <TouchableOpacity
+                            style={styles.chip}
+                            onPress={() => handleSelect('Z-A')}
+                        >
+                            {sortOption === 'Z-A' ? (
+                                <LinearGradient
+                                    colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={StyleSheet.absoluteFill}
+                                >
+                                    <View style={styles.chipInnerSelected}>
+                                        <Text style={[styles.chipText, styles.chipTextSelected]}>Z-A</Text>
+                                    </View>
+                                </LinearGradient>
+                            ) : (
+                                <Text style={styles.chipText}>Z-A</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
 
-                        <View style={styles.row}>
-                            <TouchableOpacity
-                                style={[styles.chip, { flex: 0.5 }]}
-                                onPress={() => handleSelect('Likes')}
+                    <TouchableOpacity
+                        style={[styles.chip, styles.chipFullWidth]}
+                        onPress={() => handleSelect('Journey')}
+                    >
+                        {sortOption === 'Journey' ? (
+                            <LinearGradient
+                                colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={StyleSheet.absoluteFill}
                             >
-                                {sortOption === 'Likes' ? (
-                                    <LinearGradient
-                                        colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                        style={StyleSheet.absoluteFill}
-                                    >
-                                        <View style={styles.chipInnerSelected}>
-                                            <Text style={[styles.chipText, styles.chipTextSelected]}>Likes</Text>
-                                        </View>
-                                    </LinearGradient>
-                                ) : (
-                                    <Text style={styles.chipText}>Likes</Text>
-                                )}
-                            </TouchableOpacity>
-                            <View style={{ flex: 0.5 }} />
-                        </View>
+                                <View style={styles.chipInnerSelected}>
+                                    <Text style={[styles.chipText, styles.chipTextSelected]}>Search Journey</Text>
+                                </View>
+                            </LinearGradient>
+                        ) : (
+                            <Text style={styles.chipText}>Search Journey</Text>
+                        )}
+                    </TouchableOpacity>
+
+                    <View style={styles.row}>
+                        <TouchableOpacity
+                            style={[styles.chip, { flex: 0.5 }]}
+                            onPress={() => handleSelect('Likes')}
+                        >
+                            {sortOption === 'Likes' ? (
+                                <LinearGradient
+                                    colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={StyleSheet.absoluteFill}
+                                >
+                                    <View style={styles.chipInnerSelected}>
+                                        <Text style={[styles.chipText, styles.chipTextSelected]}>Likes</Text>
+                                    </View>
+                                </LinearGradient>
+                            ) : (
+                                <Text style={styles.chipText}>Likes</Text>
+                            )}
+                        </TouchableOpacity>
+                        <View style={{ flex: 0.5 }} />
                     </View>
                 </View>
-            </TouchableOpacity>
+            </View>
         </Modal>
     );
 };
@@ -396,13 +396,18 @@ const ParticipantsScreen = ({ navigation }) => {
                                 style={styles.iconButton}
                                 onPress={() => setLanguageVisible(true)}
                             >
-                                <FontAwesome name="language" size={24} color={Colors.dark.primary} />
+                                <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                                    <Path fillRule="evenodd" clipRule="evenodd" d="M12.65 15.67C12.79 15.31 12.7 14.9 12.42 14.62L10.33 12.56L10.36 12.53C12.1 10.59 13.34 8.36 14.07 6H16.01C16.55 6 17 5.55 17 5.01V4.99C17 4.45 16.55 4 16.01 4H10V3C10 2.45 9.55 2 9 2C8.45 2 8 2.45 8 3V4H1.99C1.45 4 1 4.45 1 4.99C1 5.54 1.45 5.98 1.99 5.98H12.17C11.5 7.92 10.44 9.75 9 11.35C8.19 10.46 7.51 9.49 6.94 8.47C6.78 8.18 6.49 8 6.16 8C5.47 8 5.03 8.75 5.37 9.35C6 10.48 6.77 11.56 7.67 12.56L3.3 16.87C2.9 17.26 2.9 17.9 3.3 18.29C3.69 18.68 4.32 18.68 4.72 18.29L9 14L11.02 16.02C11.53 16.53 12.4 16.34 12.65 15.67ZM17.5 10C16.9 10 16.36 10.37 16.15 10.94L12.48 20.74C12.24 21.35 12.7 22 13.35 22C13.74 22 14.09 21.76 14.23 21.39L15.12 19H19.87L20.77 21.39C20.91 21.75 21.26 22 21.65 22C22.3 22 22.76 21.35 22.53 20.74L18.86 10.94C18.64 10.37 18.1 10 17.5 10ZM15.88 17L17.5 12.67L19.12 17H15.88Z" fill="#B99A4A" />
+                                </Svg>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
                                 onPress={() => navigation.navigate('Notifications')}
                             >
-                                <Ionicons name="notifications-outline" size={24} color={Colors.dark.primary} />
+                                <Svg width="17" height="22" viewBox="0 0 17 22" fill="none">
+                                    <Path d="M1.81569 15.4283C2.75835 14.0112 2.67638 12.5727 2.67638 10.9531C2.67638 9.59993 2.58416 8.2041 2.70712 6.85089C2.98377 3.96334 5.17648 1.5233 8.01472 1.34217C10.6993 1.17168 13.1789 3.27075 13.9781 5.85996C14.4289 7.33037 14.2957 8.94996 14.2957 10.4737C14.2957 11.8908 14.0908 13.553 14.7056 14.8636C14.972 15.4176 15.597 16.0463 15.2076 16.7282C15.0642 16.9733 14.8593 17.0372 14.6134 17.0586C14.2855 17.1012 13.9269 17.0586 13.599 17.0586H2.77884C2.00012 17.0586 1.32386 16.2488 1.82593 15.4283C2.40997 14.4907 0.842288 14.1817 0.411942 14.8849C-0.305301 16.0357 -0.110623 17.538 1.19066 18.1454C1.69273 18.3798 2.20505 18.3691 2.73786 18.3691H12.3797C13.4248 18.3691 14.7466 18.5716 15.7097 18.0708C16.9598 17.4315 17.3594 15.993 16.6524 14.757C16.1708 13.9259 16.0171 13.1588 16.0171 12.2211C16.0171 10.7613 16.0274 9.30158 16.0171 7.84182C15.9864 4.73051 14.347 1.97082 11.6009 0.681543C8.85492 -0.607734 5.6888 -0.01104 3.51658 1.99213C2.28702 3.12158 1.43657 4.61331 1.11894 6.28617C0.954996 7.12793 0.985734 7.99099 0.985734 8.85406V11.976C0.985734 13.0096 1.01648 13.9792 0.411942 14.8742C-0.192592 15.7693 1.37509 16.0996 1.82593 15.4177L1.81569 15.4283Z" fill="#B99A4A" />
+                                    <Path d="M4.37743 18.0068C4.39792 19.701 5.40206 21.214 6.9595 21.7681C8.60916 22.3435 10.4945 21.8214 11.6421 20.4682C12.2364 19.7649 12.5847 18.8379 12.595 17.9003C12.6052 16.9626 10.8941 17.1864 10.8838 18.0175C10.8736 18.806 10.6174 19.5092 10.1051 20.042C10.1769 19.9674 10.0027 20.1379 10.0027 20.1379C9.93094 20.2018 9.84897 20.2657 9.767 20.319C9.71576 20.351 9.71576 20.351 9.767 20.319C9.71576 20.351 9.66454 20.3829 9.6133 20.4042C9.54158 20.4469 9.45961 20.4788 9.37764 20.5215C9.27518 20.5641 9.27518 20.5641 9.35715 20.5321C9.31616 20.5428 9.27518 20.5641 9.23419 20.5747C9.13173 20.6067 9.03951 20.628 8.93705 20.6493C9.09074 20.6173 8.82434 20.6493 8.81409 20.66C8.72187 20.66 8.62965 20.6706 8.54768 20.6706C8.68089 20.6706 8.39399 20.66 8.40424 20.66C8.31202 20.66 8.23005 20.6387 8.13783 20.6174C8.00463 20.5854 8.11734 20.6174 7.99438 20.5854C7.88167 20.5534 7.77921 20.5108 7.6665 20.4575C7.42059 20.351 7.12345 20.1379 6.90827 19.9248C6.38571 19.4027 6.07832 18.6461 6.06807 17.9003C6.06807 17.4634 5.66847 17.261 5.27911 17.2823C4.94098 17.3036 4.35693 17.57 4.35693 18.0175L4.37743 18.0068Z" fill="#B99A4A" />
+                                </Svg>
                             </TouchableOpacity>
                             <TouchableOpacity
                                 style={styles.iconButton}
@@ -473,11 +478,12 @@ const styles = StyleSheet.create({
     titleText: {
         fontSize: 28,
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.regular,
     },
     subtitleText: {
         fontSize: 14,
-        color: Colors.dark.textSecondary,
+        color: '#A1A1AA',
+        fontFamily: Typography.sans.regular,
         marginTop: 4,
     },
     headerIcons: {

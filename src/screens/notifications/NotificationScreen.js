@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
-import * as NavigationBar from 'expo-navigation-bar';
+import { Typography } from '../../constants/Typography';
 
 const NOTIFICATIONS_DATA = [
     {
@@ -88,9 +88,9 @@ const styles = StyleSheet.create({
         paddingBottom: 20,
     },
     headerTitle: {
-        fontSize: 34, // Larger title
+        fontSize: 28, // Larger title
         color: '#FFF',
-        fontFamily: 'CormorantGaramond_700Bold',
+        fontFamily: Typography.serif.regular,
         marginTop: 15,
     },
     backButton: {
@@ -121,15 +121,15 @@ const styles = StyleSheet.create({
     },
     cardTitle: {
         fontSize: 16,
-        fontWeight: 'bold',
-        color: '#F4F4F5',
+        fontFamily: Typography.sans.semiBold,
+        color: '#fff',
         marginBottom: 8,
     },
     cardDescription: {
         fontSize: 13,
         color: '#A1A1AA', // Grey description
         lineHeight: 20,
-        fontFamily: 'IBM Plex Sans_400Regular'
+        fontFamily: Typography.sans.regular,
     },
 });
 

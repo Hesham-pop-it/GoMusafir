@@ -97,6 +97,7 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         backgroundColor: '#1A1E21',
+        zIndex: 1000,
     },
     tripBottomNav: {
         height: 70,

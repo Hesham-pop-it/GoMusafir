@@ -7,15 +7,17 @@ import {
     FlatList,
     Image,
     TextInput,
-    Modal,
     TouchableWithoutFeedback,
     Platform,
-    Dimensions
+    Dimensions,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
@@ -40,6 +42,8 @@ const CustomDeleteIcon = () => (
 
 const ParticipantsScreen = () => {
     const navigation = useNavigation();
+    const route = useRoute();
+    const { isAdmin } = route.params || {};
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
@@ -61,7 +65,8 @@ const ParticipantsScreen = () => {
         return (
             <TouchableOpacity
                 style={styles.participantRow}
-                onPress={() => toggleSelection(item.id)}
+                onPress={isAdmin ? () => toggleSelection(item.id) : null}
+                activeOpacity={isAdmin ? 0.7 : 1}
             >
                 <View style={[
                     styles.avatarContainer,
@@ -76,7 +81,7 @@ const ParticipantsScreen = () => {
                     ]}>{item.status}</Text>
                 </View>
 
-                {selectedIds.length > 0 && (
+                {isAdmin && selectedIds.length > 0 && (
                     <View
                         style={[styles.checkbox, isSelected && styles.checkboxSelected]}
                     >
@@ -92,6 +97,57 @@ const ParticipantsScreen = () => {
         setTimeout(() => setDeleteConfirmVisible(true), 300);
     };
 
+    // Swipe down to close logic for modals - Interactive Draggable version
+    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                animatedValue.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(animatedValue, {
+                    toValue: height,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setter(false);
+                    animatedValue.setValue(0);
+                });
+            } else {
+                Animated.spring(animatedValue, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
+    const panYDetail = React.useRef(new Animated.Value(0)).current;
+    const panYMultiDelete = React.useRef(new Animated.Value(0)).current;
+    const panYConfirm = React.useRef(new Animated.Value(0)).current;
+
+    const detailSwipe = createDraggableResponder(setDetailVisible, panYDetail);
+    const multiDeleteSwipe = createDraggableResponder(setMultiDeleteVisible, panYMultiDelete);
+    const confirmSwipe = createDraggableResponder((val) => {
+        setDeleteConfirmVisible(val);
+        setMultiConfirmVisible(val);
+    }, panYConfirm);
+
+
+
     return (
         <SafeAreaView style={styles.container}>
             {/* Header */}
@@ -104,7 +160,7 @@ const ParticipantsScreen = () => {
                     <Text style={styles.headerSubtitle}>45/50 Joined</Text>
                 </View>
                 <View style={{ width: 40, alignItems: 'flex-end' }}>
-                    {selectedIds.length > 0 && (
+                    {isAdmin && selectedIds.length > 0 && (
                         <TouchableOpacity onPress={() => setMultiDeleteVisible(true)}>
                             <CustomDeleteIcon />
                         </TouchableOpacity>
@@ -135,151 +191,171 @@ const ParticipantsScreen = () => {
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}
+            {/* Participant Detail Modal (Bottom Sheet Style) */}
             <Modal
-                visible={detailVisible}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setDetailVisible(false)}
+                isVisible={detailVisible}
+                onBackdropPress={() => setDetailVisible(false)}
+                onSwipeComplete={() => setDetailVisible(false)}
+                swipeDirection="down"
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <TouchableWithoutFeedback onPress={() => setDetailVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.bottomSheet}>
-                                <View style={styles.handle} />
-                                <Text style={styles.sheetTitle}>Participant Detail</Text>
-                                <View style={styles.divider} />
+                <Animated.View
+                    style={[
+                        styles.bottomSheet,
+                        { transform: [{ translateY: panYDetail }] }
+                    ]}
+                    {...detailSwipe.panHandlers}
+                >
+                    <View style={styles.handle} />
+                    <View style={styles.handle} />
+                    <Text style={styles.sheetTitle}>Participant Detail</Text>
+                    <View style={styles.divider} />
 
-                                {selectedParticipant && (
-                                    <>
-                                        <View style={styles.detailHeader}>
-                                            <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
-                                            <Text style={styles.detailName}>{selectedParticipant.name}</Text>
-                                        </View>
-
-                                        {/* Mini Map Placeholder */}
-                                        <View style={styles.mapPlaceholder}>
-                                            <Image
-                                                source={{ uri: 'https://via.placeholder.com/400x200/1A1E21/FFFFFF?text=Map+View' }}
-                                                style={styles.mapImage}
-                                            />
-                                            <View style={styles.mapPinContainer}>
-                                                <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
-                                            </View>
-                                        </View>
-
-                                        <TouchableOpacity
-                                            style={styles.actionButtonOutline}
-                                            onPress={() => {
-                                                setDetailVisible(false);
-                                                navigation.navigate('EditParticipant', { participant: selectedParticipant });
-                                            }}
-                                        >
-                                            <Text style={styles.actionButtonText}>Edit Participant</Text>
-                                        </TouchableOpacity>
-
-                                        <TouchableOpacity
-                                            style={styles.deleteButton}
-                                            onPress={handleDeletePress}
-                                        >
-                                            <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
-                                            <Text style={styles.deleteButtonText}>Delete for this trip</Text>
-                                        </TouchableOpacity>
-
-                                        <TouchableOpacity
-                                            style={styles.deleteButton}
-                                            onPress={handleDeletePress}
-                                        >
-                                            <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
-                                            <Text style={styles.deleteButtonText}>Delete for all trip</Text>
-                                        </TouchableOpacity>
-                                    </>
-                                )}
+                    {selectedParticipant && (
+                        <>
+                            <View style={styles.detailHeader}>
+                                <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
+                                <Text style={styles.detailName}>{selectedParticipant.name}</Text>
                             </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
+
+                            {/* Mini Map Placeholder */}
+                            <View style={styles.mapPlaceholder}>
+                                <Image
+                                    source={{ uri: 'https://via.placeholder.com/400x200/1A1E21/FFFFFF?text=Map+View' }}
+                                    style={styles.mapImage}
+                                />
+                                <View style={styles.mapPinContainer}>
+                                    <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
+                                </View>
+                            </View>
+
+                            {!isAdmin && (
+                                <TouchableOpacity
+                                    style={styles.actionButtonOutline}
+                                    onPress={() => {
+                                        setDetailVisible(false);
+                                        navigation.navigate('EditParticipant', { participant: selectedParticipant });
+                                    }}
+                                >
+                                    <Text style={styles.actionButtonText}>Edit Participant</Text>
+                                </TouchableOpacity>
+                            )}
+
+                            <TouchableOpacity
+                                style={styles.deleteButton}
+                                onPress={handleDeletePress}
+                            >
+                                <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
+                                <Text style={styles.deleteButtonText}>Delete for this trip</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.deleteButton}
+                                onPress={handleDeletePress}
+                            >
+                                <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
+                                <Text style={styles.deleteButtonText}>Delete for all trip</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </Animated.View>
             </Modal>
 
-            {/* Multi Delete Bottom Sheet */}
+            {/* Multi Delete Modal (Bottom Sheet Style) */}
             <Modal
-                visible={multiDeleteVisible}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setMultiDeleteVisible(false)}
+                isVisible={multiDeleteVisible}
+                onBackdropPress={() => setMultiDeleteVisible(false)}
+                onSwipeComplete={() => setMultiDeleteVisible(false)}
+                swipeDirection="down"
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <TouchableWithoutFeedback onPress={() => setMultiDeleteVisible(false)}>
-                    <View style={styles.modalOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.bottomSheet}>
-                                <View style={styles.handle} />
-                                <Text style={styles.multiDeleteTitle}>
-                                    Are you sure to delete selected participants?
-                                </Text>
+                <Animated.View
+                    style={[
+                        styles.bottomSheet,
+                        { transform: [{ translateY: panYMultiDelete }] }
+                    ]}
+                    {...multiDeleteSwipe.panHandlers}
+                >
+                    <View style={styles.handle} />
+                    <Text style={styles.multiDeleteTitle}>
+                        Are you sure to delete selected participants?
+                    </Text>
 
-                                <TouchableOpacity
-                                    style={styles.multiDeleteButton}
-                                    onPress={() => {
-                                        setMultiDeleteVisible(false);
-                                        setTimeout(() => setMultiConfirmVisible(true), 300);
-                                    }}
-                                >
-                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
-                                    <Text style={styles.deleteButtonText}>Delete for this trip</Text>
-                                </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.multiDeleteButton}
+                        onPress={() => {
+                            setMultiDeleteVisible(false);
+                            setTimeout(() => setMultiConfirmVisible(true), 300);
+                        }}
+                    >
+                        <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
+                        <Text style={styles.deleteButtonText}>Delete for this trip</Text>
+                    </TouchableOpacity>
 
-                                <TouchableOpacity
-                                    style={styles.multiDeleteButton}
-                                    onPress={() => {
-                                        setMultiDeleteVisible(false);
-                                        setTimeout(() => setMultiConfirmVisible(true), 300);
-                                    }}
-                                >
-                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
-                                    <Text style={styles.deleteButtonText}>Delete for all trip</Text>
-                                </TouchableOpacity>
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
+                    <TouchableOpacity
+                        style={styles.multiDeleteButton}
+                        onPress={() => {
+                            setMultiDeleteVisible(false);
+                            setTimeout(() => setMultiConfirmVisible(true), 300);
+                        }}
+                    >
+                        <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
+                        <Text style={styles.deleteButtonText}>Delete for all trip</Text>
+                    </TouchableOpacity>
+                </Animated.View>
             </Modal>
 
             {/* Confirmation Modals */}
             <Modal
-                visible={deleteConfirmVisible || multiConfirmVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => {
+                isVisible={deleteConfirmVisible || multiConfirmVisible}
+                onBackdropPress={() => {
                     setDeleteConfirmVisible(false);
                     setMultiConfirmVisible(false);
                 }}
+                onSwipeComplete={() => {
+                    setDeleteConfirmVisible(false);
+                    setMultiConfirmVisible(false);
+                }}
+                style={{ margin: 0, justifyContent: 'center', paddingHorizontal: 24 }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <View style={styles.confirmOverlay}>
-                    <View style={styles.confirmBox}>
-                        <Text style={styles.confirmTitle}>Are You sure you want to delete this participant</Text>
+                <Animated.View
+                    style={[
+                        styles.confirmBox,
+                        { transform: [{ translateY: panYConfirm }] }
+                    ]}
+                    {...confirmSwipe.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <Text style={styles.confirmTitle}>Are You sure you want to delete this participant</Text>
 
-                        <View style={styles.confirmButtons}>
-                            <GradientBorderButton
-                                text="Cancel"
-                                onPress={() => {
-                                    setDeleteConfirmVisible(false);
-                                    setMultiConfirmVisible(false);
-                                }}
-                                style={styles.confirmCancel}
-                                innerBg="#1E2124"
-                            />
-                            <TouchableOpacity
-                                style={styles.confirmDelete}
-                                onPress={() => {
-                                    setDeleteConfirmVisible(false);
-                                    setMultiConfirmVisible(false);
-                                    setSelectedIds([]);
-                                }}
-                            >
-                                <Text style={styles.confirmDeleteText}>Delete</Text>
-                            </TouchableOpacity>
-                        </View>
+                    <View style={styles.confirmButtons}>
+                        <GradientBorderButton
+                            text="Cancel"
+                            onPress={() => {
+                                setDeleteConfirmVisible(false);
+                                setMultiConfirmVisible(false);
+                            }}
+                            style={styles.confirmCancel}
+                            innerBg="#1E2124"
+                        />
+                        <TouchableOpacity
+                            style={styles.confirmDelete}
+                            onPress={() => {
+                                setDeleteConfirmVisible(false);
+                                setMultiConfirmVisible(false);
+                                setSelectedIds([]);
+                            }}
+                        >
+                            <Text style={styles.confirmDeleteText}>Delete</Text>
+                        </TouchableOpacity>
                     </View>
-                </View>
+                </Animated.View>
             </Modal>
         </SafeAreaView>
     );
@@ -557,6 +633,14 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 16,
         fontWeight: 'bold',
+    },
+    modalHandle: {
+        width: 60,
+        height: 5,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginBottom: 20,
     },
 });
 

@@ -1,7 +1,10 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Image, StyleSheet, Animated, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Animated, Dimensions } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
+import * as SplashScreenNative from 'expo-splash-screen';
 import { Colors } from '../../constants/Colors';
-
+import GlowBackground from '../../components/GlowBackground';
+import { Typography } from '../../constants/Typography';
 
 const { width, height } = Dimensions.get('window');
 
@@ -22,47 +25,59 @@ const SplashScreen = ({ onFinish }) => {
                 friction: 4,
                 useNativeDriver: true,
             }),
-        ]).start();
+        ]).start(async () => {
+            // Hide native splash once the custom animation starts
+            await SplashScreenNative.hideAsync();
+        });
 
         const timer = setTimeout(() => {
             Animated.timing(fadeAnim, {
                 toValue: 0,
-                duration: 800,
+                duration: 600,
                 useNativeDriver: true,
             }).start(() => {
                 if (onFinish) onFinish();
             });
-        }, 2500);
+        }, 1500);
 
         return () => clearTimeout(timer);
     }, []);
 
     return (
-        <View style={styles.container}>
-            <View style={styles.centerContent}>
-                <Animated.View
-                    style={{
-                        opacity: fadeAnim,
-                        transform: [{ scale: scaleAnim }],
-                    }}
-                >
-                    <Image
-                        source={require('../../../assets/logo.png')}
-                        style={styles.logo}
-                    />
+        <GlowBackground>
+            <View style={styles.container}>
+                <View style={styles.centerContent}>
+                    <Animated.View
+                        style={{
+                            opacity: fadeAnim,
+                            transform: [{ scale: scaleAnim }],
+                        }}
+                    >
+                        <Svg
+                            width={width * 0.3}
+                            height={width * 0.3}
+                            viewBox="0 0 128 128"
+                            fill="none"
+                        >
+                            <Path
+                                d="M65.5829 99.4716C77.29 89.6484 89.8756 79.0887 101.662 69.1974C102.937 68.1295 103.671 66.5523 103.671 64.8899V59.9215C101.564 61.6918 94.3063 67.7792 91.9187 69.7825C91.0117 70.5437 88.484 72.6662 87.5391 73.4576L78.3863 81.1393L74.8986 84.0647L72.2516 86.2857L70.8959 87.4236L62.4189 94.5373C55.7957 88.98 47.1295 81.7092 40.4627 76.1141V71.0435C42.8219 69.0649 47.3074 65.2988 49.6155 63.3637V68.0746C49.6155 69.0213 50.034 69.9188 50.7592 70.5266C55.2087 74.2624 61.4949 79.5375 65.5848 82.9684C77.4945 72.9767 90.0252 62.4606 101.975 52.433C103.05 51.5298 103.673 50.1968 103.673 48.7919C103.756 47.6293 103.474 46.4364 102.529 45.6791C89.2944 34.5741 75.584 23.0677 62.4208 12.0251C50.7592 21.8104 38.1129 32.4212 26.3414 42.2993C25.0672 43.3691 24.3325 44.9463 24.3325 46.6087V51.5733C37.7854 40.2866 52.1319 28.2462 65.5848 16.9575C76.9113 26.4607 89.0331 36.6341 100.397 46.1676C99.7651 46.6958 91.4131 53.7072 91.0306 54.0272C91.0306 53.0805 90.6122 52.183 89.887 51.5752C86.7837 48.9699 80.5107 43.7061 78.3882 41.9263C76.6064 40.4324 74.0465 38.2833 72.2534 36.7799C69.8109 34.7293 64.8444 30.5619 62.4189 28.5264C53.107 36.3463 42.2236 45.4708 32.9192 53.2812C30.8724 54.9967 28.8199 56.7216 26.3414 58.8006C25.0672 59.8704 24.3325 61.4476 24.3325 63.11V68.0765C37.6699 56.8806 52.2285 44.6699 65.5848 33.4607C72.2061 39.0161 80.8761 46.2906 87.541 51.8839V56.9545C85.1818 58.9331 80.6963 62.6992 78.3882 64.6342V59.9215C78.3882 58.9748 77.9697 58.0773 77.2445 57.4695C72.7931 53.7356 66.5088 48.4605 62.4208 45.0296C50.5111 55.0213 37.9804 65.5374 26.0309 75.565C24.9554 76.4682 24.3325 77.8012 24.3325 79.2061C24.2492 80.3649 24.5294 81.5616 25.4742 82.317C33.1673 88.7699 42.0721 96.2451 49.6174 102.575C54.5858 106.746 60.5994 111.786 65.5848 115.975C77.2464 106.189 89.8927 95.5768 101.664 85.7006C102.938 84.6327 103.673 83.0555 103.673 81.393V76.4266C101.303 78.4128 93.5281 84.9394 91.0306 87.0336L87.5429 89.9589L82.0898 94.5373L80.7341 95.6733L78.392 97.6406L74.9043 100.566L72.2591 102.787L70.9015 103.925L62.4246 111.039C51.1227 101.558 38.9385 91.3298 27.6119 81.8266C28.2424 81.2984 36.5963 74.287 36.9788 73.967C36.9788 74.9137 37.3972 75.8112 38.1224 76.419C41.2257 79.0244 47.4987 84.2881 49.6212 86.0679C54.5915 90.2354 60.6012 95.2814 65.5886 99.4659L65.5829 99.4716ZM62.417 78.036L53.1014 70.2199V60.4346L55.6348 58.3083C58.1549 60.4232 63.1176 64.5888 65.6226 66.6924C66.3043 66.1187 73.9897 59.6716 74.8967 58.9104V67.5634L62.417 78.036ZM65.5829 49.962L71.0492 54.5498L70.9356 54.6464L62.4587 61.7581L57.1476 57.301L56.9924 57.1703L65.5829 49.962Z"
+                                fill="#B99A4A"
+                            />
+                        </Svg>
+                    </Animated.View>
+                </View>
+                <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
+                    <Text style={styles.appName}>GoMusāfir</Text>
                 </Animated.View>
             </View>
-            <Animated.View style={[styles.footer, { opacity: fadeAnim }]}>
-                <Text style={styles.appName}>GoMusāfir</Text>
-            </Animated.View>
-        </View>
+        </GlowBackground>
     );
 };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.dark.background,
+        backgroundColor: 'transparent',
         justifyContent: 'center',
         alignItems: 'center',
     },
@@ -72,20 +87,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     logo: {
-        width: width * 0.4,
-        height: width * 0.4,
+        width: width * 0.3,
+        height: width * 0.3,
         resizeMode: 'contain',
     },
     footer: {
         position: 'absolute',
-        bottom: 80,
+        bottom: 40,
         alignItems: 'center',
     },
     appName: {
-        fontSize: 28,
-        fontWeight: '600',
+        fontSize: 16,
         color: '#FFFFFF',
         letterSpacing: 2,
+        fontFamily: Typography.sans.semiBold,
     },
 });
 

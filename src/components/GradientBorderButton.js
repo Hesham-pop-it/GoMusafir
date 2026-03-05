@@ -10,16 +10,19 @@ import Svg, { Rect, Defs, LinearGradient as SvgGradient, Stop } from 'react-nati
 
 import { Typography } from '../constants/Typography';
 
-const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', children, innerStyle, disabled }) => {
+const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', children, innerStyle, disabled, borderRadius = 30, colors = ['#B99A4A', 'rgba(50, 53, 55, 0.6)'] }) => {
     const [isActive, setIsActive] = useState(false);
     const [layout, setLayout] = useState({ width: 0, height: 0 });
+    const gradId = React.useMemo(() => `grad-${Math.random().toString(36).substr(2, 9)}`, []);
 
     const activeColor = '#B99A4A';
     const isTransparent = innerBg === 'transparent';
 
     const onLayout = (event) => {
         const { width, height } = event.nativeEvent.layout;
-        setLayout({ width, height });
+        if (width > 0 && height > 0) {
+            setLayout({ width, height });
+        }
     };
 
     return (
@@ -32,24 +35,29 @@ const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', child
             onLayout={onLayout}
         >
             {isTransparent ? (
-                <View style={[styles.buttonInner, { backgroundColor: isActive && !disabled ? activeColor : 'transparent' }, innerStyle]}>
-                    <Svg style={StyleSheet.absoluteFill}>
+                <View style={[styles.buttonInner, { borderRadius: borderRadius - 1.5, backgroundColor: isActive && !disabled ? activeColor : 'transparent' }, innerStyle]}>
+                    <Svg width={layout.width} height={layout.height} style={StyleSheet.absoluteFill}>
                         <Defs>
-                            <SvgGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <Stop offset="0%" stopColor="#B99A4A" />
-                                <Stop offset="100%" stopColor="rgba(50, 53, 55, 0.6)" />
+                            <SvgGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                                {colors.map((color, index) => (
+                                    <Stop
+                                        key={index}
+                                        offset={`${(index / (colors.length - 1)) * 100}%`}
+                                        stopColor={color}
+                                    />
+                                ))}
                             </SvgGradient>
                         </Defs>
                         {layout.width > 0 && (
                             <Rect
-                                x="0.75"
-                                y="0.75"
-                                width={layout.width - 1.5}
-                                height={layout.height - 1.5}
-                                rx={30}
-                                ry={30}
-                                stroke="url(#grad)"
-                                strokeWidth="1.5"
+                                x="1"
+                                y="1"
+                                width={layout.width - 2}
+                                height={layout.height - 2}
+                                rx={borderRadius}
+                                ry={borderRadius}
+                                stroke={`url(#${gradId})`}
+                                strokeWidth="2"
                                 fill="transparent"
                             />
                         )}
@@ -60,13 +68,14 @@ const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', child
                 </View>
             ) : (
                 <LinearGradient
-                    colors={['#B99A4A', 'rgba(50, 53, 55, 0.6)']}
+                    colors={colors}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
-                    style={styles.gradientBorder}
+                    style={[styles.gradientBorder, { borderRadius }]}
                 >
                     <View style={[
                         styles.buttonInner,
+                        { borderRadius: borderRadius - 1.5 },
                         { backgroundColor: isActive && !disabled ? activeColor : innerBg },
                         innerStyle
                     ]}>

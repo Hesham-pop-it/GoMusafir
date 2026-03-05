@@ -7,11 +7,13 @@ import {
     Dimensions,
     Image,
     ScrollView,
-    Modal,
-    Linking
+    Linking,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -92,6 +94,52 @@ const LiveLocationScreen = () => {
         longitudeDelta: 0.01,
     });
 
+    // Swipe down to close logic for modals - Interactive version
+    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                animatedValue.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(animatedValue, {
+                    toValue: height,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setter(false);
+                    animatedValue.setValue(0);
+                });
+            } else {
+                Animated.spring(animatedValue, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
+    const panYParticipants = React.useRef(new Animated.Value(0)).current;
+    const panYLocationReq = React.useRef(new Animated.Value(0)).current;
+    const panYGoogleMaps = React.useRef(new Animated.Value(0)).current;
+
+    const participantsSwipe = createDraggableResponder(setShowParticipantsList, panYParticipants);
+    const locationRequestSwipe = createDraggableResponder(setLocationRequestModal, panYLocationReq);
+    const googleMapsSwipe = createDraggableResponder(setGoogleMapsModal, panYGoogleMaps);
+
     useEffect(() => {
         getUserLocation();
     }, []);
@@ -151,230 +199,255 @@ const LiveLocationScreen = () => {
     return (
         <View style={styles.container}>
             {/* Header */}
-            <SafeAreaView edges={['top']} style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="arrow-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Live Location</Text>
-                <View style={{ width: 40 }} />
-            </SafeAreaView>
+            <SafeAreaView edges={['top']} style={{ flex: 1, marginTop: 20 }}>
+                {/* Fixed Background Header (Z-Index: 10) - Box-none allows touching through to Map */}
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }]} pointerEvents="box-none">
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Ionicons name="arrow-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
 
-            {/* Map */}
-            <MapView
-                ref={mapRef}
-                provider={PROVIDER_GOOGLE}
-                style={styles.map}
-                initialRegion={mapRegion}
-                customMapStyle={darkMapStyle}
-                onPress={() => setSelectedMarker(null)}
-            >
-                {/* Participant Markers */}
-                {MOCK_PARTICIPANTS.map((participant) => (
-                    <Marker
-                        key={`participant-${participant.id}`}
-                        identifier={participant.id}
-                        coordinate={{
-                            latitude: participant.latitude,
-                            longitude: participant.longitude,
-                        }}
-                        zIndex={selectedMarker?.id === participant.id ? 100 : 10}
-                        tracksViewChanges={true}
-                        onPress={() => {
-                            setSelectedMarker(participant);
-                        }}
+                    <Text style={styles.headerTitle}>Live Location</Text>
+
+                    <View style={{ width: 40 }} />
+                </View>
+
+                {/* Content Layer (Z-Index: 0) */}
+                <View style={{ flex: 1, zIndex: 0 }}>
+
+                    {/* Map */}
+                    <MapView
+                        ref={mapRef}
+                        provider={PROVIDER_GOOGLE}
+                        style={[styles.map, { marginTop: 55 }]}
+                        initialRegion={mapRegion}
+                        customMapStyle={darkMapStyle}
+                        onPress={() => setSelectedMarker(null)}
                     >
-                        <View
-                            style={[
-                                styles.participantMarker,
-                                selectedMarker?.id === participant.id && styles.selectedMarkerGlow
-                            ]}
-                            pointerEvents="none"
-                        >
-                            <View style={styles.markerCircle}>
-                                <Image
-                                    source={{ uri: participant.avatar }}
-                                    style={styles.markerAvatar}
-                                    resizeMode="cover"
-                                />
-                            </View>
-                        </View>
-
-                        <Callout
-                            tooltip
-                            onPress={() => handleQuestionPress(participant)}
-                        >
-                            <View style={styles.calloutContainer}>
-                                <View style={styles.calloutContent}>
-                                    <View style={styles.requestBtn}>
-                                        <Text style={styles.requestBtnText}>Request Location</Text>
-                                    </View>
-                                </View>
-                                <View style={styles.calloutPointer} />
-                            </View>
-                        </Callout>
-                    </Marker>
-                ))}
-            </MapView>
-
-            {/* Control Buttons */}
-            <View style={styles.controlButtons}>
-                <TouchableOpacity style={styles.controlBtn}>
-                    <HideLocationIcon />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.controlBtn} onPress={centerOnUser}>
-                    <CrosshairsIcon />
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.controlBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#fff' }, isSafetyActive && { borderWidth: 1, borderColor: '#942F31' }]}
-                    onPress={() => setIsSafetyActive(!isSafetyActive)}
-                >
-                    <SafetyIcon color={isSafetyActive ? "#942F31" : "white"} size={26} />
-                </TouchableOpacity>
-            </View>
-
-            {/* List Participant Button */}
-            <TouchableOpacity
-                style={styles.listButton}
-                onPress={() => setShowParticipantsList(true)}
-            >
-                <PeopleIcon color="#FFF" />
-                <Text style={styles.listButtonText}>List Participant</Text>
-            </TouchableOpacity>
-
-            {/* Participants List Modal */}
-            <Modal
-                visible={showParticipantsList}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setShowParticipantsList(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <TouchableOpacity
-                        style={styles.modalBackdrop}
-                        activeOpacity={1}
-                        onPress={() => setShowParticipantsList(false)}
-                    />
-                    <View style={styles.participantsModal}>
-                        <View style={styles.modalHandle} />
-                        <Text style={styles.modalTitle}>Participants</Text>
-
-                        {/* Search Bar */}
-                        <View style={styles.searchContainer}>
-                            <Ionicons name="search" size={20} color="#71717A" style={styles.searchIcon} />
-                            <Text style={styles.searchPlaceholder}>Search participant</Text>
-                        </View>
-
-                        <ScrollView style={styles.participantsList}>
-                            {MOCK_PARTICIPANTS.map((participant) => (
-                                <TouchableOpacity
-                                    key={participant.id}
-                                    style={styles.participantItem}
-                                    onPress={() => {
-                                        setSelectedMarker(participant);
-                                        setShowParticipantsList(false);
-                                        if (mapRef.current) {
-                                            mapRef.current.animateToRegion({
-                                                latitude: participant.latitude,
-                                                longitude: participant.longitude,
-                                                latitudeDelta: 0.01,
-                                                longitudeDelta: 0.01,
-                                            }, 1000);
-                                        }
-                                    }}
+                        {/* Participant Markers */}
+                        {MOCK_PARTICIPANTS.map((participant) => (
+                            <Marker
+                                key={`participant-${participant.id}`}
+                                identifier={participant.id}
+                                coordinate={{
+                                    latitude: participant.latitude,
+                                    longitude: participant.longitude,
+                                }}
+                                zIndex={selectedMarker?.id === participant.id ? 100 : 10}
+                                tracksViewChanges={true}
+                                onPress={() => {
+                                    setSelectedMarker(participant);
+                                }}
+                            >
+                                <View
+                                    style={[
+                                        styles.participantMarker,
+                                        selectedMarker?.id === participant.id && styles.selectedMarkerGlow
+                                    ]}
+                                    pointerEvents="none"
                                 >
-                                    <Image
-                                        source={{ uri: participant.avatar }}
-                                        style={styles.participantAvatar}
-                                    />
-                                    <Text style={styles.participantName}>{participant.name}</Text>
-
-                                    {/* Action Buttons */}
-                                    <View style={styles.actionButtons}>
-                                        <TouchableOpacity
-                                            style={styles.questionBtn}
-                                            onPress={() => handleQuestionPress(participant)}
-                                        >
-                                            <Text style={styles.questionText}>?</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            style={styles.locateBtn}
-                                            onPress={() => handleLocationPress(participant)}
-                                        >
-                                            <LocationPinIcon />
-                                        </TouchableOpacity>
+                                    <View style={styles.markerCircle}>
+                                        <Image
+                                            source={{ uri: participant.avatar }}
+                                            style={styles.markerAvatar}
+                                            resizeMode="cover"
+                                        />
                                     </View>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
-                </View>
-            </Modal>
-
-            {/* Location Request Modal */}
-            < Modal
-                visible={locationRequestModal}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setLocationRequestModal(false)}
-            >
-                <View style={styles.centeredModalOverlay}>
-                    <View style={styles.alertModal}>
-                        <Text style={styles.alertTitle}>Location requested</Text>
-                        <TouchableOpacity
-                            style={styles.gradientButtonWrapper}
-                            onPress={() => setLocationRequestModal(false)}
-                        >
-                            <LinearGradient
-                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.gradientBorder}
-                            >
-                                <View style={styles.buttonInner}>
-                                    <Text style={styles.okButtonText}>OK</Text>
                                 </View>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal >
 
-            {/* Google Maps Modal */}
-            < Modal
-                visible={googleMapsModal}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setGoogleMapsModal(false)}
-            >
-                <View style={styles.modalOverlay}>
+                                <Callout
+                                    tooltip
+                                    onPress={() => handleQuestionPress(participant)}
+                                >
+                                    <View style={styles.calloutContainer}>
+                                        <View style={styles.calloutContent}>
+                                            <View style={styles.requestBtn}>
+                                                <Text style={styles.requestBtnText}>Request Location</Text>
+                                            </View>
+                                        </View>
+                                        <View style={styles.calloutPointer} />
+                                    </View>
+                                </Callout>
+                            </Marker>
+                        ))}
+                    </MapView>
+
+                    {/* Control Buttons */}
+                    <View style={styles.controlButtons}>
+                        <TouchableOpacity style={styles.controlBtn}>
+                            <HideLocationIcon />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.controlBtn} onPress={centerOnUser}>
+                            <CrosshairsIcon />
+                        </TouchableOpacity>
+                        {isAdmin && (
+                            <TouchableOpacity
+                                style={[styles.controlBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#fff' }, isSafetyActive && { borderWidth: 1, borderColor: '#942F31' }]}
+                                onPress={() => setIsSafetyActive(!isSafetyActive)}
+                            >
+                                <SafetyIcon color={isSafetyActive ? "#942F31" : "white"} size={26} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* List Participant Button */}
                     <TouchableOpacity
-                        style={styles.modalBackdrop}
-                        activeOpacity={1}
-                        onPress={() => setGoogleMapsModal(false)}
-                    />
-                    <View style={styles.mapsModal}>
-                        <View style={styles.modalHandle} />
-                        <Text style={styles.mapsMessage}>Route will start through</Text>
-                        <TouchableOpacity
-                            style={styles.gradientButtonWrapper}
-                            onPress={openGoogleMaps}
-                        >
-                            <LinearGradient
-                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.gradientBorder}
-                            >
-                                <View style={styles.buttonInner}>
-                                    <Text style={styles.googleMapsButtonText}>Google Maps</Text>
-                                </View>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    </View>
-                </View>
-            </Modal >
+                        style={styles.listButton}
+                        onPress={() => setShowParticipantsList(true)}
+                    >
+                        <PeopleIcon color="#FFF" size={22} />
+                        <Text style={styles.listButtonText}>List Participant</Text>
+                    </TouchableOpacity>
 
-            <TripBottomTabBar activeRoute="LiveLocation" tripData={trip} />
+                    {/* Participants List Modal */}
+                    {/* Participants List Modal */}
+                    <Modal
+                        isVisible={showParticipantsList}
+                        onBackdropPress={() => setShowParticipantsList(false)}
+                        onSwipeComplete={() => setShowParticipantsList(false)}
+                        swipeDirection="down"
+                        style={{ margin: 0, justifyContent: 'flex-end' }}
+                        useNativeDriver={true}
+                        hideModalContentWhileAnimating={true}
+                    >
+                        <Animated.View
+                            style={[
+                                styles.participantsModal,
+                                { transform: [{ translateY: panYParticipants }] }
+                            ]}
+                            {...participantsSwipe.panHandlers}
+                        >
+                            <View style={styles.modalHandle} />
+                            <Text style={styles.modalTitle}>Participants</Text>
+
+                            {/* Search Bar */}
+                            <View style={styles.searchContainer}>
+                                <Ionicons name="search" size={20} color="#71717A" style={styles.searchIcon} />
+                                <Text style={styles.searchPlaceholder}>Search participant</Text>
+                            </View>
+
+                            <ScrollView style={styles.participantsList}>
+                                {MOCK_PARTICIPANTS.map((participant) => (
+                                    <TouchableOpacity
+                                        key={participant.id}
+                                        style={styles.participantItem}
+                                        onPress={() => {
+                                            setSelectedMarker(participant);
+                                            setShowParticipantsList(false);
+                                            if (mapRef.current) {
+                                                mapRef.current.animateToRegion({
+                                                    latitude: participant.latitude,
+                                                    longitude: participant.longitude,
+                                                    latitudeDelta: 0.01,
+                                                    longitudeDelta: 0.01,
+                                                }, 1000);
+                                            }
+                                        }}
+                                    >
+                                        <Image
+                                            source={{ uri: participant.avatar }}
+                                            style={styles.participantAvatar}
+                                        />
+                                        <Text style={styles.participantName}>{participant.name}</Text>
+
+                                        {/* Action Buttons */}
+                                        <View style={styles.actionButtons}>
+                                            <TouchableOpacity
+                                                style={styles.questionBtn}
+                                                onPress={() => handleQuestionPress(participant)}
+                                            >
+                                                <Text style={styles.questionText}>?</Text>
+                                            </TouchableOpacity>
+                                            <TouchableOpacity
+                                                style={styles.locateBtn}
+                                                onPress={() => handleLocationPress(participant)}
+                                            >
+                                                <LocationPinIcon />
+                                            </TouchableOpacity>
+                                        </View>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
+                        </Animated.View>
+                    </Modal>
+
+                    {/* Location Request Modal */}
+                    <Modal
+                        isVisible={locationRequestModal}
+                        onBackdropPress={() => setLocationRequestModal(false)}
+                        onSwipeComplete={() => setLocationRequestModal(false)}
+                        swipeDirection="down"
+                        backdropOpacity={0.7}
+                        style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }}
+                        useNativeDriver={true}
+                        hideModalContentWhileAnimating={true}
+                    >
+                        <Animated.View
+                            style={[
+                                styles.alertModal,
+                                { transform: [{ translateY: panYLocationReq }] }
+                            ]}
+                            {...locationRequestSwipe.panHandlers}
+                        >
+                            <View style={styles.modalHandle} />
+                            <Text style={styles.alertTitle}>Location requested</Text>
+                            <TouchableOpacity
+                                style={styles.gradientButtonWrapper}
+                                onPress={() => setLocationRequestModal(false)}
+                            >
+                                <LinearGradient
+                                    colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={styles.gradientBorder}
+                                >
+                                    <View style={styles.buttonInner}>
+                                        <Text style={styles.okButtonText}>OK</Text>
+                                    </View>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </Animated.View>
+                    </Modal>
+
+                    {/* Google Maps Modal */}
+                    <Modal
+                        isVisible={googleMapsModal}
+                        onBackdropPress={() => setGoogleMapsModal(false)}
+                        onSwipeComplete={() => setGoogleMapsModal(false)}
+                        swipeDirection="down"
+                        style={{ margin: 0, justifyContent: 'flex-end' }}
+                        useNativeDriver={true}
+                        hideModalContentWhileAnimating={true}
+                    >
+                        <Animated.View
+                            style={[
+                                styles.mapsModal,
+                                { transform: [{ translateY: panYGoogleMaps }] }
+                            ]}
+                            {...googleMapsSwipe.panHandlers}
+                        >
+                            <View style={styles.modalHandle} />
+                            <Text style={styles.mapsMessage}>Route will start through</Text>
+                            <TouchableOpacity
+                                style={styles.gradientButtonWrapper}
+                                onPress={openGoogleMaps}
+                            >
+                                <LinearGradient
+                                    colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 0 }}
+                                    style={styles.gradientBorder}
+                                >
+                                    <View style={styles.buttonInner}>
+                                        <Text style={styles.googleMapsButtonText}>Google Maps</Text>
+                                    </View>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                        </Animated.View>
+                    </Modal>
+
+                    <TripBottomTabBar activeRoute="LiveLocation" tripData={trip} />
+                </View >
+            </SafeAreaView >
         </View >
     );
 };
@@ -477,18 +550,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 15,
+        paddingTop: 50,
         backgroundColor: '#1A1E21',
         zIndex: 10,
+        paddingBottom: 15
     },
     backButton: {
         padding: 5,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: 20,
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.regular
     },
     map: {
         flex: 1,
@@ -575,8 +648,7 @@ const styles = StyleSheet.create({
     listButtonText: {
         color: '#FFF',
         fontSize: 16,
-        fontWeight: 'bold',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.sans.bold,
     },
     requestLocationBtn: {
         position: 'absolute',
@@ -615,7 +687,7 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         paddingTop: 12,
-        paddingBottom: 40,
+        paddingBottom: 80,
         maxHeight: height * 0.6,
     },
     modalHandle: {

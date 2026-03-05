@@ -3,13 +3,14 @@ import {
     View,
     Text,
     StyleSheet,
-    Modal,
     TouchableOpacity,
     Image,
     ScrollView,
     Dimensions,
-    TouchableWithoutFeedback
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { Colors } from '../constants/Colors';
 import GradientBorderButton from './GradientBorderButton';
 import { Typography } from '../constants/Typography';
@@ -27,16 +28,73 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
     const firstName = nameParts[0] || 'Ethan';
     const lastName = nameParts.slice(1).join(' ') || 'Carter';
 
+    const { height: screenHeight } = Dimensions.get('window');
+
+    // Swipe down to close logic for modals - Interactive Draggable version
+    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                animatedValue.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(animatedValue, {
+                    toValue: screenHeight,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setter(false);
+                    animatedValue.setValue(0);
+                });
+            } else {
+                Animated.spring(animatedValue, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
     return (
-        <Modal
-            visible={visible}
-            transparent={true}
-            animationType="slide"
-            onRequestClose={onClose}
-        >
-            <View style={styles.modalOverlay}>
-                <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-                <View style={styles.modalContent}>
+        <>
+            <Modal
+                isVisible={visible}
+                onBackdropPress={onClose}
+                onBackButtonPress={onClose}
+                onSwipeComplete={onClose}
+                swipeDirection="down"
+                swipeThreshold={100}
+                propagateSwipe={true}
+                useNativeDriver={false}
+                useNativeDriverForBackdrop={true}
+                animationIn="bounceInUp"
+                animationOut="bounceOutDown"
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+                animationInTiming={900}
+                animationOutTiming={500}
+                backdropTransitionInTiming={1000}
+                backdropTransitionOutTiming={500}
+            >
+                <View
+                    style={[
+                        styles.modalContent,
+                        // { transform: [{ translateY: panYMain }] }
+                    ]}
+                // {...mainSwipe.panHandlers}
+                >
                     <View style={styles.dragIndicator} />
 
                     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -111,46 +169,50 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                         <View style={{ height: 40 }} />
                     </View>
                 </View>
-            </View>
+            </Modal>
 
             {/* Delete Confirmation Modal */}
             <Modal
-                visible={showDeleteConfirm}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setShowDeleteConfirm(false)}
+                isVisible={showDeleteConfirm}
+                onBackdropPress={() => setShowDeleteConfirm(false)}
+                onSwipeComplete={() => setShowDeleteConfirm(false)}
+                swipeDirection="down"
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 }}
             >
-                <TouchableWithoutFeedback onPress={() => setShowDeleteConfirm(false)}>
-                    <View style={styles.confirmOverlay}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.confirmContent}>
-                                <Text style={styles.confirmTitle}>
-                                    Are You sure you want to delete this participant
-                                </Text>
-                                <View style={styles.confirmButtons}>
-                                    <GradientBorderButton
-                                        text="Cancel"
-                                        onPress={() => setShowDeleteConfirm(false)}
-                                        style={{ flex: 1 }}
-                                        innerBg="#1E2124"
-                                    />
-                                    <TouchableOpacity
-                                        style={styles.confirmDeleteButton}
-                                        onPress={() => {
-                                            setShowDeleteConfirm(false);
-                                            onClose();
-                                            // Handle actual deletion logic here
-                                        }}
-                                    >
-                                        <Text style={styles.confirmDeleteButtonText}>Delete</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            </View>
-                        </TouchableWithoutFeedback>
+                <View
+                    style={[
+                        styles.confirmContent,
+                        // { transform: [{ translateY: panYConfirm }] }
+                    ]}
+                // {...confirmSwipe.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <Text style={styles.confirmTitle}>
+                        Are You sure you want to delete this participant
+                    </Text>
+                    <View style={styles.confirmButtons}>
+                        <GradientBorderButton
+                            text="Cancel"
+                            onPress={() => setShowDeleteConfirm(false)}
+                            style={{ flex: 1 }}
+                            innerBg="#1E2124"
+                        />
+                        <TouchableOpacity
+                            style={styles.confirmDeleteButton}
+                            onPress={() => {
+                                setShowDeleteConfirm(false);
+                                onClose();
+                                // Handle actual deletion logic here
+                            }}
+                        >
+                            <Text style={styles.confirmDeleteButtonText}>Delete</Text>
+                        </TouchableOpacity>
                     </View>
-                </TouchableWithoutFeedback>
+                </View>
             </Modal>
-        </Modal>
+        </>
     );
 };
 
@@ -172,9 +234,9 @@ const styles = StyleSheet.create({
         maxHeight: height * 0.9,
     },
     dragIndicator: {
-        width: 40,
+        width: 120,
         height: 4,
-        backgroundColor: '#383B42',
+        backgroundColor: 'rgba(255,255,255,0.5)',
         borderRadius: 2,
         alignSelf: 'center',
         marginBottom: 20,
@@ -295,6 +357,14 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: 18,
         fontFamily: Typography.sans.bold,
+    },
+    modalHandle: {
+        width: 60,
+        height: 5,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginBottom: 20,
     },
 });
 

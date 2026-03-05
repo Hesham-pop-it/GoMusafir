@@ -11,9 +11,10 @@ import {
     Platform,
     StatusBar,
     Image,
-    Modal,
-    TouchableWithoutFeedback,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -223,6 +224,56 @@ const TripOverviewScreen = () => {
         return () => clearInterval(timer);
     }, [emergencyModalVisible, countdown]);
 
+    // Swipe down to close logic for modals - Interactive Draggable version
+    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                animatedValue.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(animatedValue, {
+                    toValue: height,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    setter(false);
+                    animatedValue.setValue(0);
+                });
+            } else {
+                Animated.spring(animatedValue, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
+    const panYDetail = React.useRef(new Animated.Value(0)).current;
+    const panYEmergency = React.useRef(new Animated.Value(0)).current;
+    const panYDelete = React.useRef(new Animated.Value(0)).current;
+    const panYQuick = React.useRef(new Animated.Value(0)).current;
+
+    const detailSwipe = createDraggableResponder(setDetailVisible, panYDetail);
+    const emergencySwipe = createDraggableResponder(setEmergencyModalVisible, panYEmergency);
+    const deleteConfirmSwipe = createDraggableResponder(setDeleteConfirmVisible, panYDelete); // Reusing for confirm modal
+    const quickAlertSwipe = createDraggableResponder(setQuickAlertVisible, panYQuick);
+
+
+
     const activePrayer = getActivePrayer();
 
     const ControlButton = ({ icon, label, isActive }) => (
@@ -238,45 +289,60 @@ const TripOverviewScreen = () => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            {/* Background Image with Overlay */}
-            <ImageBackground
-                source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
-                style={styles.backgroundImage}
-                resizeMode="cover"
-            >
-                <LinearGradient
-                    colors={['rgba(0,0,0,0.3)', '#1A1E21']}
-                    style={styles.gradientOverlay}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 0.65 }}
-                />
+            {/* Background Image at the top only */}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 310 }}>
+                <ImageBackground
+                    source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                    style={{ flex: 1 }}
+                    resizeMode="cover"
+                >
+                    <LinearGradient
+                        colors={['rgba(0,0,0,0.3)', Colors.dark.background]}
+                        style={styles.gradientOverlay}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                    />
+                </ImageBackground>
+            </View>
 
-                <SafeAreaView style={{ flex: 1 }}>
-                    {/* Header */}
-                    <View style={styles.header}>
-                        {isAdmin ? (
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-                                <Ionicons name="arrow-back" size={24} color="#FFF" />
-                            </TouchableOpacity>
-                        ) : (
-                            <View style={styles.iconButton} /> // Spacer to maintain alignment
-                        )}
+            <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
+                {/* Fixed Background Header Layer (Z-Index: 0) - Title stays fixed */}
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0 }]}>
 
-                        <Text style={styles.headerTitle}>Overview</Text>
+                    {isAdmin ? (
+                        <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.iconButton}>
+                            <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.iconButton} />
+                    )}
 
-                        {isAdmin ? (
-                            <TouchableOpacity
-                                style={styles.iconButton}
-                                onPress={() => navigation.navigate('JourneySuccess')}
-                            >
-                                <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#FFF" />
-                            </TouchableOpacity>
-                        ) : (
-                            <View style={styles.iconButton} /> // Spacer to maintain alignment
-                        )}
-                    </View>
 
-                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    <Text style={styles.headerTitle}>Overview</Text>
+
+                    {isAdmin ? (
+                        <TouchableOpacity
+                            style={styles.iconButton}
+                            onPress={() => navigation.navigate('JourneySuccess')}
+                        >
+                            <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#FFF" />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.iconButton} />
+                    )}
+                </View>
+
+                {/* Scrollable Layer (Z-Index: 10) */}
+                <ScrollView
+                    style={{ flex: 1, zIndex: 10, marginTop: 70 }}
+                    contentContainerStyle={{ flexGrow: 1 }}
+                    showsVerticalScrollIndicator={false}
+                >
+                    {/* 1. Transparent Gap with Interactive Buttons (Mirror) */}
+
+
+                    {/* 2. Content Container */}
+                    <View style={{ backgroundColor: 'transparent', paddingHorizontal: 20 }}>
 
                         {/* Trip Info Card */}
                         <View style={styles.tripCard}>
@@ -396,7 +462,7 @@ const TripOverviewScreen = () => {
                                         <TouchableOpacity
                                             style={[
                                                 styles.controlButtonOutline,
-                                                { width: '100%', backgroundColor: isChannelStarted ? '#34C759' : '#D66A77', borderColor: isChannelStarted ? '#34C759' : '#D66A77' }
+                                                { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#34C759' : '#D66A77', borderColor: isChannelStarted ? '#34C759' : '#D66A77' }
                                             ]}
                                             onPress={() => setIsChannelStarted(!isChannelStarted)}
                                         >
@@ -413,25 +479,27 @@ const TripOverviewScreen = () => {
 
                                     </>
                                 ) : (
-                                    <TouchableOpacity
-                                        onPress={() => setIsMuted(!isMuted)}
-                                        style={[
-                                            styles.controlButtonOutline,
-                                            { width: '100%' },
-                                            !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
-                                        ]}
-                                    >
-                                        <View style={{ marginRight: 8 }}>
-                                            {isMuted ? (
-                                                <MicMutedIcon color="#FFF" size={20} />
-                                            ) : (
-                                                <MicUnmutedIcon color="#D66A77" size={20} />
-                                            )}
-                                        </View>
-                                        <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                            Mute Myself
-                                        </Text>
-                                    </TouchableOpacity>
+                                    <View style={{ width: '100%', alignItems: 'center' }}>
+                                        <TouchableOpacity
+                                            onPress={() => setIsMuted(!isMuted)}
+                                            style={[
+                                                styles.controlButtonOutline,
+                                                { width: '100%', marginBottom: 0 },
+                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                            ]}
+                                        >
+                                            <View style={{ marginRight: 8 }}>
+                                                {isMuted ? (
+                                                    <MicMutedIcon color="#FFF" size={20} />
+                                                ) : (
+                                                    <MicUnmutedIcon color="#D66A77" size={20} />
+                                                )}
+                                            </View>
+                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
+                                                Mute Myself
+                                            </Text>
+                                        </TouchableOpacity>
+                                    </View>
                                 )}
                             </View>
                         </View>
@@ -462,7 +530,7 @@ const TripOverviewScreen = () => {
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                                style={[styles.sectionCard, styles.halfCard,{backgroundColor:'#23272A'}]}
+                                style={[styles.sectionCard, styles.halfCard, { backgroundColor: '#23272A' }]}
                                 onPress={() => navigation.navigate('TripChat', { trip })}
                             >
                                 <View style={styles.chatIconWrapper}>
@@ -511,15 +579,15 @@ const TripOverviewScreen = () => {
                         <View
                             style={styles.sectionCard}
                         >
-                            <View style={styles.sectionHeaderRow}>
+                            <TouchableOpacity style={styles.sectionHeaderRow} onPress={() => navigation.navigate('TripParticipants', { isAdmin, trip: tripData })}>
                                 <Text style={styles.sectionTitle}>Participants</Text>
                                 <View style={styles.searchBar}>
-                                    <Ionicons name="search" size={16} color="#A1A1AA" />
+                                    <Ionicons name="search" size={24} color="#A1A1AA" />
                                 </View>
-                                <TouchableOpacity onPress={() => navigation.navigate('TripParticipants')}>
+                                <View >
                                     <Ionicons name="chevron-forward" size={20} color="#fff" />
-                                </TouchableOpacity>
-                            </View>
+                                </View>
+                            </TouchableOpacity>
 
                             <View style={styles.participantsScrollContainer}>
                                 <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
@@ -586,189 +654,208 @@ const TripOverviewScreen = () => {
                         </View>
 
                         <View style={{ height: 150 }} />
-                    </ScrollView>
+                    </View>
+                </ScrollView>
 
-                    {/* Bottom Trip Navigation (Reusable) */}
-                    <TripBottomTabBar activeRoute="TripOverview" tripData={tripData} />
-                </SafeAreaView>
-            </ImageBackground>
+                {/* Bottom Trip Navigation (Reusable) */}
+                <TripBottomTabBar activeRoute="TripOverview" tripData={tripData} />
+            </SafeAreaView>
 
             {/* Emergency Alert Modal */}
             <Modal
-                visible={emergencyModalVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setEmergencyModalVisible(false)}
+                isVisible={emergencyModalVisible}
+                onBackdropPress={() => setEmergencyModalVisible(false)}
+                onSwipeComplete={() => setEmergencyModalVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.4}
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center' }}
+                animationIn="fadeIn"
+                animationOut="fadeOut"
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <View style={styles.emergencyOverlay}>
-                    <View style={styles.emergencyContent}>
-                        <Text style={styles.emergencyTitle}>Notifying Host</Text>
-                        <Text style={styles.emergencySubtitle}>Emergency alert will be sent in</Text>
-                        <Text style={styles.countdownText}>{countdown} <Text style={{ color: '#942F31', fontSize: responsiveFontSize(32) }}>seconds</Text></Text>
+                <View
+                    style={[
+                        styles.emergencyContent,
+                        // { transform: [{ translateY: panYEmergency }] }
+                    ]}
+                // {...emergencySwipe.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <Text style={styles.emergencyTitle}>Notifying Host</Text>
+                    <Text style={styles.emergencySubtitle}>Emergency alert will be sent in</Text>
+                    <Text style={styles.countdownText}>{countdown} <Text style={{ color: '#942F31', fontSize: responsiveFontSize(31) }}>seconds</Text></Text>
 
-                        <TouchableOpacity
-                            style={styles.emergencyCancelBtn}
-                            onPress={() => setEmergencyModalVisible(false)}
-                        >
-                            <LinearGradient
-                                colors={['#B99A4A', '#523631']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.emergencyCancelGradient}
-                            >
-                                <View style={styles.emergencyCancelInner}>
-                                    <Text style={styles.emergencyCancelText}>Cancel</Text>
-                                </View>
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    </View>
+                    <GradientBorderButton
+                        onPress={() => setEmergencyModalVisible(false)}
+                        style={{ borderRadius: 30, width: '100%', marginTop: 10 }}
+                        innerBg="transparent"
+                    >
+                        <Text style={{
+                            color: '#FFF',
+                            fontSize: responsiveFontSize(14),
+                            fontFamily: Typography.sans.bold
+                        }}>
+                            Cancel
+                        </Text>
+                    </GradientBorderButton>
                 </View>
             </Modal>
 
             {/* Participant Detail Modal - Bottom Sheet */}
             <Modal
-                visible={detailVisible}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setDetailVisible(false)}
+                isVisible={detailVisible}
+                onBackdropPress={() => setDetailVisible(false)}
+                onBackButtonPress={() => setDetailVisible(false)}
+                onSwipeComplete={() => setDetailVisible(false)}
+                swipeDirection="down"
+                swipeThreshold={100}
+                propagateSwipe={true}
+                useNativeDriver={false}
+                useNativeDriverForBackdrop={true}
+                animationIn="bounceInUp"
+                animationOut="bounceOutDown"
+                style={{ margin: 0, justifyContent: 'flex-end', }}
             >
-                <TouchableWithoutFeedback onPress={() => setDetailVisible(false)}>
-                    <View style={styles.modalOverlayFull}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.bottomSheet}>
-                                <View style={styles.handle} />
-                                <Text style={styles.sheetTitle}>Participant Detail</Text>
-                                <View style={styles.divider} />
 
-                                {selectedParticipant && (
-                                    <>
-                                        <View style={styles.detailHeader}>
-                                            <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
-                                            <Text style={styles.detailName}>{selectedParticipant.name}</Text>
-                                        </View>
 
-                                        {/* Real Map View */}
-                                        <View style={styles.mapPlaceholder}>
-                                            <MapView
-                                                style={StyleSheet.absoluteFill}
-                                                initialRegion={{
-                                                    latitude: 21.4225,
-                                                    longitude: 39.8262,
-                                                    latitudeDelta: 0.01,
-                                                    longitudeDelta: 0.01,
-                                                }}
-                                                customMapStyle={mapDarkStyle}
-                                            >
-                                                <Marker
-                                                    coordinate={{ latitude: 21.4225, longitude: 39.8262 }}
-                                                >
-                                                    <View style={styles.mapPinContainer}>
-                                                        <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
-                                                    </View>
-                                                </Marker>
-                                            </MapView>
-                                        </View>
 
-                                        {isAdmin && (
-                                            <>
-                                                <GradientBorderButton
-                                                    text="Edit Participant"
-                                                    onPress={() => {
-                                                        setDetailVisible(false);
-                                                        navigation.navigate('EditParticipant', { participant: selectedParticipant });
-                                                    }}
-                                                    style={{ marginBottom: 16 }}
-                                                    innerBg="#1E2124"
-                                                />
+                {selectedParticipant && (
+                    <View style={styles.bottomSheet}>
+                        <View style={styles.handle} />
+                        <Text style={styles.sheetTitle}>Participant Detail</Text>
+                        <View style={styles.divider} />
+                        <View style={styles.detailHeader}>
+                            <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
+                            <Text style={styles.detailName}>{selectedParticipant.name}</Text>
+                        </View>
 
-                                                <TouchableOpacity
-                                                    style={styles.deleteButtonPill}
-                                                    onPress={handleDeletePress}
-                                                >
-                                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                                    <Text style={{ color: '#fff' }}>Delete for this trip</Text>
-                                                </TouchableOpacity>
+                        {/* Real Map View */}
+                        <View style={styles.mapPlaceholder}>
+                            <MapView
+                                style={StyleSheet.absoluteFill}
+                                initialRegion={{
+                                    latitude: 21.4225,
+                                    longitude: 39.8262,
+                                    latitudeDelta: 0.01,
+                                    longitudeDelta: 0.01,
+                                }}
+                                customMapStyle={mapDarkStyle}
+                            >
+                                <Marker
+                                    coordinate={{ latitude: 21.4225, longitude: 39.8262 }}
+                                >
+                                    <View style={styles.mapPinContainer}>
+                                        <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
+                                    </View>
+                                </Marker>
+                            </MapView>
+                        </View>
 
-                                                <TouchableOpacity
-                                                    style={styles.deleteButtonPill}
-                                                    onPress={handleDeletePress}
-                                                >
-                                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                                    <Text style={{ color: '#fff' }}>Delete for all trip</Text>
-                                                </TouchableOpacity>
-                                            </>
-                                        )}
-                                    </>
-                                )}
-                            </View>
-                        </TouchableWithoutFeedback>
+                        {isAdmin && (
+                            <>
+                                <TouchableOpacity
+                                    style={styles.deleteButtonPill}
+                                    onPress={handleDeletePress}
+                                >
+                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
+                                    <Text style={{ color: '#fff' }}>Delete for this trip</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                    style={styles.deleteButtonPill}
+                                    onPress={handleDeletePress}
+                                >
+                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
+                                    <Text style={{ color: '#fff' }}>Delete for all trip</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
-                </TouchableWithoutFeedback>
+                )}
             </Modal>
 
             {/* Delete Confirmation Modal */}
             <Modal
-                visible={deleteConfirmVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setDeleteConfirmVisible(false)}
+                isVisible={deleteConfirmVisible}
+                onBackdropPress={() => setDeleteConfirmVisible(false)}
+                onSwipeComplete={() => setDeleteConfirmVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.7}
+                style={{ margin: 0, justifyContent: 'center', paddingHorizontal: 24 }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <View style={styles.confirmOverlay}>
-                    <View style={styles.confirmBox}>
-                        <Text style={styles.confirmTitle}>Are You sure you want to delete this participant</Text>
+                <View
+                    style={[
+                        styles.confirmBox,
+                        // { transform: [{ translateY: panYDelete }] }
+                    ]}
+                // {...deleteConfirmSwipe.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <Text style={styles.confirmTitle}>Are You sure you want to delete this participant</Text>
 
-                        <View style={styles.confirmButtons}>
-                            <GradientBorderButton
-                                text="Cancel"
-                                onPress={() => setDeleteConfirmVisible(false)}
-                                style={{ flex: 1 }}
-                                innerBg="#1E2124"
-                            />
-                            <TouchableOpacity
-                                style={styles.confirmDeleteBtn}
-                                onPress={() => setDeleteConfirmVisible(false)}
-                            >
-                                <Text style={styles.confirmDeleteText}>Delete</Text>
-                            </TouchableOpacity>
-                        </View>
+                    <View style={styles.confirmButtons}>
+                        <GradientBorderButton
+                            text="Cancel"
+                            onPress={() => setDeleteConfirmVisible(false)}
+                            style={{ flex: 1 }}
+                            innerBg="#1E2124"
+                        />
+                        <TouchableOpacity
+                            style={styles.confirmDeleteBtn}
+                            onPress={() => setDeleteConfirmVisible(false)}
+                        >
+                            <Text style={styles.confirmDeleteText}>Delete</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
             </Modal>
 
             {/* Quick Message Alert Modal */}
             <Modal
-                visible={quickAlertVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setQuickAlertVisible(false)}
+                isVisible={quickAlertVisible}
+                onBackdropPress={() => setQuickAlertVisible(false)}
+                onSwipeComplete={() => setQuickAlertVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.8}
+                style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                useNativeDriver={true}
+                hideModalContentWhileAnimating={true}
             >
-                <View style={styles.quickAlertOverlay}>
-                    <View style={styles.quickAlertBox}>
-                        <View style={styles.quickAlertHeader}>
-                            <View style={styles.alertIconCircleSmall}>
-                                <Ionicons name="information" size={20} color="#FF4B4B" />
-                            </View>
-                            <Text style={styles.quickAlertTitle}>Alert!</Text>
+                <View
+                    style={[
+                        styles.quickAlertBox,
+                        // { transform: [{ translateY: panYQuick }] }
+                    ]}
+                // {...quickAlertSwipe.panHandlers}
+                >
+                    <View style={styles.modalHandle} />
+                    <View style={styles.quickAlertHeader}>
+                        <View style={styles.alertIconCircleSmall}>
+                            <Ionicons name="information" size={20} color="#FF4B4B" />
                         </View>
-
-                        <Text style={styles.quickAlertMsg}>{alertMessage}</Text>
-
-                        <TouchableOpacity
-                            style={styles.quickAlertBtn}
-                            onPress={() => setQuickAlertVisible(false)}
-                        >
-                            <LinearGradient
-                                colors={['#D4AF37', '#B8860B']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.quickAlertGradient}
-                            >
-                                <View style={styles.quickAlertInner}>
-                                    <Text style={styles.quickAlertBtnText}>OK</Text>
-                                </View>
-                            </LinearGradient>
-                        </TouchableOpacity>
+                        <Text style={styles.quickAlertTitle}>Alert!</Text>
                     </View>
+
+                    <Text style={styles.quickAlertMsg}>{alertMessage}</Text>
+
+                    <TouchableOpacity
+                        style={styles.quickAlertBtn}
+                        onPress={() => setQuickAlertVisible(false)}
+                    >
+                        <LinearGradient
+                            colors={['#D4AF37', '#B8860B']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={styles.quickAlertGradient}
+                        >
+                            <View style={styles.quickAlertInner}>
+                                <Text style={styles.quickAlertBtnText}>OK</Text>
+                            </View>
+                        </LinearGradient>
+                    </TouchableOpacity>
                 </View>
             </Modal>
         </View >
@@ -792,10 +879,10 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 20,
-        paddingVertical: 15,
+        paddingTop: 50,
     },
     headerTitle: {
-        fontSize: responsiveFontSize(22),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
         fontFamily: Typography.sans.regular,
     },
@@ -812,7 +899,7 @@ const styles = StyleSheet.create({
         borderRadius: 24,
         overflow: 'hidden',
         marginBottom: 20,
-        height: 160,
+        height: 150,
     },
     tripCardGradient: {
         flex: 1,
@@ -820,10 +907,15 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     tripTitle: {
-        fontSize: responsiveFontSize(24),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
         fontFamily: Typography.sans.bold,
         marginBottom: 12,
+        elevation: 10,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
     },
     infoRow: {
         flexDirection: 'row',
@@ -832,8 +924,8 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     infoText: {
-        color: '#fff',
-        fontSize: responsiveFontSize(14),
+        color: '#F4F4F5',
+        fontSize: responsiveFontSize(13),
         fontFamily: Typography.sans.regular,
     },
     chatIconWrapper: {
@@ -997,7 +1089,7 @@ const styles = StyleSheet.create({
     channelStatus: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.regular,
     },
     activeSpeaker: {
         color: '#9BA1A6',
@@ -1044,15 +1136,15 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     sectionTitle: {
-        fontSize: responsiveFontSize(18),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
         flex: 1,
     },
     searchBar: {
-        width: "50%",
+        width: "45%",
         height: 40,
-        backgroundColor: 'rgba(253, 253, 253, 0.1)',
+        backgroundColor: '#3F4346',
         borderRadius: 15,
         justifyContent: 'center',
         paddingHorizontal: 10,
@@ -1094,12 +1186,12 @@ const styles = StyleSheet.create({
     },
     participantStatus: {
         fontSize: responsiveFontSize(13),
-        color: '#9BA1A6',
+        color: '#A1A1AA',
         fontFamily: Typography.sans.regular,
     },
     participantStatusMuted: {
         fontSize: responsiveFontSize(13),
-        color: '#636D77',
+        color: '#A1A1AA',
         fontFamily: Typography.sans.regular,
     },
     quickMsgCard: {
@@ -1364,7 +1456,7 @@ const styles = StyleSheet.create({
     // Emergency Modal Styles
     emergencyOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.8)',
+        backgroundColor: 'rgba(0,0,0,0.4)',
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 30,
@@ -1378,42 +1470,28 @@ const styles = StyleSheet.create({
     },
     emergencyTitle: {
         color: '#FFF',
-        fontSize: responsiveFontSize(22),
-        fontFamily: Typography.sans.bold,
-        marginBottom: 25,
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
+        marginBottom: 15,
     },
     emergencySubtitle: {
         color: '#FFF',
-        fontSize: responsiveFontSize(14),
-        fontFamily: Typography.sans.regular,
-        marginBottom: 10,
+        fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular
     },
     countdownText: {
         color: '#942F31',
-        fontSize: responsiveFontSize(48),
+        fontSize: responsiveFontSize(31),
         fontFamily: Typography.sans.bold,
-        marginBottom: 30,
+        marginBottom: 10,
     },
-    emergencyCancelBtn: {
-        width: '100%',
-        marginTop: 10,
-        backgroundColor: '#23272A',
-    },
-    emergencyCancelGradient: {
-        borderRadius: 28,
-        padding: 1.5, // Standard border width for gradient
-    },
-    emergencyCancelInner: {
-        backgroundColor: '#1E2124',
-        borderRadius: 26.5,
-        height: 56,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    emergencyCancelText: {
-        color: '#FFF',
-        fontSize: responsiveFontSize(18),
-        fontFamily: Typography.sans.bold,
+    modalHandle: {
+        width: 60,
+        height: 5,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginBottom: 20,
     },
 });
 

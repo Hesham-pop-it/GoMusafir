@@ -93,18 +93,20 @@ const VoiceChatScreen = () => {
                     end={{ x: 0.5, y: 0.4 }}
                 />
 
-                <SafeAreaView style={{ flex: 1 }}>
-                    {/* Fixed Header */}
-                    <View style={styles.header}>
+                <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
+                    {/* Fixed Background Header Layer (Z-Index: 0) */}
+                    <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
                             <Ionicons name="arrow-back" size={24} color="#FFF" />
                         </TouchableOpacity>
+
                         <Text style={styles.headerTitle}>Voice Chat</Text>
+
                         <View style={{ width: 40 }} />
                     </View>
 
                     {/* Fixed Top Section (Controls & Status) */}
-                    <View style={styles.topSection}>
+                    <View style={[styles.topSection, { marginTop: 40 }]}>
                         {/* Controls Grid */}
                         <View style={styles.controlsGrid}>
                             {isAdmin ? (
@@ -194,7 +196,7 @@ const VoiceChatScreen = () => {
                                         onPressOut={() => setIsHoldingToTalk(false)}
                                         style={[
                                             styles.controlButtonOutline,
-                                            { 
+                                            {
                                                 borderColor: '#3F4346',
                                                 backgroundColor: '#23272A',
                                                 flex: 1
@@ -244,14 +246,14 @@ const VoiceChatScreen = () => {
                                         <View style={styles.participantInfo}>
                                             <View style={styles.nameRow}>
                                                 <Text style={styles.nameText}>{item.name}</Text>
-                                                
-                                                    <View style={styles.inlineStats}>
-                                                        <View style={[styles.miniDot, { backgroundColor: item.network === 'good' ? '#34C759' : item.network === 'poor' ? '#FFCC00' : '#942F31' }]} />
-                                                        {item.network !== 'none' && (
-                                                            <SignalBars type={item.network} />
-                                                        )}
-                                                    </View>
-                                                
+
+                                                <View style={styles.inlineStats}>
+                                                    <View style={[styles.miniDot, { backgroundColor: item.network === 'good' ? '#34C759' : item.network === 'poor' ? '#FFCC00' : '#942F31' }]} />
+                                                    {item.network !== 'none' && (
+                                                        <SignalBars type={item.network} />
+                                                    )}
+                                                </View>
+
                                             </View>
                                             <Text style={styles.statusSubText}>{item.status}</Text>
                                         </View>
@@ -299,10 +301,11 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         alignItems: 'center',
         paddingHorizontal: 20,
-        paddingVertical: 15,
+        paddingTop: 50,
+        paddingBottom: 5,
     },
     headerTitle: {
-        fontSize: responsiveFontSize(22),
+        fontSize: responsiveFontSize(20),
         color: '#FFF',
         fontFamily: 'IBMPlexSans'
     },
@@ -340,19 +343,21 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: 15,
         marginBottom: 10,
+        marginTop: 15,
     },
     controlButtonOutline: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 12,
+        paddingVertical: 16,
         borderRadius: 30,
         borderWidth: 1,
         borderColor: '#B99A4A',
+        backgroundColor: '#23272A',
     },
     controlText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(13),
+        fontSize: responsiveFontSize(16),
         fontWeight: 'bold',
         fontFamily: Typography.sans.bold,
     },
@@ -434,11 +439,12 @@ const styles = StyleSheet.create({
     nameText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.semiBold,
         marginBottom: 2,
     },
     statusSubText: {
         color: '#9BA1A6',
+        fontFamily: Typography.sans.regular,
         fontSize: responsiveFontSize(13),
     },
     rightActions: {

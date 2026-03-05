@@ -2,13 +2,15 @@ import React from 'react';
 import {
     View,
     Text,
-    Modal,
     TouchableOpacity,
     Dimensions,
     Linking,
     StyleSheet,
-    Platform
+    Platform,
+    PanResponder,
+    Animated,
 } from 'react-native';
+import Modal from 'react-native-modal';
 import { Typography } from '../constants/Typography';
 import GradientBorderButton from './GradientBorderButton';
 
@@ -26,36 +28,87 @@ const EmailConfirmationModal = ({ visible, onClose }) => {
         onClose();
     };
 
+    const { height: screenHeight } = Dimensions.get('window');
+    const panY = React.useRef(new Animated.Value(0)).current;
+
+    const swipeResponder = PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 5 && dy > Math.abs(dx);
+        },
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+            const { dy, dx } = gestureState;
+            return dy > 20 && dy > Math.abs(dx);
+        },
+        onPanResponderMove: (_, gestureState) => {
+            if (gestureState.dy > 0) {
+                panY.setValue(gestureState.dy);
+            }
+        },
+        onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                Animated.timing(panY, {
+                    toValue: screenHeight,
+                    duration: 200,
+                    useNativeDriver: true,
+                }).start(() => {
+                    onClose();
+                    panY.setValue(0);
+                });
+            } else {
+                Animated.spring(panY, {
+                    toValue: 0,
+                    friction: 8,
+                    useNativeDriver: true,
+                }).start();
+            }
+        },
+        onPanResponderTerminationRequest: () => true,
+        onShouldBlockNativeResponder: () => true,
+    });
+
     return (
         <Modal
-            visible={visible}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={onClose}
+            isVisible={visible}
+            onBackdropPress={onClose}
+            onSwipeComplete={onClose}
+            swipeDirection="down"
+            useNativeDriver={true}
+            hideModalContentWhileAnimating={true}
+            style={{ margin: 0, justifyContent: 'center', alignItems: 'center' }}
         >
-            <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
-                    <Text style={styles.messageText}>
-                        We’ve sent you an email. Please continue via the link in your email.
-                    </Text>
+            <Animated.View
+                style={[
+                    styles.modalContent,
+                    { transform: [{ translateY: panY }] }
+                ]}
+                {...swipeResponder.panHandlers}
+            >
+                <Text style={styles.messageText}>
+                    We’ve sent you an email. Please continue via the link in your email.
+                </Text>
 
-                    <View style={styles.buttonRow}>
-                        <GradientBorderButton
-                            text="Close"
-                            onPress={onClose}
-                            innerBg="#23272A"
-                            style={{ flex: 1 }}
-                        />
+                <View style={styles.buttonRow}>
+                    <GradientBorderButton
+                        text="Close"
+                        onPress={onClose}
+                        innerBg="#23272A"
+                        style={{ flex: 1 }}
+                        innerStyle={{ height: 48 }}
+                        borderRadius={24}
+                    />
 
-                        <GradientBorderButton
-                            text="Open Email App"
-                            onPress={handleOpenEmail}
-                            innerBg="#B99A4A"
-                            style={{ flex: 1 }}
-                        />
-                    </View>
+                    <GradientBorderButton
+                        text="Open Email App"
+                        onPress={handleOpenEmail}
+                        innerBg="#B99A4A"
+                        style={{ flex: 1 }}
+                        innerStyle={{ height: 48 }}
+                        borderRadius={24}
+                    />
                 </View>
-            </View>
+            </Animated.View>
         </Modal>
     );
 };
@@ -76,7 +129,7 @@ const styles = StyleSheet.create({
         elevation: 10,
     },
     messageText: {
-        fontSize: 18,
+        fontSize: 16,
         color: '#FFFFFF',
         textAlign: 'center',
         marginBottom: 24,
@@ -87,6 +140,14 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 12,
         width: '100%',
+    },
+    modalHandle: {
+        width: 60,
+        height: 5,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        borderRadius: 3,
+        alignSelf: 'center',
+        marginBottom: 20,
     },
 });
 
