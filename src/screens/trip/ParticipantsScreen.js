@@ -22,17 +22,12 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
+import { database, auth } from '../../config/firebase';
+import { ref, onValue } from 'firebase/database';
 
 const { width, height } = Dimensions.get('window');
 
-const PARTICIPANTS = [
-    { id: '1', name: 'Ethan Carter', status: 'Speaking', isSpeaking: true, image: 'https://randomuser.me/api/portraits/men/32.jpg' },
-    { id: '2', name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/44.jpg' },
-    { id: '3', name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/65.jpg' },
-    { id: '4', name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/33.jpg' },
-    { id: '5', name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/22.jpg' },
-    { id: '6', name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/11.jpg' },
-];
+// Mock participants removed in favor of real data fetching
 
 const CustomDeleteIcon = () => (
     <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -43,11 +38,128 @@ const CustomDeleteIcon = () => (
 const ParticipantsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { isAdmin } = route.params || {};
+    const { isAdmin, trip } = route.params || {};
+    const tripId = trip?.id || trip?.tripId;
+    const orgId = trip?.orgId || trip?.org_id;
+
+    const [participants, setParticipants] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [participantsCount, setParticipantsCount] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+
+    // Fetch Participants with Privacy Masking
+    React.useEffect(() => {
+        if (!tripId || !orgId) {
+            setIsLoading(false);
+            return;
+        }
+
+        const participantsRef = ref(database, `trips_participants/${tripId}`);
+        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
+
+        let organizerId = null;
+
+        // Get organizer ID first
+        get(tripDataRef).then(snap => {
+            if (snap.exists()) {
+                organizerId = snap.val().organizer_id;
+            }
+        });
+
+        const unsubscribe = onValue(participantsRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            let uids = [];
+            if (Array.isArray(val)) {
+                uids = val.filter(v => v !== null);
+            } else {
+                uids = Object.keys(val);
+            }
+
+            // Ensure organizer is in the UIDs list
+            if (organizerId && !uids.includes(organizerId)) {
+                uids.push(organizerId);
+            }
+
+            if (uids.length === 0) {
+                setParticipants([]);
+                setParticipantsCount(0);
+                setIsLoading(false);
+                return;
+            }
+
+            uids.forEach((uid) => {
+                const profileRef = ref(database, `users/${uid}/profile`);
+                const nameRef = ref(database, `users/${uid}/full_name`);
+                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+
+                Promise.all([get(profileRef), get(nameRef), get(visibilityRef)]).then(([userSnap, nameSnap, visSnap]) => {
+                    const profile = userSnap.val() || {};
+                    const fullName = nameSnap.val();
+                    const visibility = visSnap.val() || {};
+                    const isCurrentUser = uid === auth.currentUser?.uid;
+                    const amIAdmin = isAdmin;
+
+                    const canSeePII = (field) => {
+                        if (isCurrentUser) return true;
+                        const setting = visibility[field] || 'Show to organizer';
+                        if (setting === 'Show to everyone') return true;
+                        if (setting === 'Show to organizer' && amIAdmin) return true;
+                        return false;
+                    };
+
+                    let displayName = 'User';
+                    if (canSeePII('name')) {
+                        if (profile.firstName || profile.lastName) {
+                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                        } else if (fullName) {
+                            displayName = fullName;
+                        } else if (isCurrentUser) {
+                            displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
+                        }
+                    } else if (isCurrentUser) {
+                        displayName = 'You';
+                    }
+
+                    const displayImage = canSeePII('photo') && profile.photoURL 
+                        ? profile.photoURL 
+                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+
+                    const pData = {
+                        id: uid,
+                        name: displayName,
+                        image: displayImage,
+                        status: uid === organizerId ? 'Organizer' : 'Joined',
+                        isSpeaking: false,
+                        isOrganizer: uid === organizerId,
+                    };
+
+                    setParticipants(prev => {
+                        const filtered = prev.filter(p => p.id !== uid);
+                        const newList = [...filtered, pData];
+                        setParticipantsCount(newList.length);
+                        return newList;
+                    });
+                    setIsLoading(false);
+                }).catch(err => {
+                    console.warn(`Error fetching participant ${uid}:`, err);
+                });
+            });
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId, isAdmin]);
+
+    const filteredParticipants = participants.filter(p =>
+        p.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ).sort((a, b) => {
+        const myUid = auth.currentUser?.uid;
+        if (a.id === myUid) return -1;
+        if (b.id === myUid) return 1;
+        return a.name.localeCompare(b.name);
+    });
 
     // Multi-selection state
     const [selectedIds, setSelectedIds] = useState([]);
@@ -157,7 +269,7 @@ const ParticipantsScreen = () => {
                 </TouchableOpacity>
                 <View style={styles.headerTitleContainer}>
                     <Text style={styles.headerTitle}>Participants</Text>
-                    <Text style={styles.headerSubtitle}>45/50 Joined</Text>
+                    <Text style={styles.headerSubtitle}>{participantsCount} Joined</Text>
                 </View>
                 <View style={{ width: 40, alignItems: 'flex-end' }}>
                     {isAdmin && selectedIds.length > 0 && (
@@ -184,10 +296,17 @@ const ParticipantsScreen = () => {
 
             {/* List */}
             <FlatList
-                data={PARTICIPANTS}
+                data={filteredParticipants}
                 renderItem={renderParticipant}
                 keyExtractor={item => item.id}
                 contentContainerStyle={styles.listContent}
+                ListEmptyComponent={
+                    !isLoading && (
+                        <View style={{ padding: 40, alignItems: 'center' }}>
+                            <Text style={{ color: '#A1A1AA', fontSize: 16 }}>No participants found</Text>
+                        </View>
+                    )
+                }
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}

@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1034454374081",
+    "firebase_url": "https://go-musafir-default-rtdb.europe-west1.firebasedatabase.app",
+    "project_id": "go-musafir",
+    "storage_bucket": "go-musafir.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1034454374081:android:53ecff83a187be298ca640",
+        "android_client_info": {
+          "package_name": "com.popit.GoMusafir"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyANHDZjYoR1eCxrtGGnSD9ANebuzhuWqEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

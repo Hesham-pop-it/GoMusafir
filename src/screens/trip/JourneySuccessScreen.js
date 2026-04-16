@@ -37,9 +37,10 @@ const PresentationIcon = () => (
     </Svg>
 );
 
-const JourneySuccessScreen = () => {
+const JourneySuccessScreen = ({ route }) => {
     const navigation = useNavigation();
-    const invitationLink = "www.gomusafir.com/link";
+    const { invitationCode } = route.params;
+    const invitationLink = "www.gomusafir.com/link/" + invitationCode;
 
     const handleShare = async () => {
         try {

@@ -45,7 +45,7 @@ let isTrimming = false;
 export const navigationRef = createNavigationContainerRef();
 const Stack = createNativeStackNavigator();
 
-export default function RootNavigator() {
+export default function RootNavigator({ initialRouteName = "Welcome" }) {
     return (
         <NavigationContainer
             ref={navigationRef}
@@ -72,7 +72,7 @@ export default function RootNavigator() {
             }}
         >
             <Stack.Navigator
-                initialRouteName="Welcome"
+                initialRouteName={initialRouteName}
                 screenOptions={{
                     headerShown: false,
                 }}

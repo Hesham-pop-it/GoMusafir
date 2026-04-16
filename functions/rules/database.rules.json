@@ -1,0 +1,83 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "orgs": {
+      "$orgId": {
+        ".read": "auth != null && auth.token.email_verified == true && auth.token.orgId == $orgId",
+        "metadata": {
+          ".read": "auth != null && auth.token.orgId == $orgId",
+          ".write": "false"
+        },
+        "staff": {
+          ".read": "auth != null && auth.token.orgId == $orgId",
+          ".write": "auth != null && auth.token.role == 'admin' && auth.token.orgId == $orgId"
+        },
+        "settings": {
+          ".read": "auth != null && auth.token.orgId == $orgId",
+          ".write": "auth != null && auth.token.role == 'admin' && auth.token.orgId == $orgId"
+        },
+        "trips": {
+          "$tripId": {
+            ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || root.child('trips_participants').child($tripId).child(auth.uid).exists())",
+            ".write": "auth != null && auth.token.email_verified == true && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host') && auth.token.orgId == $orgId",
+            "live_data": {
+              "$busId": {
+                ".write": "auth != null && auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')",
+                ".validate": "newData.hasChildren(['lat', 'lng']) && newData.child('lat').isNumber() && newData.child('lng').isNumber()"
+              }
+            },
+            "voice_state": {
+              ".write": "auth != null && auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')"
+            }
+          }
+        },
+        "consents": {
+          "$uid": {
+            ".read": "auth != null && (auth.uid == $uid || (auth.token.role == 'admin' && auth.token.orgId == $orgId))",
+            ".write": "auth != null && auth.uid == $uid && !data.exists()"
+          }
+        },
+        "logs": {
+          ".read": "auth != null && auth.token.role == 'admin' && auth.token.orgId == $orgId",
+          "$logId": {
+            ".write": "auth != null && !data.exists()",
+            ".validate": "newData.hasChildren(['action', 'by', 'timestamp'])"
+          }
+        }
+      }
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid",
+        "joined_trips": {
+          "$tripId": {
+            ".read": "auth != null && auth.uid == $uid"
+          }
+        },
+        "active_sessions": {
+          ".read": "auth != null && (auth.uid == $uid || (auth.token.role == 'admin' && auth.token.orgId == root.child('users').child($uid).child('staff_org_id').val()))"
+        }
+      }
+    },
+    "trips_participants": {
+      "$tripId": {
+        ".read": "auth != null && root.child('trips_participants').child($tripId).child(auth.uid).exists()",
+        "$uid": {
+          ".write": "false"
+        }
+      }
+    },
+    "invites": {
+      "$code": {
+        ".read": true,
+        ".write": false
+      }
+    },
+    "system_logs": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

@@ -8,7 +8,9 @@ import {
     KeyboardAvoidingView,
     Platform,
     ScrollView,
-    Keyboard
+    Keyboard,
+    ActivityIndicator,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,13 +19,18 @@ import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
+import { auth, database, functions } from '../../config/firebase';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { ref, get } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 
 const BusinessLoginScreen = () => {
     const navigation = useNavigation();
-    const [companyName, setCompanyName] = useState('');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
 
     useEffect(() => {
         const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -44,7 +51,60 @@ const BusinessLoginScreen = () => {
         };
     }, []);
 
-    const isFormValid = companyName.trim().length > 0 && password.trim().length > 0;
+    const isFormValid = email.trim().length > 0 && password.trim().length > 0 && !isLoading;
+
+    const handleLogin = async () => {
+        if (!isFormValid) return;
+        setIsLoading(true);
+        try {
+            const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+            const user = userCredential.user;
+
+            if (!user.emailVerified) {
+                Alert.alert("Email Not Verified", "Please verify your email address before logging in.");
+                setIsLoading(false);
+                return;
+            }
+
+            // RBAC: Check if user has business/staff access
+            // S6: Role-Based Access Control
+            const userRef = ref(database, `users/${user.uid}`);
+            const userSnap = await get(userRef);
+            const userData = userSnap.val();
+
+            if (!userData?.staff_org_id) {
+                await signOut(auth);
+                Alert.alert("Access Denied", "This account does not have business administrative access.");
+                setIsLoading(false);
+                return;
+            }
+
+            // MFA: Trigger OTP for every business login
+            // S2: Mandatory Multi-Factor Authentication
+            try {
+                const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
+                await sendOTP({ email: email.trim(), uid: user.uid, isMobile: true });
+
+                navigation.navigate('BusinessVerification', {
+                    title: "Security Verification",
+                    description: `A 6-digit code has been sent to ${email.trim()}. Please enter it to verify your login.`,
+                    targetScreen: 'Home',
+                    email: email.trim(),
+                    uid: user.uid
+                });
+            } catch (otpError) {
+                console.warn("OTP Send Error:", otpError);
+                Alert.alert("Verification Failed", "Could not send verification code. Please try again.");
+                await signOut(auth);
+            }
+
+        } catch (error) {
+            console.warn(error);
+            Alert.alert("Login Failed", error.message || "Invalid email or password.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     // Eye SVG Icon Component
     const EyeIcon = () => (
@@ -82,14 +142,16 @@ const BusinessLoginScreen = () => {
                         <View style={styles.form}>
                             {/* Company Name */}
                             <View style={styles.inputContainer}>
-                                <Text style={styles.label}>Company email</Text>
+                                <Text style={styles.label}>Business email</Text>
                                 <View style={styles.inputWrapper}>
                                     <TextInput
                                         style={styles.input}
-                                        placeholder="Enter your company email"
+                                        placeholder="Enter your business email"
                                         placeholderTextColor="#71717A"
-                                        value={companyName}
-                                        onChangeText={setCompanyName}
+                                        value={email}
+                                        onChangeText={setEmail}
+                                        keyboardType="email-address"
+                                        autoCapitalize="none"
                                     />
                                 </View>
                             </View>
@@ -131,14 +193,17 @@ const BusinessLoginScreen = () => {
                 </KeyboardAvoidingView>
 
                 {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
-                {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
                 <View style={[styles.footer,]}>
                     <TouchableOpacity
-                        style={[styles.loginButton, !isFormValid && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 20 : 100 }]}
-                        onPress={() => navigation.navigate('BusinessVerification')}
-                        disabled={!isFormValid}
+                        style={[styles.loginButton, (!isFormValid || isLoading) && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 20 : 100 }]}
+                        onPress={handleLogin}
+                        disabled={!isFormValid || isLoading}
                     >
-                        <Text style={styles.loginButtonText}>Log in</Text>
+                        {isLoading ? (
+                            <ActivityIndicator color="#FFF" />
+                        ) : (
+                            <Text style={styles.loginButtonText}>Log in</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>

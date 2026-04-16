@@ -1,0 +1,97 @@
+{
+  "rules": {
+    "users": {
+        "$uid": {
+           ".read": "$uid === auth.uid || root.child('trips_participants').child(root.child('users').child($uid).child('current_trip').val()).child(auth.uid).exists()",
+           ".write": "$uid === auth.uid",
+           "full_name": {
+              ".read": "auth.uid !== null"
+           },
+           "participant_visibility": {
+              ".read": "auth.uid !== null"
+           },
+           "profile": {
+              ".read": "auth.uid !== null", 
+              ".write": "$uid === auth.uid"
+           }
+        }
+    },
+    "orgs": {
+        "$orgId": {
+           "trips": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+              "$tripId": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'manager'"
+              }
+           },
+           "staff": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId) || (root.child('trips_orgs').child(root.child('users').child(auth.uid).child('current_trip').val()).val() == $orgId)",
+              ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'admin'"
+           },
+           "metadata": {
+              ".read": "true"
+           },
+           "consents": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+              ".write": "auth.uid !== null"
+           }
+        }
+    },
+    "trips_participants": {
+         "$tripId": {
+            ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() != null && root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('trips').child($tripId).exists())",
+           "$uid": {
+              ".write": false
+           }
+        }
+    },
+    "trips_active": {
+        "$orgId": {
+           "$tripId": {
+              "locations": {
+                 "$uid": {
+                    ".write": "auth.uid === $uid"
+                 }
+              },
+              "notifications": {
+                 "$targetUid": {
+                    ".read": "auth.uid === $targetUid || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                    ".write": "auth.uid !== null"
+                 }
+              },
+              "chat": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".write": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".indexOn": ["timestamp"],
+                 "$messageId": {
+                    ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && (newData.hasChild('text') || newData.hasChild('type')) && (newData.child('sender_id').val() == auth.uid || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+                 }
+              },
+              "read_pointers": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 "$uid": {
+                    ".write": "auth.uid === $uid"
+                 }
+              },
+              "templates": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
+              }
+           }
+        }
+    },
+    "invites": {
+        "$inviteCode": {
+           ".read": "auth.uid !== null"
+        }
+    },
+    "trips_orgs": {
+        ".read": "auth.uid !== null"
+    },
+    "system_logs": {
+        ".read": false,
+        ".write": false
+    }
+  }
+}

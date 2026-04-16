@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -26,6 +26,8 @@ import CustomBottomTabBar from '../../components/CustomBottomTabBar';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import * as NavigationBar from 'expo-navigation-bar';
+import { database, auth } from '../../config/firebase';
+import { ref, onValue, get } from 'firebase/database';
 
 const TRIPS_DATA = [
     {
@@ -381,30 +383,162 @@ const HomeScreen = ({ navigation }) => {
     const [selectedLanguage, setSelectedLanguage] = useState('EN');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortOption, setSortOption] = useState('Newest');
-    const [filteredData, setFilteredData] = useState(TRIPS_DATA);
+    const [allTrips, setAllTrips] = useState([]); // Raw source of truth
+    const [filteredData, setFilteredData] = useState([]); // Filtered view
+    const [participantsCounts, setParticipantsCounts] = useState({});
+    const countListeners = useRef({}); // Track listeners by tripId to avoid duplicates and leaks
+    const [isLoading, setIsLoading] = useState(true);
+
+    const [isAdmin, setIsAdmin] = useState(false);
 
     useEffect(() => {
-        let result = [...TRIPS_DATA];
+        const user = auth.currentUser;
+        if (!user) {
+            setIsLoading(false);
+            return;
+        }
+
+        // 1. Get user's org context
+        const userRef = ref(database, `users/${user.uid}`);
+        const unsubscribeUser = onValue(userRef, (snapshot) => {
+            const userData = snapshot.val();
+            if (!userData) {
+                setIsLoading(false);
+                return;
+            }
+
+            const orgId = userData.staff_org_id;
+            setIsAdmin(!!orgId);
+
+            const joinedTrips = userData.joined_trips || {};
+
+            // 2. Fetch Trips
+            if (orgId) {
+                // Admin/Staff: fetch ALL org trips
+                const tripsRef = ref(database, `orgs/${orgId}/trips`);
+                onValue(tripsRef, (tripsSnapshot) => {
+                    const trips = [];
+
+                    tripsSnapshot.forEach((child) => {
+                        const tId = child.key;
+                        trips.push({ id: tId, orgId: orgId, ...(child.val() || {}) });
+
+                        // Set up live count listener if not already active
+                        if (!countListeners.current[tId]) {
+                            const pRef = ref(database, `trips_participants/${tId}`);
+                            
+                            countListeners.current[tId] = onValue(pRef, (pSnap) => {
+                                const val = pSnap.val() ?? {};
+                                const count = Object.keys(val).length;
+                                // S18: If organizer isn't in participants, add 1
+                                const finalCount = (val[child.val()?.organizer_id]) ? count : count ;
+                                console.log(`[HomeScreen] Trip ${tId} count:`, finalCount);
+                                setParticipantsCounts(prev => ({ ...prev, [tId]: finalCount }));
+                            }, (error) => {
+                                console.warn(`[HomeScreen] Error counting for trip ${tId}:`, error);
+                            });
+                            
+                        // countListeners.push({ ref: pRef, unsub: unsubP })
+                        }
+                    });
+                    setAllTrips(trips);
+                    setIsLoading(false);
+
+                });
+            } else {
+
+                // Participant: fetch ONLY joined trips
+                const tripIds = Object.keys(joinedTrips ?? {});
+                if (tripIds.length === 0) {
+                    setAllTrips([]);
+                    setIsLoading(false);
+                    return;
+                }
+
+                // Fetch each joined trip individually
+                Promise.all(tripIds.map(async (tripId) => {
+                    const orgId = joinedTrips[tripId].org_id;
+                    if (!orgId) return null;
+
+                    try {
+                        const tripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}`));
+                        if (tripSnap.exists()) {
+                            return { id: tripId, ...(tripSnap.val() || {}), org_id: orgId }; // Inject org_id so screens know where the trip lives
+                        }
+                    } catch (error) {
+                        console.warn(`Failed to fetch trip ${tripId}:`, error);
+                    }
+                    return null;
+                })).then((tripsArray) => {
+                    const validTrips = tripsArray.filter(t => t !== null);
+                    
+                    // Set up listeners for participant trips
+                    validTrips.forEach(t => {
+                        if (!countListeners.current[t.id]) {
+                            const pRef = ref(database, `trips_participants/${t.id}`);
+                            countListeners.current[t.id] = onValue(pRef, (pSnap) => {
+                                const val = pSnap.val() ?? {};
+                                const count = Object.keys(val).length;
+                                // S18: If organizer isn't in participants, add 1
+                                const finalCount = (val[t.organizer_id]) ? count : (count + 1);
+                                setParticipantsCounts(prev => ({ ...prev, [t.id]: finalCount }));
+                            }, (error) => {
+                                console.warn(`[HomeScreen] Error counting (participant) for trip ${t.id}:`, error);
+                            });
+                        }
+                    });
+
+                    setAllTrips(validTrips);
+                    setIsLoading(false);
+
+                    // Automatic redirect for participants to their specific trip
+                    if (validTrips.length > 0 && !orgId) {
+                        const targetTrip = validTrips[0];
+                        navigation.replace('TripOverview', {
+                            trip: targetTrip,
+                            isAdmin: false,
+                            invitationCode: targetTrip.invitation_code
+                        });
+                    }
+                });
+
+            }
+        });
+
+        return () => {
+            unsubscribeUser();
+            // Cleanup all count listeners
+            Object.values(countListeners?.current ?? {}).forEach(unsub => {
+                if (typeof unsub === 'function') unsub();
+            });
+            if (countListeners.current) countListeners.current = {};
+        };
+    }, []);
+
+    useEffect(() => {
+        // Filter and Sort logic
+        if (!allTrips) return;
+        let result = [...allTrips];
 
         if (searchQuery) {
             result = result.filter(item =>
-                item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.location.toLowerCase().includes(searchQuery.toLowerCase())
+                (item.title && item.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                (item.location && item.location.toLowerCase().includes(searchQuery.toLowerCase()))
             );
         }
 
         if (sortOption === 'A-Z') {
-            result.sort((a, b) => a.title.localeCompare(b.title));
+            result.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
         } else if (sortOption === 'Z-A') {
-            result.sort((a, b) => b.title.localeCompare(a.title));
+            result.sort((a, b) => (b.title || "").localeCompare(a.title || ""));
         } else if (sortOption === 'Newest') {
-            result.sort((a, b) => parseInt(b.id) - parseInt(a.id));
+            result.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
         } else if (sortOption === 'Oldest') {
-            result.sort((a, b) => parseInt(a.id) - parseInt(b.id));
+            result.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
         }
 
         setFilteredData(result);
-    }, [searchQuery, sortOption]);
+    }, [searchQuery, sortOption, allTrips]);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -435,9 +569,17 @@ const HomeScreen = ({ navigation }) => {
 
         return (
             <TouchableOpacity
+                // onPress={() => navigation.navigate('TripOverview', { 
+                //     trip: item, 
+                //     isAdmin,
+                //     tripId: item.id,
+                //     orgId: item.orgId
+                // })}
                 style={styles.card}
                 activeOpacity={0.9}
-                onPress={() => navigation.navigate('TripOverview', { trip: { ...item, image: item.image || imageSource } })}
+                onPress={() => navigation.navigate('TripOverview', 
+                    {tripId: item.id,
+                    orgId: item.orgId, trip: { ...item, image: item.image || imageSource, invitationCode: item?.invitation_code }, isAdmin })}
             >
                 <Image
                     source={imageSource}
@@ -463,10 +605,11 @@ const HomeScreen = ({ navigation }) => {
 
                     <View style={styles.cardRow}>
                         <Ionicons name="person-outline" size={14} color={Colors.dark.primary} />
-                        <Text style={styles.cardDetailText}>{item.participants}</Text>
+                        <Text style={styles.cardDetailText}>{participantsCounts[item.id] !== undefined ? participantsCounts[item.id] : (item.participants || 0)}</Text>
                     </View>
                 </View>
             </TouchableOpacity>
+
         );
     };
 

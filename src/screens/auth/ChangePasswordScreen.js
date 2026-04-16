@@ -17,6 +17,9 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
+import { auth } from '../../config/firebase';
+import { updatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
+import { Alert } from 'react-native';
 
 const ChangePasswordScreen = () => {
     const navigation = useNavigation();
@@ -32,6 +35,63 @@ const ChangePasswordScreen = () => {
     const [currentPasswordError, setCurrentPasswordError] = useState('');
     const [newPasswordError, setNewPasswordError] = useState('');
     const [confirmPasswordError, setConfirmPasswordError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+
+    const validatePassword = (pwd) => {
+        // S3: Strong password policy - at least 8 chars, 1 number, 1 uppercase
+        const hasNumber = /\d/;
+        const hasUpper = /[A-Z]/;
+        if (pwd.length < 8) return "Must be at least 8 characters.";
+        if (!hasNumber.test(pwd)) return "Must contain at least 1 number.";
+        if (!hasUpper.test(pwd)) return "Must contain at least 1 uppercase letter.";
+        return "";
+    };
+
+    const handleSaveChanges = async () => {
+        let hasError = false;
+        if (!currentPassword) {
+            setCurrentPasswordError('Current password is required');
+            hasError = true;
+        }
+
+        const pwdError = validatePassword(newPassword);
+        if (pwdError) {
+            setNewPasswordError(pwdError);
+            hasError = true;
+        }
+
+        if (newPassword && newPassword !== confirmPassword) {
+            setConfirmPasswordError('Passwords do not match');
+            hasError = true;
+        }
+
+        if (hasError) return;
+
+        setIsLoading(true);
+        try {
+            const user = auth.currentUser;
+            if (!user || (!user.email && !user.phoneNumber)) throw new Error("User not authenticated properly.");
+
+            // Re-authenticate (S3/S7)
+            const credential = EmailAuthProvider.credential(user.email, currentPassword);
+            await reauthenticateWithCredential(user, credential);
+
+            // Update Password via Firebase
+            await updatePassword(user, newPassword);
+
+            Alert.alert("Success", "Your password has been changed successfully.", [
+                { text: "OK", onPress: () => navigation.goBack() }
+            ]);
+        } catch (error) {
+            if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+                setCurrentPasswordError('Incorrect password.');
+            } else {
+                Alert.alert("Error", error.message);
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     // Custom Eye SVG Icon
     const EyeIcon = () => (
@@ -176,22 +236,14 @@ const ChangePasswordScreen = () => {
                                 borderRadius: 50,
                                 alignItems: 'center',
                                 marginBottom: 20,
+                                opacity: isLoading ? 0.7 : 1
                             }}
-                            onPress={() => {
-                                // Simple validation example
-                                let hasError = false;
-                                if (!currentPassword) {
-                                    setCurrentPasswordError('Wrong password');
-                                    hasError = true;
-                                }
-                                if (newPassword && newPassword !== confirmPassword) {
-                                    setConfirmPasswordError('Passwords do not match');
-                                    hasError = true;
-                                }
-                                if (!hasError) navigation.goBack();
-                            }}
+                            onPress={handleSaveChanges}
+                            disabled={isLoading}
                         >
-                            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Save Changes</Text>
+                            <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>
+                                {isLoading ? "Saving..." : "Save Changes"}
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </KeyboardAvoidingView>

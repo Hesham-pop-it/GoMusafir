@@ -1,0 +1,43 @@
+{
+  "database": {
+    "rules": "database.rules.json"
+  },
+  "functions": [
+
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "hosting": {
+    "public": "GoMusafir-Website/out",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "**/**.txt"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "cleanUrls": true,
+    "trailingSlash": false
+  },
+  "emulators": {
+    "auth": { "port": 9099 },
+    "functions": { "port": 5001 },
+    "database": { "port": 9000 },
+    "storage": { "port": 9199 },
+    "ui": { "enabled": true, "port": 4000 }
+  }
+}

@@ -8,16 +8,21 @@ import {
     TouchableOpacity,
     ScrollView,
     Dimensions,
-    Platform,
+    Alert,
     StatusBar,
     Image,
     PanResponder,
     Animated,
+    Share,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ref, onValue, get, update, remove, query, limitToLast } from 'firebase/database';
+
+import { database, auth } from '../../config/firebase';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
@@ -48,14 +53,39 @@ const MicMutedIcon = ({ color = "white", size = 20 }) => (
     </Svg>
 );
 
+const mapStyle = [
+  { "elementType": "geometry", "stylers": [{ "color": "#242f3e" }] },
+  { "elementType": "labels.text.fill", "stylers": [{ "color": "#746855" }] },
+  { "elementType": "labels.text.stroke", "stylers": [{ "color": "#242f3e" }] },
+  { "featureType": "administrative.locality", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+  { "featureType": "poi", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+  { "featureType": "poi.park", "elementType": "geometry", "stylers": [{ "color": "#263c3f" }] },
+  { "featureType": "poi.park", "elementType": "labels.text.fill", "stylers": [{ "color": "#6b9a76" }] },
+  { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#38414e" }] },
+  { "featureType": "road", "elementType": "geometry.stroke", "stylers": [{ "color": "#212a37" }] },
+  { "featureType": "road", "elementType": "labels.text.fill", "stylers": [{ "color": "#9ca5b3" }] },
+  { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#746855" }] },
+  { "featureType": "road.highway", "elementType": "geometry.stroke", "stylers": [{ "color": "#1f2835" }] },
+  { "featureType": "road.highway", "elementType": "labels.text.fill", "stylers": [{ "color": "#f3d19c" }] },
+  { "featureType": "transit", "elementType": "geometry", "stylers": [{ "color": "#2f3948" }] },
+  { "featureType": "transit.station", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+  { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#17263c" }] },
+  { "featureType": "water", "elementType": "labels.text.fill", "stylers": [{ "color": "#515c6d" }] },
+  { "featureType": "water", "elementType": "labels.text.stroke", "stylers": [{ "color": "#17263c" }] }
+];
+
 const TripOverviewScreen = () => {
+
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode } = route.params || {};
+    const { trip, tripId: passedTripId, orgId: passedOrgId, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
+
     const invitationCode = directCode || trip?.invitationCode;
 
-    // If invitationCode exists, the user joined as a participant
-    const isAdmin = !invitationCode;
+    const [liveTripData, setLiveTripData] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
+
 
     const [visibilityModalVisible, setVisibilityModalVisible] = useState(false);
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
@@ -76,25 +106,407 @@ const TripOverviewScreen = () => {
     const [isMuted, setIsMuted] = useState(true);
     const [isAllMuted, setIsAllMuted] = useState(true);
     const [isChannelStarted, setIsChannelStarted] = useState(true);
+    const [participantsList, setParticipantsList] = useState([]);
+    const [notificationsList, setNotificationsList] = useState([]);
+    const [lastChatMessage, setLastChatMessage] = useState(null);
+    const [liveLocations, setLiveLocations] = useState({});
+    const [userLocation, setUserLocation] = useState(null);
+    const [participantsCount, setParticipantsCount] = useState(0);
+    const [sharedTemplates, setSharedTemplates] = useState([]);
 
-    // Mock data if trip is missing
-    // Default Image if none provided
+
+    // Stable ID resolution to avoid effect re-runs on temporary nulls
+    const tripId = passedTripId || trip?.id || trip?.trip_id || liveTripData?.id;
+    const orgId = passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
+
+
+
+    // Real-time Data Synchronization
+    useEffect(() => {
+        let tripRef;
+
+        const syncData = async () => {
+            try {
+                // Verify account role from Custom Claims
+                const currentU = auth.currentUser;
+                if (currentU) {
+                    const tokenResult = await currentU.getIdTokenResult();
+                    setIsAdmin(tokenResult.claims.role === 'admin');
+                }
+
+
+
+                let activeTripId = tripId;
+                let activeOrgId = orgId;
+
+
+
+                // S22: If no trip info passed (app start), fetch current_trip from user profile
+                if (!activeTripId && auth.currentUser) {
+                    const userRef = ref(database, `users/${auth.currentUser.uid}`);
+                    const userSnap = await get(userRef);
+                    const userData = userSnap.val();
+                    if (userData?.current_trip) {
+                        activeTripId = userData.current_trip;
+                        // For participants, orgId is inside joined_trips node
+                        activeOrgId = userData.joined_trips?.[activeTripId]?.org_id || userData.staff_org_id;
+                    }
+                }
+
+                if (invitationCode) {
+                    // Participant View: Resolve Admin ID and Trip ID first
+                    const inviteRef = ref(database, `invites/${invitationCode}`);
+                    onValue(inviteRef, (snapshot) => {
+                        const inviteData = snapshot.val();
+                        if (inviteData && inviteData.org_id && inviteData.trip_id) {
+                            tripRef = ref(database, `orgs/${inviteData.org_id}/trips/${inviteData.trip_id}`);
+                            onValue(tripRef, (tripSnapshot) => {
+                                const data = tripSnapshot.val();
+                                setLiveTripData({ ...data, orgId: inviteData.org_id, id: inviteData.trip_id });
+                                setIsLoading(false);
+                            });
+
+                        } else {
+                            setIsLoading(false);
+                        }
+                    }, { onlyOnce: true });
+                } else if (activeOrgId && activeTripId) {
+                    // Direct sync (Admin or Resolved Participant)
+                    tripRef = ref(database, `orgs/${activeOrgId}/trips/${activeTripId}`);
+                    onValue(tripRef, (snapshot) => {
+                        setLiveTripData({ ...snapshot.val(), orgId: activeOrgId, id: activeTripId });
+                        setIsLoading(false);
+                    });
+                }
+            } catch (error) {
+                console.warn("Error syncing trip data:", error);
+                setIsLoading(false);
+            }
+        };
+
+
+        syncData();
+        return () => {
+            // Cleanup would require tracking all listeners, for now we let it be
+        };
+    }, [invitationCode, trip]);
+
+    // Mock data fallback if trip is missing or not yet loaded
     const DEFAULT_TRIP_IMAGE = require('../../../assets/Madinah.png');
 
-    // In the future, for participants (!isAdmin), tripData would be fetched
-    // from the database using the invitationCode.
+    const displayTrip = liveTripData || trip || {};
+
     const tripData = {
-        title: trip?.title || 'Madinah Trip',
-        date: trip?.date || '02/10/25 - 05/10/25',
-        location: trip?.location || 'Madinah',
-        participants: trip?.participants || 45,
-        image: trip?.image || DEFAULT_TRIP_IMAGE,
-        invitationCode
+        title: displayTrip.title || 'Loading Trip...',
+        date: displayTrip.date || '---',
+        location: displayTrip.location || '---',
+        participants: participantsCount || displayTrip.participants || 0,
+        image: displayTrip.image || DEFAULT_TRIP_IMAGE,
+        invitationCode,
+        isAdmin,
+        orgId,
+        tripId,
     };
+
+
+    // 1. Fetch Real Participants with Privacy Masking
+    useEffect(() => {
+        if (!tripId || !orgId) {
+            setParticipantsList([]);
+            setParticipantsCount(0);
+            return;
+        }
+        
+        const participantsRef = ref(database, `trips_participants/${tripId}`);
+        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
+
+        let organizerId = null;
+
+        // Get organizer ID first
+        get(tripDataRef).then(snap => {
+            if (snap.exists()) {
+                organizerId = snap.val().organizer_id;
+            }
+        });
+
+        const unsubscribe = onValue(participantsRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            let uids = [];
+            
+            if (Array.isArray(val)) {
+                uids = val.filter(v => v !== null);
+            } else {
+                uids = Object.keys(val);
+            }
+
+            // Ensure organizer is in the UIDs list to be fetched
+            if (organizerId && !uids.includes(organizerId)) {
+                uids.push(organizerId);
+            }
+            
+            // Temporary collection to avoid multiple rapid state updates
+            const fetchedParticipants = [];
+            let processedCount = 0;
+
+            if (uids.length === 0) {
+                setParticipantsList([]);
+                setParticipantsCount(0);
+                return;
+            }
+
+            // Update participant count immediately for UI consistency
+            setParticipantsCount(uids.length);
+
+            uids.forEach((uid) => {
+                const profileRef = ref(database, `users/${uid}/profile`);
+                const nameRef = ref(database, `users/${uid}/full_name`);
+                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+                
+                // Fetch granular nodes
+                Promise.all([get(profileRef), get(nameRef), get(visibilityRef)]).then(([userSnap, nameSnap, visSnap]) => {
+                    const profile = userSnap.val() || {};
+                    const fullName = nameSnap.val();
+                    const visibility = visSnap.val() || {};
+                    const isCurrentUser = uid === auth.currentUser?.uid;
+                    const amIAdmin = isAdmin; // captured from state
+
+                    // Privacy Logic based on role and settings
+                    // Settings: 'Show to organizer', 'Show to everyone', 'Do not show'
+                    const canSeePII = (field) => {
+                        if (isCurrentUser) return true; // Can always see self
+                        const setting = visibility[field] || 'Show to organizer'; // Default
+                        if (setting === 'Show to everyone') return true;
+                        if (setting === 'Show to organizer' && amIAdmin) return true;
+                        return false;
+                    };
+
+                    let displayName = 'User';
+                    if (canSeePII('name')) {
+                        if (profile.firstName || profile.lastName) {
+                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                        } else if (fullName) {
+                            displayName = fullName;
+                        } else if (isCurrentUser) {
+                            displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
+                        }
+                    } else if (isCurrentUser) {
+                        displayName = 'You';
+                    }
+
+                    const displayImage = canSeePII('photo') && profile.photoURL 
+                        ? profile.photoURL 
+                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+
+                    const pData = {
+                        id: uid,
+                        name: displayName,
+                        image: displayImage,
+                        status: uid === organizerId ? 'Organizer' : 'Joined', 
+                        isSpeaking: false,
+                        isOrganizer: uid === organizerId,
+                    };
+
+                    setParticipantsList(prev => {
+                        const filtered = prev.filter(p => p.id !== uid);
+                        const newList = [...filtered, pData];
+                        setParticipantsCount(newList.length);
+                        return newList;
+                    });
+                }).catch(err => {
+                    console.warn(`Error fetching participant ${uid}:`, err);
+                });
+            });
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId, isAdmin]);
+
+    // 2. Fetch Real Notifications (Location Requests)
+    useEffect(() => {
+        const myUid = auth.currentUser?.uid;
+        if (!myUid || !orgId || !tripId) return;
+
+        const notificationsRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}`);
+        const unsubscribe = onValue(notificationsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const list = Object.entries(data ?? {}).map(([id, val]) => {
+                    let msg = val?.message || '';
+                    if (val?.type === 'location_request') {
+                        msg = 'asked for your location';
+                    }
+                    
+                    return {
+                        id,
+                        ...(val || {}),
+                        message: msg
+                    };
+                });
+                // Sort by timestamp
+                list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                setNotificationsList(list);
+            } else {
+                setNotificationsList([]);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [orgId, tripId]);
+
+    // 3. Fetch Shared Templates for Admin
+    useEffect(() => {
+        if (!orgId || !tripId || !isAdmin) return;
+
+        const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
+        const unsubscribe = onValue(templatesRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const list = Object.entries(data).map(([id, t]) => ({
+                    id,
+                    name: t.name,
+                    message: t.message
+                }));
+                setSharedTemplates(list);
+            } else {
+                setSharedTemplates([]);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [orgId, tripId, isAdmin]);
+
+    // 4. Fetch Last Chat Message
+    useEffect(() => {
+        if (!orgId || !tripId) return;
+
+        const chatRef = query(ref(database, `trips_active/${orgId}/${tripId}/chat`), limitToLast(1));
+        const unsubscribe = onValue(chatRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                const lastKey = Object.keys(data ?? {})[0];
+                if (lastKey) {
+                    const msg = data[lastKey];
+                    setLastChatMessage({
+                        senderName: msg.sender_name || 'User',
+                        text: msg.text || '',
+                        type: msg.type || ''
+                    });
+                }
+            } else {
+                setLastChatMessage(null);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [orgId, tripId]);
+
+    // 4. Fetch Live Participant Locations for map preview
+    useEffect(() => {
+        if (!orgId || !tripId) return;
+
+        const locationsRef = ref(database, `trips_active/${orgId}/${tripId}/locations`);
+        const unsubscribe = onValue(locationsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setLiveLocations(snapshot.val());
+            } else {
+                setLiveLocations({});
+            }
+        });
+
+
+        return () => unsubscribe();
+    }, [orgId, tripId]);
+
+    // 5. Track Current User Location
+
+    useEffect(() => {
+        let subscription;
+        const startWatching = async () => {
+            const { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') return;
+
+            subscription = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.Balanced,
+                    timeInterval: 5000,
+                    distanceInterval: 10,
+                },
+                (loc) => {
+                    setUserLocation({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                    });
+                }
+            );
+        };
+        startWatching();
+        return () => subscription?.remove();
+    }, []);
+
+    // Utility to find nearest participant
+    const getNearestParticipant = () => {
+        if (!userLocation || Object.keys(liveLocations ?? {}).length === 0) return null;
+
+        let nearestUid = null;
+        let minDistance = Infinity;
+
+        for (const [uid, loc] of Object.entries(liveLocations ?? {})) {
+            if (uid === auth.currentUser?.uid || !loc) continue;
+
+            const dist = Math.sqrt(
+                Math.pow(loc.lat - userLocation.latitude, 2) +
+                Math.pow((loc.lng || 0) - userLocation.longitude, 2)
+            );
+
+            if (dist < minDistance) {
+                minDistance = dist;
+                nearestUid = uid;
+            }
+        }
+
+        if (!nearestUid) return null;
+        return {
+            uid: nearestUid,
+            ...liveLocations[nearestUid],
+            profile: participantsList.find(p => p.id === nearestUid)
+        };
+    };
+
+    const nearestParticipant = getNearestParticipant();
+
+    const handleAcceptNotification = async (notifId) => {
+
+
+        const myUid = auth.currentUser?.uid;
+        if (!myUid || !orgId || !tripId) return;
+
+        try {
+            // Remove the notification once accepted
+            await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notifId}`));
+            // In a real app, you might also trigger a location ping here
+        } catch (error) {
+            console.warn("Failed to accept notification:", error);
+        }
+    };
+
 
     const handleRequestSeats = () => {
         setSeatModalVisible(false);
         setRequestSentVisible(true);
+    };
+
+    const handleShare = async () => {
+        if (!invitationCode) return;
+        try {
+            const shareUrl = `https://gomusafir.app/join?code=${invitationCode}`;
+            await Share.share({
+                message: `Join our journey on GoMusafir! Use this link to join: ${shareUrl}`,
+                url: shareUrl,
+                title: 'Join Journey'
+            });
+        } catch (error) {
+            console.warn("Share error:", error);
+        }
     };
 
     const handleParticipantPress = (participant) => {
@@ -107,13 +519,15 @@ const TripOverviewScreen = () => {
         setTimeout(() => setDeleteConfirmVisible(true), 300);
     };
 
-    const MOCK_PARTICIPANTS = [
-        { name: 'Ethan Carter', status: 'Speaking', isSpeaking: true, image: 'https://randomuser.me/api/portraits/men/32.jpg' },
-        { name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/44.Indonesia' },
-        { name: 'Lucas Williams', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/men/46.jpg' },
-        { name: 'Olivia Smith', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/women/12.jpg' },
-        { name: 'James Wilson', status: 'Muted', isSpeaking: false, image: 'https://randomuser.me/api/portraits/men/22.jpg' },
-    ];
+    const sortedParticipants = [...participantsList].sort((a, b) => {
+        const myUid = auth.currentUser?.uid;
+        if (a.id === myUid) return -1;
+        if (b.id === myUid) return 1;
+        return a.name.localeCompare(b.name);
+    });
+
+    const participants = sortedParticipants;
+
 
     const QUICK_MESSAGES = [
         'The bus leaves in 5 min',
@@ -121,16 +535,63 @@ const TripOverviewScreen = () => {
         'Bus is arriving, please get ready'
     ];
 
-    const MOCK_NOTIFICATIONS = [
-        { id: 1, name: 'Ethan Carter', message: 'ask your location' },
-        { id: 2, name: 'Ethan Carter', message: 'ask your location' },
-        { id: 3, name: 'Ethan Carter', message: 'ask your location' },
-        { id: 4, name: 'Ethan Carter', message: 'ask your location' },
-    ];
+    const MOCK_NOTIFICATIONS = notificationsList;
 
-    const handleQuickMsgPress = (msg) => {
-        setAlertMessage(msg);
+
+    const handleQuickMsgPress = (template) => {
+        setAlertMessage(template.message);
         setQuickAlertVisible(true);
+        // Alert.alert(
+        //     "Send Message to All",
+        //     `Would you like to broadcast this alert to all participants?\n\n"${template.message}"`,
+        //     [
+        //         { text: "Cancel", style: "cancel" },
+        //         { 
+        //             text: "Send to All", 
+        //             onPress: () => broadcastNotification(template.message)
+        //         }
+        //     ]
+        // );
+    };
+
+    const broadcastNotification = async (msg) => {
+        if (!orgId || !tripId) return;
+
+        try {
+            const timestamp = serverTimestamp();
+            const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
+            
+            // 1. Fetch current UIDs directly from the source of truth (trips_participants)
+            // This is more reliable than using the UI state 'participantsList' which might be incomplete
+            const participantsRef = ref(database, `trips_participants/${tripId}`);
+            const participantsSnap = await get(participantsRef);
+            
+            if (!participantsSnap.exists()) {
+                alert("No participants found to notify.");
+                return;
+            }
+
+            const val = participantsSnap.val();
+            const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+
+            // 2. Broadcast to all found UIDs
+            const promises = uids.map(uid => {
+                const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
+                return push(userNotifRef, {
+                    name: adminName,
+                    message: msg,
+                    timestamp: timestamp,
+                    type: 'alert'
+                });
+            });
+
+            await Promise.all(promises);
+            setAlertMessage("Notification Sent!");
+            setQuickAlertVisible(true); // Confirmation toast
+        } catch (error) {
+            console.error("Broadcast failed:", error);
+            alert("Failed to send notification.");
+        }
     };
 
     const PrayerTimeItem = ({ name, time, icon, isActive }) => (
@@ -321,12 +782,21 @@ const TripOverviewScreen = () => {
                     <Text style={styles.headerTitle}>Overview</Text>
 
                     {isAdmin ? (
-                        <TouchableOpacity
-                            style={styles.iconButton}
-                            onPress={() => navigation.navigate('JourneySuccess')}
-                        >
-                            <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#FFF" />
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row' }}>
+                            {/* <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={handleShare}
+                            >
+                                <Ionicons name="share-social-outline" size={24} color="#B99A4A" />
+                            </TouchableOpacity> */}
+
+                            <TouchableOpacity
+                                style={styles.iconButton}
+                                onPress={() => navigation.navigate('JourneySuccess', { invitationCode: trip?.invitationCode })}
+                            >
+                                <MaterialCommunityIcons name="card-account-details-outline" size={24} color="#FFF" />
+                            </TouchableOpacity>
+                        </View>
                     ) : (
                         <View style={styles.iconButton} />
                     )}
@@ -508,26 +978,86 @@ const TripOverviewScreen = () => {
                         <View style={styles.rowContainer}>
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, { padding: 0, overflow: 'hidden' }]}
-                                onPress={() => navigation.navigate('LiveLocation', { trip })}
+                                onPress={() => navigation.navigate('LiveLocation', { trip: tripData })}
                                 activeOpacity={0.8}
                             >
-                                {/* Dark Map Background */}
-                                <ImageBackground
-                                    source={{ uri: 'https://images.unsplash.com/photo-1569336415962-a4bd9f69cd83?q=80&w=2000&auto=format&fit=crop' }}
-                                    style={styles.mapBackground}
-                                    imageStyle={{ opacity: 0.6 }}
-                                >
-                                    {/* Overlay for darker effect */}
-                                    <View style={styles.mapOverlay} />
+                                {userLocation ? (
+                                    <MapView
+                                        style={StyleSheet.absoluteFill}
+                                        initialRegion={{
+                                            latitude: userLocation.latitude,
+                                            longitude: userLocation.longitude,
+                                            latitudeDelta: 0.05,
+                                            longitudeDelta: 0.05,
+                                        }}
 
-                                    <View style={[styles.mapAvatar, { top: 20, left: 30 }]}>
-                                        <Image source={{ uri: 'https://randomuser.me/api/portraits/women/44.jpg' }} style={styles.mapAvatarImg} />
-                                    </View>
-                                    <View style={[styles.mapAvatar, { bottom: 30, right: 40 }]}>
-                                        <Image source={{ uri: 'https://randomuser.me/api/portraits/men/32.jpg' }} style={styles.mapAvatarImg} />
-                                    </View>
-                                </ImageBackground>
+                                        region={{
+                                            latitude: userLocation.latitude,
+                                            longitude: userLocation.longitude,
+                                            latitudeDelta: 0.05,
+                                            longitudeDelta: 0.05,
+                                        }}
+                                        scrollEnabled={false}
+                                        zoomEnabled={false}
+                                        pitchEnabled={false}
+                                        rotateEnabled={false}
+                                        customMapStyle={mapStyle}
+                                        showsPointsOfInterest={false}
+                                        showsBuildings={false}
+                                        showsTraffic={false}
+                                        showsIndoors={false}
+                                        showsUserLocation={false}
+                                        showsMyLocationButton={false}
+                                        toolbarEnabled={false}
+                                    >
+
+                                        {/* Me */}
+                                        <Marker 
+                                            coordinate={userLocation} 
+                                            anchor={{ x: 0.5, y: 0.5 }}
+                                        >
+                                            <View style={styles.mapAvatar}>
+                                                <Image 
+                                                    source={{ uri: auth.currentUser?.photoURL || `https://ui-avatars.com/api/?name=${auth.currentUser?.displayName?.[0] || 'U'}&background=B99A4A&color=fff` }} 
+                                                    style={styles.mapAvatarImg} 
+                                                    resizeMode="cover"
+                                                />
+                                            </View>
+                                        </Marker>
+
+                                        {/* Nearest Participant */}
+                                        {nearestParticipant && (
+                                            <Marker 
+                                                coordinate={{ latitude: nearestParticipant.lat, longitude: nearestParticipant.lng }} 
+                                                anchor={{ x: 0.5, y: 0.5 }}
+                                            >
+                                                <View style={styles.mapAvatar}>
+                                                    <Image 
+                                                        source={{ uri: nearestParticipant.profile?.image || `https://ui-avatars.com/api/?name=${nearestParticipant.profile?.name?.[0] || 'U'}&background=B99A4A&color=fff` }} 
+                                                        style={styles.mapAvatarImg} 
+                                                        resizeMode="cover"
+                                                    />
+                                                </View>
+                                            </Marker>
+                                        )}
+
+
+                                    </MapView>
+                                ) : (
+                                    <ImageBackground
+                                        source={{ uri: 'https://images.unsplash.com/photo-1569336415962-a4bd9f69cd83?q=80&w=2000&auto=format&fit=crop' }}
+                                        style={styles.mapBackground}
+                                        imageStyle={{ opacity: 0.6 }}
+                                    >
+                                        <View style={styles.mapOverlay} />
+                                        <View style={[styles.mapAvatar, { top: '35%', alignSelf: 'center' }]}>
+                                            <Ionicons name="location-outline" size={22} color="#B99A4A" />
+                                        </View>
+                                    </ImageBackground>
+                                )}
                             </TouchableOpacity>
+
+
 
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, { backgroundColor: '#23272A' }]}
@@ -542,9 +1072,17 @@ const TripOverviewScreen = () => {
                                     </View>
                                 </View>
                                 <View style={{ marginTop: 'auto', paddingBottom: 10 }}>
-                                    <Text style={styles.chatTitle}>Makkah crew</Text>
-                                    <Text style={styles.chatPreview}>Liam: Sounds good,{'\n'}see you there!</Text>
+                                    <Text style={styles.chatTitle}>{tripData.title}</Text>
+                                    <Text style={styles.chatPreview} numberOfLines={1}>
+                                        {lastChatMessage 
+                                            ? (lastChatMessage.text ? lastChatMessage.text : 
+                                               lastChatMessage.type === 'image' ? '📷 Image' :
+                                               lastChatMessage.type === 'location' ? '📍 Location' :
+                                               lastChatMessage.type === 'voice' ? '🎤 Voice' : lastChatMessage.type)
+                                            : "No messages yet"}
+                                    </Text>
                                 </View>
+
                             </TouchableOpacity>
                         </View>
 
@@ -552,27 +1090,38 @@ const TripOverviewScreen = () => {
                         <View style={styles.sectionCard}>
                             <Text style={styles.notificationTitle}>Notification</Text>
                             <View style={styles.notificationListContainer}>
-                                <ScrollView
+                                <ScrollView 
                                     showsVerticalScrollIndicator={false}
                                     nestedScrollEnabled={true}
+                                    contentContainerStyle={{ flexGrow: 1 }}
                                 >
-                                    {MOCK_NOTIFICATIONS.map((item, index) => (
-                                        <View key={item.id}>
-                                            <View style={styles.notificationItem}>
-                                                <View style={styles.notificationContent}>
-                                                    <Text style={styles.notifName}>{item.name} <Text style={styles.notifMsg}>{item.message}</Text></Text>
+                                    {notificationsList
+                                        .map((item, index, filteredList) => (
+                                            <View key={item.id}>
+                                                <View style={styles.notificationItem}>
+                                                    <View style={styles.notificationContent}>
+                                                        <Text style={styles.notifName}>
+                                                            {item.name} <Text style={styles.notifMsg}>{item.message}</Text>
+                                                        </Text>
+                                                    </View>
+                                                    
+                                                    {item.type !== 'alert' && (
+                                                        <TouchableOpacity 
+                                                            style={styles.acceptButton}
+                                                            onPress={() => handleAcceptNotification(item.id)}
+                                                        >
+                                                            <Ionicons name="checkmark-circle-outline" size={14} color="#FFF" style={{ marginRight: 6 }} />
+                                                            <Text style={styles.acceptButtonText}>Accept</Text>
+                                                        </TouchableOpacity>
+                                                    )}
                                                 </View>
-                                                <TouchableOpacity style={styles.acceptButton}>
-                                                    <Ionicons name="checkmark-circle-outline" size={14} color="#FFF" style={{ marginRight: 6 }} />
-                                                    <Text style={styles.acceptButtonText}>Accept</Text>
-                                                </TouchableOpacity>
+                                                {index < filteredList.length - 1 && <View style={styles.notificationSeparator} />}
                                             </View>
-                                            {index < MOCK_NOTIFICATIONS.length - 1 && <View style={styles.notificationSeparator} />}
-                                        </View>
-                                    ))}
+                                        ))}
                                 </ScrollView>
                             </View>
                         </View>
+
 
 
                         {/* Participants List */}
@@ -590,44 +1139,62 @@ const TripOverviewScreen = () => {
                             </TouchableOpacity>
 
                             <View style={styles.participantsScrollContainer}>
-                                <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
-                                    {MOCK_PARTICIPANTS.map((p, idx) => (
-                                        <TouchableOpacity
-                                            key={idx}
-                                            style={styles.participantRow}
-                                            onPress={() => handleParticipantPress(p)}
-                                        >
-                                            <View style={[
-                                                styles.participantAvatarContainer,
-                                                p.isSpeaking && styles.speakingAvatarBorder
-                                            ]}>
-                                                <Image source={{ uri: p.image }} style={styles.participantAvatar} />
-                                            </View>
-                                            <View style={styles.participantInfo}>
-                                                <Text style={styles.participantName}>{p.name}</Text>
-                                                <Text style={p.isSpeaking ? styles.participantStatus : styles.participantStatusMuted}>
-                                                    {p.status}
-                                                </Text>
-                                            </View>
-                                        </TouchableOpacity>
-                                    ))}
+                                <ScrollView 
+                                    showsVerticalScrollIndicator={false}
+                                    nestedScrollEnabled={true}
+                                >
+                                    {participants.length > 0 ? (
+                                        participants.map((p, idx) => (
+                                            <TouchableOpacity
+                                                key={idx}
+                                                style={styles.participantRow}
+                                                onPress={() => handleParticipantPress(p)}
+                                            >
+                                                <View style={[
+                                                    styles.participantAvatarContainer,
+                                                    p.isSpeaking && styles.speakingAvatarBorder
+                                                ]}>
+                                                    <Image source={{ uri: p.image }} style={styles.participantAvatar} />
+                                                </View>
+                                                <View style={styles.participantInfo}>
+                                                    <Text style={styles.participantName}>
+                                                        {p.name} {p.id === auth.currentUser?.uid ? '(You)' : ''}
+                                                    </Text>
+                                                    <Text style={p.isSpeaking ? styles.participantStatus : styles.participantStatusMuted}>
+                                                        {p.status}
+                                                    </Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        ))
+                                    ) : (
+                                        <View style={{ padding: 20, alignItems: 'center' }}>
+                                            <Text style={{ color: '#A1A1AA', fontSize: 14 }}>No participants joined yet</Text>
+                                        </View>
+                                    )}
                                 </ScrollView>
                             </View>
+
                         </View>
 
                         {/* Quick Messages & Alert Row - Hide Quick Messages for Participants */}
                         <View style={styles.rowContainer}>
                             {isAdmin && (
                                 <View style={[styles.sectionCard, styles.halfCard, styles.quickMsgCard]}>
-                                    {QUICK_MESSAGES.map((msg, index) => (
-                                        <TouchableOpacity
-                                            key={index}
-                                            style={styles.quickMsgItem}
-                                            onPress={() => handleQuickMsgPress(msg)}
-                                        >
-                                            <Text style={styles.quickMsgText}>{msg}</Text>
-                                        </TouchableOpacity>
-                                    ))}
+                                    <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
+                                        {sharedTemplates.length > 0 ? (
+                                            sharedTemplates.map((template, index) => (
+                                                <TouchableOpacity
+                                                    key={template.id}
+                                                    style={styles.quickMsgItem}
+                                                    onPress={() => handleQuickMsgPress(template)}
+                                                >
+                                                    <Text style={styles.quickMsgText} numberOfLines={1}>{template.name}</Text>
+                                                </TouchableOpacity>
+                                            ))
+                                        ) : (
+                                            <Text style={[styles.quickMsgText, { opacity: 0.5, fontSize: 12 }]}>No templates. Add in Chat.</Text>
+                                        )}
+                                    </ScrollView>
                                 </View>
                             )}
 
@@ -720,7 +1287,7 @@ const TripOverviewScreen = () => {
 
 
 
-                {selectedParticipant && (
+                {selectedParticipant ? (
                     <View style={styles.bottomSheet}>
                         <View style={styles.handle} />
                         <Text style={styles.sheetTitle}>Participant Detail</Text>
@@ -772,6 +1339,8 @@ const TripOverviewScreen = () => {
                             </>
                         )}
                     </View>
+                ) : (
+                    <View />
                 )}
             </Modal>
 
@@ -813,6 +1382,101 @@ const TripOverviewScreen = () => {
                 </View>
             </Modal>
 
+            {/* Trip Visibility Modal */}
+            <Modal
+                isVisible={visibilityModalVisible}
+                onBackdropPress={() => setVisibilityModalVisible(false)}
+                onSwipeComplete={() => setVisibilityModalVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.7}
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+            >
+                <View style={styles.bottomSheet}>
+                    <View style={styles.handle} />
+                    <Text style={styles.sheetTitle}>Trip Visibility</Text>
+                    <View style={styles.divider} />
+
+                    <TouchableOpacity
+                        style={[styles.visibilityOption, liveTripData?.visibility !== 'private' && styles.visibilityOptionSelected]}
+                        onPress={() => {
+                            const tripId = trip?.id;
+                            const orgId = trip?.orgId;
+                            if (tripId && orgId) {
+                                update(ref(database, `orgs/${orgId}/trips/${tripId}`), { visibility: 'public' });
+                            }
+                            setVisibilityModalVisible(false);
+                        }}
+                    >
+                        <Ionicons name="earth-outline" size={24} color="#FFF" />
+                        <View style={{ marginLeft: 16 }}>
+                            <Text style={styles.visibilityTitle}>Public</Text>
+                            <Text style={styles.visibilityDesc}>Visible to everyone in the Explore section.</Text>
+                        </View>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.visibilityOption, liveTripData?.visibility === 'private' && styles.visibilityOptionSelected]}
+                        onPress={() => {
+                            const tripId = trip?.id;
+                            const orgId = trip?.orgId;
+                            if (tripId && orgId) {
+                                update(ref(database, `orgs/${orgId}/trips/${tripId}`), { visibility: 'private' });
+                            }
+                            setVisibilityModalVisible(false);
+                        }}
+                    >
+                        <Ionicons name="lock-closed-outline" size={24} color="#FFF" />
+                        <View style={{ marginLeft: 16 }}>
+                            <Text style={styles.visibilityTitle}>Private (Invite Only)</Text>
+                            <Text style={styles.visibilityDesc}>Only people with the link or code can join.</Text>
+                        </View>
+                    </TouchableOpacity>
+                </View>
+            </Modal>
+
+            {/* Trip Delete Modal */}
+            <Modal
+                isVisible={deleteModalVisible}
+                onBackdropPress={() => setDeleteModalVisible(false)}
+                onSwipeComplete={() => setDeleteModalVisible(false)}
+                swipeDirection="down"
+                backdropOpacity={0.8}
+                style={{ margin: 0, justifyContent: 'center', paddingHorizontal: 24 }}
+            >
+                <View style={styles.confirmBox}>
+                    <View style={styles.modalHandle} />
+                    <Ionicons name="warning-outline" size={48} color="#942F31" style={{ marginBottom: 16 }} />
+                    <Text style={styles.confirmTitle}>Delete this journey?</Text>
+                    <Text style={[styles.confirmTitle, { fontSize: 14, fontFamily: Typography.sans.regular, opacity: 0.7 }]}>
+                        This action cannot be undone. All participant data will be lost.
+                    </Text>
+
+                    <View style={styles.confirmButtons}>
+                        <GradientBorderButton
+                            text="Cancel"
+                            onPress={() => setDeleteModalVisible(false)}
+                            style={{ flex: 1 }}
+                            innerBg="#1E2124"
+                        />
+                        <TouchableOpacity
+                            style={styles.confirmDeleteBtn}
+                            onPress={async () => {
+                                const tripId = trip?.id;
+                                const orgId = trip?.orgId;
+                                if (tripId && orgId) {
+                                    await remove(ref(database, `orgs/${orgId}/trips/${tripId}`));
+                                    // Also remove from user_trips if necessary (already handled in functions usually)
+                                    setDeleteModalVisible(false);
+                                    navigation.navigate('Home');
+                                }
+                            }}
+                        >
+                            <Text style={styles.confirmDeleteText}>Delete Forever</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
+
             {/* Quick Message Alert Modal */}
             <Modal
                 isVisible={quickAlertVisible}
@@ -827,9 +1491,7 @@ const TripOverviewScreen = () => {
                 <View
                     style={[
                         styles.quickAlertBox,
-                        // { transform: [{ translateY: panYQuick }] }
                     ]}
-                // {...quickAlertSwipe.panHandlers}
                 >
                     <View style={styles.modalHandle} />
                     <View style={styles.quickAlertHeader}>
@@ -1075,6 +1737,7 @@ const styles = StyleSheet.create({
         width: 12,
         height: 12,
         borderRadius: 6,
+
         backgroundColor: '#34C759',
         position: 'absolute',
         bottom: 2,
@@ -1197,7 +1860,7 @@ const styles = StyleSheet.create({
     quickMsgCard: {
         backgroundColor: '#2D3134',
         padding: 10,
-        justifyContent: 'space-between',
+        height: 160, // Fixed height to match chat card
     },
     quickMsgItem: {
         backgroundColor: '#23272A',
@@ -1245,13 +1908,17 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
     mapAvatar: {
-        position: 'absolute',
-        width: 50,
-        height: 50,
-        borderRadius: 25,
-        borderWidth: 3,
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+
+        borderWidth: 2,
         borderColor: '#B99A4A',
         overflow: 'hidden',
+        backgroundColor: '#1E2124',
+        justifyContent: 'center',
+        alignItems: 'center',
+
         shadowColor: '#B99A4A',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.8,
@@ -1259,10 +1926,25 @@ const styles = StyleSheet.create({
         elevation: 10,
     },
     mapAvatarImg: {
-        width: '100%',
-        height: '100%',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+    },
+
+
+    mapAvatarLiveDot: {
+        position: 'absolute',
+        bottom: 2,
+        right: 2,
+        width: 12,
+        height: 12,
+        borderRadius: 6,
+        backgroundColor: '#34C759',
+        borderWidth: 2,
+        borderColor: '#1A1E21',
     },
     // Modal Styles
+
     bottomSheet: {
         backgroundColor: '#1E2124',
         borderTopLeftRadius: 30,
@@ -1492,6 +2174,31 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         alignSelf: 'center',
         marginBottom: 20,
+    },
+    visibilityOption: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 20,
+        borderRadius: 16,
+        backgroundColor: '#23272A',
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: 'transparent',
+    },
+    visibilityOptionSelected: {
+        borderColor: '#B99A4A',
+        backgroundColor: '#2D3134',
+    },
+    visibilityTitle: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.bold,
+    },
+    visibilityDesc: {
+        color: '#A1A1AA',
+        fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
+        marginTop: 4,
     },
 });
 

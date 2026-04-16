@@ -18,6 +18,8 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
+import { functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
@@ -31,10 +33,9 @@ const BusinessVerificationScreen = ({ route }) => {
 
     const [otp, setOtp] = useState('');
     const [isError, setIsError] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+    const [resendLoading, setResendLoading] = useState(false);
     const inputRef = useRef(null);
-
-    const CORRECT_CODE = '822815';
-    const WRONG_CODE_TRIGGER = '216634';
 
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -68,22 +69,70 @@ const BusinessVerificationScreen = ({ route }) => {
         const numericValue = value.replace(/[^0-9]/g, '');
         if (numericValue.length <= 6) {
             setOtp(numericValue);
+            setIsError(false);
+        }
+    };
 
-            // Check for specific demo triggers
-            if (numericValue === WRONG_CODE_TRIGGER) {
+    const handleContinue = async () => {
+        if (otp.length === 6) {
+            setIsLoading(true);
+            setIsError(false);
+            try {
+                const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
+                await verifyOTP({ 
+                    uid: route.params?.uid,
+                    otp 
+                });
+
+                // On success, handle navigation
+                if (route.params?.isExistingUser) {
+                    // S22: Accelerated path for existing users - Join trip immediately
+                    const redeemInvite = httpsCallable(functions, 'redeemInvitation');
+                    await redeemInvite({
+                        inviteCode: route.params.invitationCode,
+                        voiceConsent: true, // Returning users assumed to have active consent or re-grant
+                        locationConsent: true,
+                        // We don't have fname/lname here, but redeemInvitation now handles missing profile info gracefully
+                    });
+
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: 'TripOverview', params: { ...route.params } }],
+                    });
+                } else {
+                    // New users continue to their next signup step (e.g. JoinFirstName)
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ name: targetScreen, params: { ...route.params } }],
+                    });
+                }
+
+            } catch (error) {
+                console.warn("OTP Verification Error:", error);
+
                 setIsError(true);
-            } else {
-                setIsError(false);
+            } finally {
+                setIsLoading(false);
             }
         }
     };
 
-    const handleContinue = () => {
-        if (otp.length === 6) {
-            navigation.reset({
-                index: 0,
-                routes: [{ name: targetScreen, params: { ...route.params } }],
+    const handleResend = async () => {
+        if (resendLoading || !route.params?.email) return;
+        setResendLoading(true);
+        try {
+            const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
+            await sendOTP({ 
+                email: route.params?.email, 
+                uid: route.params?.uid,
+                isMobile: true 
             });
+            // Show toast or alert that it was sent
+        } catch (error) {
+            console.warn("OTP Resend Error:", error);
+
+        } finally {
+            setResendLoading(false);
         }
     };
 
@@ -122,22 +171,12 @@ const BusinessVerificationScreen = ({ route }) => {
                             {description}
                         </Text>
 
-                        {/* Hidden TextInput for OTP handling */}
-                        <TextInput
-                            ref={inputRef}
-                            value={otp}
-                            onChangeText={handleOtpChange}
-                            keyboardType="number-pad"
-                            maxLength={6}
-                            style={styles.hiddenInput}
-                            caretHidden={true}
-                        />
-
-                        {/* Visual Code Input */}
+                        {/* Code Container with over-layered TextInput for reliability */}
                         <Pressable
                             style={styles.codeContainer}
                             onPress={() => inputRef.current?.focus()}
                         >
+                            {/* Visual Code Input */}
                             <View style={[
                                 styles.codeBox,
                                 isError ? styles.codeBoxError : styles.codeBoxNormal,
@@ -145,28 +184,44 @@ const BusinessVerificationScreen = ({ route }) => {
                             ]}>
                                 {[0, 1, 2, 3, 4, 5].map(renderDigit)}
                             </View>
+
+                            {/* Over-layered hidden TextInput for focus handling */}
+                            <TextInput
+                                ref={inputRef}
+                                value={otp}
+                                onChangeText={handleOtpChange}
+                                keyboardType="number-pad"
+                                maxLength={6}
+                                style={styles.hiddenInput}
+                                caretHidden={true}
+                                autoFocus={true} // Boost focus on load
+                            />
                             {isError && <Text style={styles.errorText}>Wrong code</Text>}
                         </Pressable>
+
                     </ScrollView>
 
                     {/* Footer Buttons */}
                     <View style={styles.footer}>
                         <GradientBorderButton
-                            text={resendText}
-                            onPress={() => { }}
+                            text={resendLoading ? "Sending..." : resendText}
+                            onPress={handleResend}
                             innerBg="#1A1E21"
+                            disabled={resendLoading}
                         />
 
                         <TouchableOpacity
                             style={[
                                 styles.primaryButton,
-                                otp.length !== 6 && { opacity: 0.5 },
+                                (otp.length !== 6 || isLoading) && { opacity: 0.5 },
                                 { marginBottom: isKeyboardVisible ? 20 : 100 }
                             ]}
                             onPress={handleContinue}
-                            disabled={otp.length !== 6}
+                            disabled={otp.length !== 6 || isLoading}
                         >
-                            <Text style={styles.primaryButtonText}>{buttonText}</Text>
+                            <Text style={styles.primaryButtonText}>
+                                {isLoading ? "Verifying..." : buttonText}
+                            </Text>
                         </TouchableOpacity>
                     </View>
                 </KeyboardAvoidingView>
@@ -211,10 +266,12 @@ const styles = StyleSheet.create({
     },
     hiddenInput: {
         position: 'absolute',
-        width: 1,
-        height: 1,
-        opacity: 0,
+        width: '100%',
+        height: '100%',
+        opacity: 0.01, // Minimal opacity to be "visible" to system but invisible to user
+        color: 'transparent',
     },
+
     codeContainer: {
         marginBottom: 40,
     },

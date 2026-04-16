@@ -9,23 +9,46 @@ import {
     Platform,
     Image,
     ScrollView,
-    FlatList,
     Alert,
     Keyboard,
     PanResponder,
     Animated,
     Dimensions,
+    FlatList
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Svg, { Path, Rect } from 'react-native-svg';
+import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
-import GradientBorderButton from '../../components/GradientBorderButton';
 import { COUNTRIES } from '../../constants/Countries';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
+import GradientBorderButton from '../../components/GradientBorderButton';
+import { auth, functions, database, storage } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, fetchSignInMethodsForEmail } from 'firebase/auth';
+import { ref as dbRef, set, remove, serverTimestamp, get } from 'firebase/database';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+
+// --- Shared Components ---
+const EyeIcon = () => (
+    <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <G clipPath="url(#clip0_1408_8588)">
+            <Path
+                d="M9.34203 18.7819L7.41103 18.2639L8.19803 15.3249C7.01999 14.8904 5.92514 14.2572 4.96103 13.4529L2.80803 15.6069L1.39303 14.1919L3.54703 12.0389C2.3311 10.5826 1.51411 8.83563 1.17603 6.96886L3.14403 6.60986C3.90303 10.8119 7.57903 13.9999 12 13.9999C16.42 13.9999 20.097 10.8119 20.856 6.60986L22.824 6.96786C22.4864 8.83488 21.6697 10.5822 20.454 12.0389L22.607 14.1919L21.192 15.6069L19.039 13.4529C18.0749 14.2572 16.9801 14.8904 15.802 15.3249L16.589 18.2649L14.658 18.7819L13.87 15.8419C12.6324 16.0539 11.3677 16.0539 10.13 15.8419L9.34203 18.7819Z"
+                fill="#71717A"
+            />
+        </G>
+        <Defs>
+            <ClipPath id="clip0_1408_8588">
+                <Rect width="24" height="24" fill="white" />
+            </ClipPath>
+        </Defs>
+    </Svg>
+);
 
 // --- Shared Layout ---
 const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = true, buttonText = "Continue" }) => {
@@ -97,8 +120,10 @@ export const JoinFirstNameScreen = ({ navigation, route }) => {
     const previousData = route.params || {};
 
     const handleContinue = () => {
+        console.log("[JoinFlow] Moving to LastName with:", { ...previousData, firstName });
         navigation.navigate('JoinLastName', { ...previousData, firstName });
     };
+
 
     return (
         <JoinLayout
@@ -127,8 +152,10 @@ export const JoinLastNameScreen = ({ navigation, route }) => {
     const previousData = route.params || {};
 
     const handleContinue = () => {
-        navigation.navigate('JoinEmail', { ...previousData, lastName });
+        console.log("[JoinFlow] Moving to Phone with:", { ...previousData, lastName });
+        navigation.navigate('JoinPhone', { ...previousData, lastName });
     };
+
 
     return (
         <JoinLayout
@@ -156,35 +183,152 @@ export const JoinEmailScreen = ({ navigation, route }) => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    
+    // Track if we are in signup mode (User not found after check) (S3/S6)
+    const [isSignupMode, setIsSignupMode] = useState(false);
     const previousData = route.params || {};
 
-    // Simulation of database check
-    const isExistingUser = email.toLowerCase() === 'xyz@gmail.com';
     const showPasswordFields = email.length > 5 && email.includes('@');
 
-    const handleContinue = () => {
-        navigation.navigate('JoinPhone', { ...previousData, email, password });
+    // Logic Adjustment: Background check removed (Now performs check on Continue click)
+
+    const handleContinue = async () => {
+        if (!email.includes('@') || password.length < 6) {
+            Alert.alert("Invalid Input", "Please enter a valid email and a password of at least 6 characters.");
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            let userCredential;
+            let currentUserId;
+
+            if (!isSignupMode) {
+                // Step 1: Check if user exists on "Continue" click via secure Cloud Function
+                const checkUser = httpsCallable(functions, 'checkUserExistence');
+                const result = await checkUser({ email: email.trim().toLowerCase() });
+                const userExists = result.data?.exists;
+
+                if (userExists) {
+                    // User Exists -> Log In
+                    try {
+                        userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+                        currentUserId = userCredential.user.uid;
+
+                        // RBAC Check: Admins cannot login as participants
+                        // S6: Role-Based Access Control
+                        const userSnap = await get(dbRef(database, `users/${currentUserId}`));
+                        if (userSnap.exists() && userSnap.val().staff_org_id) {
+                            await signOut(auth);
+                            Alert.alert("Account Conflict", "This business account cannot be used to join as a participant. Please use a separate participant account.");
+                            setIsLoading(false);
+                            return;
+                        }
+
+                        // Set flag in database to prevent App.js from redirecting to Home instantly
+                        await set(dbRef(database, `users/${currentUserId}/join_flow_status`), {
+                            isJoining: true,
+                            updated_at: serverTimestamp()
+                        });
+
+                        // Navigate to Verification/Redeem path for existing users
+                        const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
+                        await sendOTP({ email: email.trim(), uid: currentUserId, isMobile: true });
+
+                        navigation.navigate('BusinessVerification', {
+                            title: "Verify your email",
+                            description: `We've sent a 6-digit secure code to ${email.trim()}. Please enter it below.`,
+                            targetScreen: "JoinTerms",
+                            uid: currentUserId,
+                            isExistingUser: true,
+                            ...previousData,
+                            email: email.trim(), // Ensure email is in the persistent data object
+                        });
+                    } catch (loginError) {
+                        if (loginError.code === 'auth/wrong-password' || loginError.code === 'auth/invalid-credential') {
+                            Alert.alert("Incorrect Password", "The password you entered is incorrect. Please try again.");
+                        } else {
+                            throw loginError;
+                        }
+                    }
+                } else {
+                    // User Not Found -> Show Confirm Password field
+                    setIsSignupMode(true);
+                }
+            } else {
+                // Step 2: User is in signup mode (Clicked Continue again)
+                if (password !== confirmPassword) {
+                    Alert.alert("Mismatch", "Passwords do not match.");
+                    setIsLoading(false);
+                    return;
+                }
+
+                try {
+                    userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+                    currentUserId = userCredential.user.uid;
+
+                    // Set flag in database to prevent App.js from redirecting to Home instantly
+                    await set(dbRef(database, `users/${currentUserId}/join_flow_status`), {
+                        isJoining: true,
+                        updated_at: serverTimestamp()
+                    });
+
+
+                    // Navigate to standard signup flow
+                    const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
+                    await sendOTP({ email: email.trim(), uid: currentUserId, isMobile: true });
+
+                    navigation.navigate('BusinessVerification', {
+                        title: "Verify your email",
+                        description: `We've sent a 6-digit secure code to ${email.trim()}. Please enter it below.`,
+                        targetScreen: "JoinFirstName",
+                        uid: currentUserId,
+                        isExistingUser: false,
+                        ...previousData,
+                        email: email.trim(),
+                    });
+                } catch (signupError) {
+                    throw signupError;
+                }
+            }
+        } catch (error) {
+            if (error.code === 'auth/email-already-in-use') {
+                // If we attempted signup but user exists (fallback)
+                setIsSignupMode(false);
+                Alert.alert("Account Exists", "This email is already registered. Please enter your password to log in.");
+            } else {
+                Alert.alert("Error", error.message || "An error occurred. Please try again.");
+            }
+        } finally {
+            setIsLoading(false);
+        }
     };
+
+
 
     // Validation Logic
     let isValid = false;
     if (showPasswordFields) {
-        if (isExistingUser) {
+        if (!isSignupMode) {
             isValid = password.length >= 6;
         } else {
             isValid = password.length >= 6 && confirmPassword.length >= 6 && password === confirmPassword;
         }
     } else {
-        isValid = email.includes('@'); // Original validation for email only
+        isValid = email.includes('@'); 
     }
 
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={"Join as Participant"}
             label="Email address"
             onContinue={handleContinue}
-            isValid={isValid}
+            isValid={isValid && !isLoading}
+            buttonText={isLoading ? "Please wait..." : (isSignupMode ? "Create Account" : "Continue")}
         >
             <View style={styles.inputWrapper}>
                 <TextInput
@@ -208,11 +352,14 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                             placeholderTextColor="#71717A"
                             value={password}
                             onChangeText={setPassword}
-                            secureTextEntry
+                            secureTextEntry={!showPassword}
                         />
+                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>                            
+                                <EyeIcon />                            
+                        </TouchableOpacity>
                     </View>
 
-                    {!isExistingUser && (
+                    {isSignupMode && (
                         <>
                             <Text style={styles.label}>Confirm Password</Text>
                             <View style={styles.inputWrapper}>
@@ -222,8 +369,11 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                                     placeholderTextColor="#71717A"
                                     value={confirmPassword}
                                     onChangeText={setConfirmPassword}
-                                    secureTextEntry
+                                    secureTextEntry={!showConfirmPassword}
                                 />
+                                <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeIcon}>
+                                    <EyeIcon />
+                                </TouchableOpacity>
                             </View>
                         </>
                     )}
@@ -237,7 +387,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 export const JoinPhoneScreen = ({ navigation, route }) => {
     const [phone, setPhone] = useState('');
     const [isPickerVisible, setPickerVisible] = useState(false);
-    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES.find(c => c.name === 'Argentina') || COUNTRIES[0]);
+    const [selectedCountry, setSelectedCountry] = useState(COUNTRIES.find(c => c.name === 'Netherlands') || COUNTRIES[0]);
     const previousData = route.params || {};
 
     const { height: screenHeight } = Dimensions.get('window');
@@ -281,8 +431,11 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
     });
 
     const handleContinue = () => {
-        navigation.navigate('JoinProfilePicture', { ...previousData, phone, countryCode: selectedCountry.code });
+        const fullPhone = `${selectedCountry.code}${phone}`;
+        console.log("[JoinFlow] Moving to ProfilePic with:", { ...previousData, phone: fullPhone });
+        navigation.navigate('JoinProfilePicture', { ...previousData, phone: fullPhone });
     };
+
 
     const selectCountry = (country) => {
         setSelectedCountry(country);
@@ -386,8 +539,10 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = () => {
+        console.log("[JoinFlow] Moving to Terms with:", { ...previousData, image: image ? "Selected" : "None" });
         navigation.navigate('JoinTerms', { ...previousData, image });
     };
+
 
     return (
         <JoinLayout
@@ -425,27 +580,94 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
 // --- Screen 6: Terms ---
 export const JoinTermsScreen = ({ navigation, route }) => {
     const [accepted, setAccepted] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
     const previousData = route.params || {};
 
-    const handleContinue = () => {
+    const handleContinue = async () => {
+        if (isLoading) return;
+        setIsLoading(true);
+        try {
+            let photoURL = previousData.photoURL;
+            // S22: Upload image to Storage if present as local URI
+            if (previousData.image && auth.currentUser) {
+                try {
+                    const response = await fetch(previousData.image);
+                    const blob = await response.blob();
+                    const picRef = storageRef(storage, `users/${auth.currentUser.uid}/profile_pic.jpg`);
+                    await uploadBytes(picRef, blob);
+                    photoURL = await getDownloadURL(picRef);
+                } catch (imgError) {
+                    console.warn("Image upload failed, continuing without photo.", imgError);
+                }
+            }
 
-        // Navigate to OTP Verification (Reusing BusinessVerificationScreen)
-        navigation.navigate('BusinessVerification', {
-            ...previousData, // Pass everything (firstName, lastName, email, phone, image, invitationCode)
-            title: "Check your email",
-            description: "We've sent a secure code to your email. Please check your inbox.",
-            targetScreen: "TripOverview",
-            buttonText: "Join Journey",
-            resendText: "Resend"
-        });
+            console.log("[JoinFlow] Sending to redeemInvitation:", {
+                inviteCode: previousData.invitationCode,
+                firstName: previousData.firstName,
+                lastName: previousData.lastName,
+                phone: previousData.phone,
+                photoURL: photoURL ? "Present" : "Missing"
+            });
+
+            const redeemInvite = httpsCallable(functions, 'redeemInvitation');
+            const result = await redeemInvite({
+                inviteCode: previousData.invitationCode,
+                voiceConsent: accepted || route.params?.isExistingUser,
+                locationConsent: accepted || route.params?.isExistingUser,
+                firstName: previousData.firstName,
+                lastName: previousData.lastName,
+                phone: previousData.phone,
+                photoURL: photoURL,
+            });
+
+
+
+
+            const tripId = result.data?.tripId;
+
+            // Clear the Join Flow flag in database so global navigation is restored
+            if (auth.currentUser) {
+                await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
+            }
+
+            // S22: Navigate to TripOverview with explicit IDs
+            navigation.reset({
+                index: 0,
+                routes: [{ 
+                    name: 'TripOverview', 
+                    params: { 
+                        tripId: tripId, 
+                        orgId: result.data?.orgId,
+                        invitationCode: previousData.invitationCode,
+                        isAdmin: false 
+                    } 
+                }],
+            });
+
+
+        } catch (error) {
+            console.warn("Redeem Invite Error:", error);
+
+            Alert.alert("Error Joining Trip", error.message || "Failed to join. Please try again or check your invite code.");
+        } finally {
+            setIsLoading(false);
+        }
     };
+
+    // Auto-join for existing users (Flow Adjustment)
+    useEffect(() => {
+        if (route.params?.isExistingUser) {
+            handleContinue();
+        }
+    }, [route.params?.isExistingUser]);
 
     return (
         <JoinLayout
             navigation={navigation}
             title="Join as Participant"
             onContinue={handleContinue}
-            isValid={accepted}
+            isValid={accepted && !isLoading}
+            buttonText={isLoading ? "Please wait..." : "Continue"}
         >
             <View
                 style={styles.termsContainer}
@@ -510,14 +732,17 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#23272A',
         height: 56,
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingHorizontal: 16,
-        justifyContent: 'center',
+        justifyContent: 'space-between',
         marginBottom: 20,
     },
     input: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
+        width: '80%',
         height: '100%',
     },
     inputText: {
@@ -689,5 +914,8 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         alignSelf: 'center',
         marginVertical: 10,
+    },
+    eyeIcon: {
+        padding: 4,
     },
 });

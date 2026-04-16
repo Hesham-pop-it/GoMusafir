@@ -17,12 +17,35 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
+import { functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { Alert } from 'react-native';
 
 const InviteMemberScreen = () => {
     const navigation = useNavigation();
     const [email, setEmail] = useState('');
     const [selectedRole, setSelectedRole] = useState('Co-host');
     const [successModalVisible, setSuccessModalVisible] = useState(false);
+    const [isInviting, setIsInviting] = useState(false);
+
+    const handleSendInvite = async () => {
+        if (!email) return;
+
+        setIsInviting(true);
+        try {
+            const inviteTeamMember = httpsCallable(functions, 'inviteTeamMember');
+            await inviteTeamMember({ email, role: selectedRole });
+            setSuccessModalVisible(true);
+        } catch (error) {
+            console.warn("Invite Error:", error);
+            Alert.alert(
+                "Failed to send invite",
+                error.message || "Something went wrong while dispatching the invitation."
+            );
+        } finally {
+            setIsInviting(false);
+        }
+    };
 
     const RoleCard = ({ title, description }) => {
         const isSelected = selectedRole === title;
@@ -91,11 +114,11 @@ const InviteMemberScreen = () => {
 
                     <View style={styles.footer}>
                         <TouchableOpacity
-                            style={[styles.inviteButton, !email && { opacity: 0.5 }]}
-                            onPress={() => setSuccessModalVisible(true)}
-                            disabled={!email}
+                            style={[styles.inviteButton, (!email || isInviting) && { opacity: 0.5 }]}
+                            onPress={handleSendInvite}
+                            disabled={!email || isInviting}
                         >
-                            <Text style={styles.inviteButtonText}>Send Invite</Text>
+                            <Text style={styles.inviteButtonText}>{isInviting ? "Sending..." : "Send Invite"}</Text>
                         </TouchableOpacity>
 
                     </View>

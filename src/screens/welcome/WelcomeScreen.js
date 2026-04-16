@@ -11,13 +11,14 @@ import {
     Platform
 } from 'react-native';
 import Modal from 'react-native-modal';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { Typography } from '../../constants/Typography';
-import Logo from '../../components/Logo';
+// import Logo from '../../components/Logo'; // Removed as per request
 import { responsiveFontSize } from '../../utils/responsive';
 import { Dimensions } from 'react-native';
 
@@ -219,6 +220,12 @@ const FlyingGreetings = () => {
 };
 
 const WelcomeScreen = ({ navigation }) => {
+    const player = useVideoPlayer(require('../../../assets/Login Animation - 1080p.mp4'), (player) => {
+        player.loop = true;
+        player.muted = true;
+        player.play();
+    });
+
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
     const [selectedLanguage, setSelectedLanguage] = React.useState('EN');
@@ -242,12 +249,15 @@ const WelcomeScreen = ({ navigation }) => {
 
     return (
         <View style={styles.container}>
-            <Image
-                source={require('../../../assets/bg_landing.png')}
-                style={styles.backgroundImage}
+            <VideoView
+                player={player}
+                style={styles.backgroundVideo}
+                // resizeMode="cover"
+                contentFit="fill"
+                nativeControls={false}
             />
             <View style={styles.overlay}>
-                <FlyingGreetings />
+                {/* <FlyingGreetings /> */}
                 <SafeAreaView style={styles.safeArea}>
                     {/* Top Bar */}
                     <View style={styles.topBar}>
@@ -260,10 +270,8 @@ const WelcomeScreen = ({ navigation }) => {
                         </TouchableOpacity>
                     </View>
 
-                    {/* Logo Section */}
-                    <View style={styles.logoContainer}>
-                        <Logo width={140} height={140} />
-                    </View>
+                    {/* Logo Section Removed */}
+                    <View style={styles.spacer} />
 
                     {/* Buttons Section */}
                     <View style={styles.buttonContainer}>
@@ -276,7 +284,7 @@ const WelcomeScreen = ({ navigation }) => {
 
                         <TouchableOpacity
                             style={[styles.button, styles.secondaryButton]}
-                            onPress={() => WebBrowser.openBrowserAsync('https://gomusafir.app/create-account')}
+                            onPress={() => WebBrowser.openBrowserAsync('https://gomusafir.app/create-account')} // TODO: Replace with dynamic config for prod vs staging
                         >
                             <Text style={styles.secondaryButtonText}>Create a Business Account</Text>
                         </TouchableOpacity>
@@ -374,17 +382,14 @@ const WelcomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.dark.background,
+        backgroundColor: Colors.dark.background
     },
-    backgroundImage: {
+    backgroundVideo: {
         ...StyleSheet.absoluteFillObject,
-        width: undefined,
-        height: undefined,
-        resizeMode: 'cover',
     },
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0)',
+        backgroundColor: 'rgba(0,0,0,0.2)', // Slight dark overlay for better text contrast
     },
     safeArea: {
         flex: 1,
@@ -404,11 +409,8 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontFamily: Typography.sans.bold,
     },
-    logoContainer: {
+    spacer: {
         flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: -90,
     },
     logo: {
         width: 100,

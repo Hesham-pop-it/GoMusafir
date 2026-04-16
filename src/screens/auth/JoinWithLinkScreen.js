@@ -9,7 +9,9 @@ import {
     Platform,
     Image,
     Modal,
-    Keyboard
+    Keyboard,
+    ActivityIndicator,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,10 +20,13 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
+import { functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 
 const JoinWithLinkScreen = ({ navigation }) => {
     const [invitationLink, setInvitationLink] = useState('');
     const [isValid, setIsValid] = useState(true);
+    const [isLoading, setIsLoading] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
     useEffect(() => {
@@ -48,14 +53,37 @@ const JoinWithLinkScreen = ({ navigation }) => {
         setIsValid(true); // Reset error on change
     };
 
-    const handleContinue = () => {
+    const handleContinue = async () => {
         if (invitationLink.trim().length === 0) {
             setIsValid(false);
             return;
         }
-        // Proceed with valid link logic here
-        // Navigation to Join Flow Start
-        navigation.navigate('JoinFirstName', { invitationCode: invitationLink });
+
+        setIsLoading(true);
+
+        try {
+            // Extract code from link (e.g. gomusafir.app/join?code=XYZ or gomusafir.app/invite/XYZ or just XYZ)
+            let codeInput = invitationLink.trim();
+            if (codeInput.includes('?code=')) {
+                codeInput = codeInput.split('?code=').pop().split('&')[0];
+            } else if (codeInput.includes('/')) {
+                codeInput = codeInput.split('/').pop();
+            }
+
+            // Call getInviteMetadata
+            const getMetadata = httpsCallable(functions, 'getInviteMetadata');
+            const result = await getMetadata({ inviteCode: codeInput });
+
+            // If we are here, it's valid
+            const tripDetails = result.data;
+            // Navigate to Join Flow Start - Now starting with Email
+            navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
+
+        } catch (error) {
+            setIsValid(false);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     return (
@@ -85,10 +113,7 @@ const JoinWithLinkScreen = ({ navigation }) => {
                                 onChangeText={handleLinkChange}
                                 autoCapitalize="none"
                                 autoCorrect={false}
-                            />
-                            <TouchableOpacity style={styles.copyIcon}>
-                                <Ionicons name="copy-outline" size={20} color="#9BA1A6" />
-                            </TouchableOpacity>
+                            />                           
                         </View>
                         {!isValid && (
                             <Text style={styles.errorText}>Invalid link. Please check the link and try again</Text>
@@ -99,9 +124,9 @@ const JoinWithLinkScreen = ({ navigation }) => {
                     <View style={{ flex: 1 }} />
 
                     <GradientBorderButton
-                        text="Continue"
+                        text={isLoading ? "Validating..." : "Continue"}
                         onPress={handleContinue}
-                        disabled={invitationLink.trim().length === 0}
+                        disabled={invitationLink.trim().length === 0 || isLoading}
                         style={{ marginBottom: isKeyboardVisible ? 20 : 100 }}
                     />
                 </KeyboardAvoidingView>

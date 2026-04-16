@@ -17,12 +17,20 @@ import {
 import Modal from 'react-native-modal';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import Logo from '../../components/Logo';
 import { Typography } from '../../constants/Typography';
+import { database, auth } from '../../config/firebase';
+import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
+import * as Audio from 'expo-av';
+import { storage } from '../../config/firebase';
+import { ActivityIndicator, Linking, Vibration } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 const SCREEN_WIDTH = width;
@@ -103,18 +111,17 @@ const QUICK_OPTIONS = [
     { id: 'location', label: 'Location', icon: 'custom', color: '#06CF9C', bg: '#1A2927' },
     { id: '5min', label: '5 Minutes', icon: 'custom', color: '#B99A4A', bg: '#2E2818' },
     { id: 'camera', label: 'Camera', icon: 'custom', color: '#FFFFFF', bg: '#26292E' },
-    { id: 'ontheway', label: 'On The Way', icon: 'custom', color: '#FFFFFF', bg: '#2A2D33', isAdded: true },
-    { id: 'template1', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
-    { id: 'template2', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
-    { id: 'template3', label: 'Template', icon: 'custom', color: '#1A1E21', bg: '#2A2D33', isAdded: false },
+    { id: 'add_template', label: 'Add Template', icon: 'custom', color: '#B99A4A', bg: '#23272A' },
 ];
 
 const TripChatScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode } = route.params || {};
+    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
+    const tripId = trip?.id || trip?.tripId;
+    const orgId = trip?.org_id || trip?.orgId;
     const invitationCode = directCode || trip?.invitationCode;
-    const isAdmin = !invitationCode;
+    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
     const [inputText, setInputText] = useState('');
     const [showAttachments, setShowAttachments] = useState(false);
@@ -123,14 +130,37 @@ const TripChatScreen = () => {
             ? QUICK_OPTIONS
             : QUICK_OPTIONS.filter(opt => ['photo', 'location', 'camera'].includes(opt.id))
     );
-    const [messages, setMessages] = useState(MOCK_MESSAGES);
+    const [messages, setMessages] = useState([]);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+    const [currentUserFullName, setCurrentUserFullName] = useState('User');
+    const [currentParticipants, setCurrentParticipants] = useState([]); // List of UIDs
+    const [participantNames, setParticipantNames] = useState(['You']);
+    const [readPointers, setReadPointers] = useState({});
+    const [isUploading, setIsUploading] = useState(false);
+    const [recording, setRecording] = useState(null);
+    const [isRecording, setIsRecording] = useState(false);
+    const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
+
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
 
-    // Auto-focus keyboard on mount (like WhatsApp usually focuses if entering recent chat, or requested)
-    // User requested: "for chat keyboard should be opened by default"
+    // Auto-focus keyboard on mount and start listening to DB
     useEffect(() => {
+        // Fetch current user's name first
+        const fetchUserName = async () => {
+            if (auth.currentUser) {
+                try {
+                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}/full_name`));
+                    if (userSnap.exists()) {
+                        setCurrentUserFullName(userSnap.val());
+                    }
+                } catch (err) {
+                    console.log("[Chat] Error fetching profile name:", err);
+                }
+            }
+        };
+        fetchUserName();
+
         // Small delay to ensure screen transition finishes
         const timer = setTimeout(() => {
             inputRef.current?.focus();
@@ -139,12 +169,156 @@ const TripChatScreen = () => {
         const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
         const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
 
-        return () => {
-            clearTimeout(timer);
-            keyboardDidShowListener.remove();
-            keyboardDidHideListener.remove();
+        let chatRef;
+        if (orgId && tripId) {
+            chatRef = query(
+                ref(database, `trips_active/${orgId}/${tripId}/chat`),
+                orderByChild('timestamp'),
+                limitToLast(50)
+            );
+
+            onChildAdded(chatRef, (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    // S18: Ensure rawTimestamp is ALWAYS a number for comparison
+                    let rawTs = data.timestamp;
+                    if (typeof rawTs !== 'number') rawTs = Date.now();
+
+                    const msg = {
+                        id: snapshot.key,
+                        ...data, // Include all fields (type, image_url, etc.)
+                        sender: data.sender_id === auth.currentUser?.uid ? 'me' : 'other',
+                        senderName: data.sender_name || 'Participant',
+                        time: new Date(rawTs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                        rawTimestamp: rawTs,
+                        avatar: data.avatar || 'https://ui-avatars.com/api/?name=User&background=B99A4A&color=fff',
+                    };
+
+                    setMessages((prev) => {
+                        // Avoid duplicates
+                        if (prev.find(m => m.id === msg.id)) return prev;
+                        return [...prev, msg];
+                    });
+
+                    setTimeout(() => {
+                        flatListRef.current?.scrollToEnd({ animated: true });
+                    }, 100);
+
+                    // Update our read pointer since we just "saw" a new message
+                    if (auth.currentUser) {
+                        set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
+                    }
+                }
+            });
+
+            // Listen to total participants (Joined via Link)
+            const pRef = ref(database, `trips_participants/${tripId}`);
+            const staffRef = ref(database, `orgs/${orgId}/staff`);
+
+            // We need to merge both sources
+            const unsubP = onValue(pRef, (snap) => {
+                const participants = snap.val() ?? {};
+                
+                // Also get current staff to merge
+                get(staffRef).then(staffSnap => {
+                    const staff = staffSnap.val() ?? {};
+                    const combinedUids = Array.from(new Set([
+                        ...Object.keys(participants),
+                        ...Object.keys(staff),
+                        trip?.organizer_id
+                    ])).filter(Boolean);
+                    
+                    setCurrentParticipants(combinedUids);
+                });
+            });
+
+            // Also listen to staff specifically so it's live if an admin is added
+            const unsubStaff = onValue(staffRef, (snap) => {
+                const staff = snap.val() ?? {};
+                
+                get(pRef).then(pSnap => {
+                    const participants = pSnap.val() ?? {};
+                    const combinedUids = Array.from(new Set([
+                        ...Object.keys(participants),
+                        ...Object.keys(staff),
+                        trip?.organizer_id
+                    ])).filter(Boolean);
+                    
+                    setCurrentParticipants(combinedUids);
+                });
+            });
+
+            // Listen to read pointers
+            const pointersRef = ref(database, `trips_active/${orgId}/${tripId}/read_pointers`);
+            const unsubPointers = onValue(pointersRef, (snap) => {
+                setReadPointers(snap.val() ?? {});
+            });
+
+            // S18: Listen to shared templates
+            const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
+            const unsubTemplates = onValue(templatesRef, (snap) => {
+                const val = snap.val() ?? {};
+                const dbTemplates = Object.entries(val).map(([id, t]) => ({
+                    id,
+                    label: t.name,
+                    content: t.message,
+                    icon: 'custom',
+                    color: '#FFFFFF',
+                    bg: '#2A2D33',
+                    isAdded: true
+                }));
+
+                setOptions(prev => {
+                    // Start with static tools only (photo, camera, etc.)
+                    const staticTools = QUICK_OPTIONS.filter(opt => opt.id !== 'add_template');
+                    // Add the shared templates in the middle
+                    const withTemplates = [...staticTools, ...dbTemplates];
+                    // Always put 'Add Template' at the very end
+                    const addBtn = QUICK_OPTIONS.find(opt => opt.id === 'add_template');
+                    return [...withTemplates, addBtn];
+                });
+            });
+
+            // Initial read pointer update
+            if (auth.currentUser) {
+                set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
+            }
+
+            return () => {
+                off(chatRef);
+                unsubP();
+                unsubStaff();
+                unsubPointers();
+                unsubTemplates();
+            };
+        }
+    }, [orgId, tripId]);
+
+    // Fetch Names for Header Subtitle
+    useEffect(() => {
+        const fetchNames = async () => {
+            if (currentParticipants.length === 0) return;
+
+            try {
+                const namePromises = currentParticipants.map(async (uid) => {
+                    if (uid === auth.currentUser?.uid) return 'You';
+                    const nameSnap = await get(ref(database, `users/${uid}/full_name`));
+                    return nameSnap.val() || 'Participant';
+                });
+
+                const names = await Promise.all(namePromises);
+                const sortedNames = [
+                    ...names.filter(n => n === 'You'),
+                    ...names.filter(n => n !== 'You').sort()
+                ];
+                setParticipantNames(sortedNames);
+            } catch (err) {
+                console.log("[Chat] Error fetching participant names:", err);
+            }
         };
-    }, []);
+
+        fetchNames();
+    }, [currentParticipants]);
 
     const toggleAttachments = () => {
         if (showAttachments) {
@@ -171,23 +345,20 @@ const TripChatScreen = () => {
     };
 
     const handleSendMessage = () => {
-        if (inputText.trim().length === 0) return;
+        if (inputText.trim().length === 0 || !orgId || !tripId) return;
 
-        const newMessage = {
-            id: Date.now().toString(),
+        const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+        push(chatListRef, {
             text: inputText.trim(),
-            sender: 'me',
-            time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
-            read: false,
-        };
+            sender_id: auth.currentUser?.uid,
+            sender_name: currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
+            timestamp: serverTimestamp(),
+            type: 'text'
+        }).catch(err => {
+            console.warn("Failed to send message", err);
+        });
 
-        setMessages(prev => [...prev, newMessage]);
         setInputText('');
-
-        // Scroll to bottom after sending
-        setTimeout(() => {
-            flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
     };
 
     // Template Modal State
@@ -195,39 +366,237 @@ const TripChatScreen = () => {
     const [templateName, setTemplateName] = useState('');
     const [templateContent, setTemplateContent] = useState('');
 
+    const triggerTemplateBroadcast = async (message) => {
+        if (!orgId || !tripId) return;
+        try {
+            const participantsRef = ref(database, `trips_participants/${tripId}`);
+            const participantsSnap = await get(participantsRef);
+            
+            if (participantsSnap.exists()) {
+                const val = participantsSnap.val();
+                const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+                const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
+                const timestamp = serverTimestamp();
+
+                const broadcastPromises = uids.map(uid => {
+                    const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
+                    return push(userNotifRef, {
+                        name: adminName,
+                        message: message,
+                        timestamp: timestamp,
+                        type: 'alert'
+                    });
+                });
+                await Promise.all(broadcastPromises);
+            }
+        } catch (error) {
+            console.error("Broadcast failed:", error);
+        }
+    };
+
     const handleOptionPress = (item) => {
-        if (item.id.startsWith('template')) {
-            // Open Create Template Modal
+        if (item.id === 'add_template') {
             setTemplateModalVisible(true);
+        } else if (item.content) {
+            // This is a saved template from DB - Send immediately!
+            setShowAttachments(false);
+
+            // 1. Send to Chat
+            const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+            push(chatListRef, {
+                type: 'text',
+                text: item.content,
+                sender_id: auth.currentUser?.uid,
+                sender_name: currentUserFullName || 'Admin',
+                timestamp: serverTimestamp(),
+            }).catch(err => console.error("Failed to send template message", err));
+
+            // 2. Broadcast as Notification
+            triggerTemplateBroadcast(item.content);
+
+        } else if (item.id === 'photo') {
+            handlePickImage();
+        } else if (item.id === 'camera') {
+            handleTakePhoto();
+        } else if (item.id === 'location') {
+            handleShareLocation();
         } else {
             console.log('Pressed', item.label);
         }
     };
 
-    const handleAddTemplate = () => {
-        if (templateName.trim() && templateContent.trim()) {
-            const newTemplateId = `template_${Date.now()}`;
-            const newTemplate = {
-                id: newTemplateId,
-                label: templateName, // User provided name
-                icon: 'custom',
-                color: '#FFFFFF',
-                bg: '#2A2D33',
-                isAdded: true
-            };
+    const handlePickImage = async () => {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            alert('Sorry, we need camera roll permissions to make this work!');
+            return;
+        }
 
-            // Add to options list. Insert before the empty templates or append?
-            // "When added then it shown there also"
-            // Let's replace the first "Template" placeholder if meaningful, or just append/insert.
-            // But preserving layout: 4 items per row.
-            // I'll append it before the placeholders or just add it.
-            // Simplest: Add to the list.
-            setOptions(prev => [...prev, newTemplate]);
+        let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            quality: 1,
+        });
 
-            // Reset and close
-            setTemplateName('');
-            setTemplateContent('');
-            setTemplateModalVisible(false);
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            uploadAndSendMedia(result.assets[0].uri, 'image');
+        }
+    };
+
+    const handleTakePhoto = async () => {
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            alert('Sorry, we need camera permissions to make this work!');
+            return;
+        }
+
+        let result = await ImagePicker.launchCameraAsync({
+            allowsEditing: true,
+            quality: 1,
+        });
+
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            uploadAndSendMedia(result.assets[0].uri, 'image');
+        }
+    };
+
+    const uploadAndSendMedia = async (uri, type) => {
+        if (!orgId || !tripId || !auth.currentUser) return;
+
+        setIsUploading(true);
+        setShowAttachments(false);
+
+        try {
+            const response = await fetch(uri);
+            const blob = await response.blob();
+            const filename = `${Date.now()}_${auth.currentUser.uid}.jpg`;
+            const fileRef = storageRef(storage, `chat_media/${tripId}/${filename}`);
+
+            await uploadBytes(fileRef, blob);
+            const downloadUrl = await getDownloadURL(fileRef);
+
+            const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+            await push(chatListRef, {
+                type: type,
+                [type === 'image' ? 'image_url' : 'media_url']: downloadUrl,
+                sender_id: auth.currentUser.uid,
+                sender_name: currentUserFullName || auth.currentUser.email?.split('@')[0] || 'User',
+                timestamp: serverTimestamp(),
+            });
+
+        } catch (error) {
+            console.error("Failed to upload/send media:", error);
+            alert("Failed to send media. Please try again.");
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const handleShareLocation = async () => {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+            alert('Permission to access location was denied');
+            return;
+        }
+
+        setIsUploading(true);
+        setShowAttachments(false);
+
+        try {
+            const location = await Location.getCurrentPositionAsync({});
+            const { latitude, longitude } = location.coords;
+
+            const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+            await push(chatListRef, {
+                type: 'location',
+                latitude,
+                longitude,
+                sender_id: auth.currentUser.uid,
+                sender_name: currentUserFullName || 'User',
+                timestamp: serverTimestamp(),
+            });
+        } catch (error) {
+            console.error("Failed to share location:", error);
+            alert("Failed to share location. Please try again.");
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const startRecording = async () => {
+        try {
+            const { status } = await Audio.Audio.requestPermissionsAsync();
+            if (status !== 'granted') {
+                alert('Microphone permission is required to record voice messages.');
+                return;
+            }
+
+            await Audio.Audio.setAudioModeAsync({
+                allowsRecordingIOS: true,
+                playsInSilentModeIOS: true,
+            });
+
+            Vibration.vibrate(50); // Haptic feedback for recording start
+            const { recording } = await Audio.Audio.Recording.createAsync(
+                Audio.Audio.RecordingOptionsPresets.HIGH_QUALITY
+            );
+            setRecording(recording);
+            setIsRecording(true);
+        } catch (err) {
+            console.error('Failed to start recording', err);
+        }
+    };
+
+    const stopRecording = async () => {
+        if (!recording) return;
+        
+        setIsRecording(false);
+        try {
+            await recording.stopAndUnloadAsync();
+            const uri = recording.getURI();
+            setRecording(null);
+            
+            if (uri) {
+                uploadAndSendMedia(uri, 'voice');
+            }
+        } catch (error) {
+            console.error('Failed to stop recording', error);
+        }
+    };
+
+    const handleAddTemplate = async () => {
+        if (templateName.trim() && templateContent.trim() && orgId && tripId) {
+            try {
+                // 1. Save to templates node for future use
+                const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
+                await push(templatesRef, {
+                    name: templateName,
+                    message: templateContent,
+                    created_by: auth.currentUser?.uid,
+                    timestamp: serverTimestamp()
+                });
+
+                // 2. Also send as a message to the chat immediately
+                const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+                await push(chatListRef, {
+                    type: 'text',
+                    text: templateContent,
+                    sender_id: auth.currentUser?.uid,
+                    sender_name: currentUserFullName || 'Admin',
+                    timestamp: serverTimestamp(),
+                });
+
+                // 3. BROADCAST to all participants (the "Notification" block)
+                await triggerTemplateBroadcast(templateContent);
+
+                // Reset and close
+                setTemplateName('');
+                setTemplateContent('');
+                setTemplateModalVisible(false);
+            } catch (error) {
+                console.error("Failed to add template/send/broadcast:", error);
+                alert("Failed to create and broadcast template.");
+            }
         }
     };
 
@@ -261,12 +630,47 @@ const TripChatScreen = () => {
                         <Text style={styles.senderName}>{item.senderName}</Text>
                     )}
 
-                    <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
+                    {item.type === 'image' ? (
+                        <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
+                    ) : item.type === 'location' ? (
+                        <TouchableOpacity 
+                            style={styles.locationContainer}
+                            onPress={() => {
+                                const url = Platform.select({
+                                    ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
+                                    android: `geo:0,0?q=${item.latitude},${item.longitude}`
+                                });
+                                Linking.openURL(url);
+                            }}
+                        >
+                            <View style={styles.locationPreview}>
+                                <Ionicons name="location" size={32} color="#B99A4A" />
+                                <Text style={styles.locationText}>Shared Location</Text>
+                                <Text style={styles.locationSubText}>Tap to open in Maps</Text>
+                            </View>
+                        </TouchableOpacity>
+                    ) : item.type === 'voice' ? (
+                        <VoicePlayer uri={item.audio_url || item.media_url} isMe={isMe} />
+                    ) : (
+                        <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
+                    )}
+
                     <View style={styles.metaRow}>
                         <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }]}>{item.time}</Text>
-                        {isMe && (
-                            <Ionicons name="checkmark-done" size={14} color="#2196F3" style={{ marginLeft: 4 }} />
-                        )}
+                        {isMe && (() => {
+                            // S18: Dynamic WhatsApp ticks logic
+                            // A message is "Seen By All" ONLY if every current participant has a pointer >= message.timestamp
+                            // We add a small 5-second buffer (5000ms) for sync delays
+                            const buffer = 5000;
+                            const isSeenByEveryone = currentParticipants.length > 0 && 
+                                currentParticipants.every(uid => (readPointers[uid] || 0) >= (item.rawTimestamp - buffer));
+                            
+                            const tickColor = isSeenByEveryone ? "#2196F3" : "#A1A1AA";
+                            
+                            return (
+                                <MaterialCommunityIcons name="check-all" size={16} color={tickColor} style={{ marginLeft: 4 }} />
+                            );
+                        })()}
                     </View>
                 </View>
             </View>
@@ -280,9 +684,11 @@ const TripChatScreen = () => {
         else if (item.id === 'location') IconComponent = <LocationIconSvg size={28} />;
         else if (item.id === '5min') IconComponent = <FiveMinIcon size={28} />;
         else if (item.id === 'camera') IconComponent = <CameraIconSvg size={28} />;
-        else if (item.id === 'ontheway' || item.id.startsWith('template')) {
-            const iconColor = item.isAdded ? "#FFFFFF" : "#1A1E21";
-            IconComponent = <TemplateIconSvg size={28} color={iconColor} />;
+        else if (item.id === 'add_template') {
+            IconComponent = <TemplateIconSvg size={28} color="#FFFFFF" />;
+        }
+        else if (item.isAdded) {
+            IconComponent = <MaterialIcons name="crisis-alert" size={32} color="#B99A4A" />;
         }
 
         return (
@@ -322,7 +728,7 @@ const TripChatScreen = () => {
                         <View style={styles.headerInfo}>
                             <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
                             <Text style={styles.headerSubtitle} numberOfLines={1}>
-                                {'You, Titor, Sarah, John, Mike, Elena,...'}
+                                {participantNames.join(', ')}
                             </Text>
                         </View>
                     </View>
@@ -381,14 +787,21 @@ const TripChatScreen = () => {
 
 
                             <TouchableOpacity
-                                style={styles.sendButton}
+                                style={[styles.sendButton, isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }]}
                                 onPress={inputText.trim().length > 0 ? handleSendMessage : null}
+                                onPressIn={inputText.trim().length === 0 ? startRecording : null}
+                                onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                disabled={isUploading}
                             >
-                                <Ionicons
-                                    name={inputText.trim().length > 0 ? "send" : "mic"}
-                                    size={20}
-                                    color="#FFF"
-                                />
+                                {isUploading ? (
+                                    <ActivityIndicator size="small" color="#FFF" />
+                                ) : (
+                                    <Ionicons
+                                        name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
+                                        size={20}
+                                        color="#FFF"
+                                    />
+                                )}
                             </TouchableOpacity>
 
                         </View>
@@ -542,6 +955,32 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 15,
         lineHeight: 20,
+    },
+    messageImage: {
+        width: 200,
+        height: 200,
+        borderRadius: 12,
+        marginVertical: 4,
+    },
+    locationContainer: {
+        width: 200,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 12,
+        padding: 12,
+        marginVertical: 4,
+    },
+    locationPreview: {
+        alignItems: 'center',
+        gap: 4,
+    },
+    locationText: {
+        color: '#FFF',
+        fontSize: 14,
+        fontWeight: 'bold',
+    },
+    locationSubText: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 12,
     },
     metaRow: {
         flexDirection: 'row',
@@ -729,3 +1168,103 @@ const styles = StyleSheet.create({
 });
 
 export default TripChatScreen;
+
+// --- Helper Component: VoicePlayer ---
+const VoicePlayer = ({ uri, isMe }) => {
+    const [sound, setSound] = useState(null);
+    const [isPlaying, setIsPlaying] = useState(false);
+    const [position, setPosition] = useState(0);
+    const [duration, setDuration] = useState(0);
+
+    useEffect(() => {
+        return sound
+            ? () => {
+                sound.unloadAsync();
+            }
+            : undefined;
+    }, [sound]);
+
+    const handlePlayPause = async () => {
+        if (sound) {
+            if (isPlaying) {
+                await sound.pauseAsync();
+                setIsPlaying(false);
+            } else {
+                await sound.playAsync();
+                setIsPlaying(true);
+            }
+        } else {
+            const { sound: newSound } = await Audio.Audio.Sound.createAsync(
+                { uri },
+                { shouldPlay: true },
+                onPlaybackStatusUpdate
+            );
+            setSound(newSound);
+            setIsPlaying(true);
+        }
+    };
+
+    const onPlaybackStatusUpdate = (status) => {
+        if (status.isLoaded) {
+            setPosition(status.positionMillis);
+            setDuration(status.durationMillis);
+            setIsPlaying(status.isPlaying);
+            if (status.didJustFinish) {
+                setPosition(0);
+                setIsPlaying(false);
+            }
+        }
+    };
+
+    const formatTime = (ms) => {
+        const seconds = Math.floor(ms / 1000);
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m}:${s < 10 ? '0' : ''}${s}`;
+    };
+
+    return (
+        <View style={voiceStyles.container}>
+            <TouchableOpacity onPress={handlePlayPause} style={voiceStyles.playButton}>
+                <Ionicons name={isPlaying ? "pause" : "play"} size={24} color={isMe ? "#FFF" : "#B99A4A"} />
+            </TouchableOpacity>
+            <View style={voiceStyles.progressCard}>
+                <View style={[voiceStyles.progressBar, { width: `${(position / (duration || 1)) * 100}%`, backgroundColor: isMe ? '#FFF' : '#B99A4A' }]} />
+                <Text style={[voiceStyles.durationText, isMe && { color: 'rgba(255,255,255,0.7)' }]}>
+                    {formatTime(isPlaying ? position : (duration || 0))}
+                </Text>
+            </View>
+        </View>
+    );
+};
+
+const voiceStyles = StyleSheet.create({
+    container: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 5,
+        width: 180,
+    },
+    playButton: {
+        marginRight: 10,
+    },
+    progressCard: {
+        flex: 1,
+        height: 30,
+        justifyContent: 'center',
+    },
+    progressBar: {
+        height: 2,
+        borderRadius: 1,
+        position: 'absolute',
+        left: 0,
+        bottom: 12,
+    },
+    durationText: {
+        fontSize: 10,
+        color: 'rgba(0,0,0,0.5)',
+        position: 'absolute',
+        right: 0,
+        bottom: 0,
+    }
+});

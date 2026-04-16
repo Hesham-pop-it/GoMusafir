@@ -44,12 +44,12 @@ const MicMutedIcon = ({ color = "white", size = 20 }) => (
 const VoiceChatScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode } = route.params || {};
+    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
     const tripData = trip || {
         image: require('../../../assets/Madinah.png'),
     };
     const invitationCode = directCode || tripData.invitationCode;
-    const isAdmin = !invitationCode;
+    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
     const participants = [
         { id: 1, name: 'Ethan Carter', status: 'Speaking', isSpeaking: true, avatar: 'https://randomuser.me/api/portraits/men/32.jpg', network: 'good' },

@@ -13,7 +13,8 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -21,6 +22,8 @@ import Svg, { Path } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { Typography } from '../../constants/Typography';
+import { database, auth } from '../../config/firebase';
+import { ref, onValue, set, off, serverTimestamp } from 'firebase/database';
 
 const { width, height } = Dimensions.get('window');
 
@@ -76,23 +79,27 @@ const LiveLocationScreen = () => {
     const navigation = useNavigation();
     const mapRef = useRef(null);
     const route = useRoute();
-    const { trip, invitationCode: directCode } = route.params || {};
-    const invitationCode = directCode || trip?.invitationCode;
-    const isAdmin = !invitationCode;
+    const { trip, isAdmin: passedIsAdmin } = route.params || {};
+    const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
+    const tripId = trip?.id || trip?.tripId;
+    const orgId = trip?.orgId || trip?.org_id;
 
     const [userLocation, setUserLocation] = useState(null);
+    const [participants, setParticipants] = useState({});
     const [selectedMarker, setSelectedMarker] = useState(null);
     const [isSafetyActive, setIsSafetyActive] = useState(false);
-    const [showParticipantsList, setShowParticipantsList] = useState(false);
-    const [locationRequestModal, setLocationRequestModal] = useState(false);
-    const [googleMapsModal, setGoogleMapsModal] = useState(false);
-    const [selectedParticipant, setSelectedParticipant] = useState(null);
+    const [isLocationHidden, setIsLocationHidden] = useState(false);
+    const [safetyPoint, setSafetyPoint] = useState(null);
+    const [incomingRequest, setIncomingRequest] = useState(null);
+    const [searchQuery, setSearchQuery] = useState('');
     const [mapRegion, setMapRegion] = useState({
+
         latitude: 37.78825,
         longitude: -122.4324,
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
     });
+
 
     // Swipe down to close logic for modals - Interactive version
     const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
@@ -141,24 +148,207 @@ const LiveLocationScreen = () => {
     const googleMapsSwipe = createDraggableResponder(setGoogleMapsModal, panYGoogleMaps);
 
     useEffect(() => {
-        getUserLocation();
-    }, []);
+        let locationWatcher = null;
 
-    const getUserLocation = async () => {
-        // Using mock location as requested to ensure markers are visible in the demo area
-        const userCoords = {
-            latitude: 37.78525,
-            longitude: -122.4294,
+        const startTracking = async () => {
+            let { status } = await Location.requestForegroundPermissionsAsync();
+            if (status !== 'granted') {
+                console.log('Permission to access location was denied');
+                return;
+            }
+
+            const loc = await Location.getCurrentPositionAsync({});
+            const userCoords = {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+            };
+            setUserLocation(userCoords);
+            
+            if (mapRef.current) {
+                mapRef.current.animateToRegion({
+                    ...userCoords,
+                    latitudeDelta: 0.01,
+                    longitudeDelta: 0.01,
+                }, 1000);
+            }
+
+            // Start continuous tracking
+            locationWatcher = await Location.watchPositionAsync(
+                {
+                    accuracy: Location.Accuracy.High,
+                    timeInterval: 5000,
+                    distanceInterval: 10,
+                },
+                (newLocation) => {
+                    const coords = newLocation.coords;
+                    setUserLocation({
+                        latitude: coords.latitude,
+                        longitude: coords.longitude,
+                    });
+
+                    // Sync to Firebase
+                    if (orgId && tripId && auth.currentUser) {
+                        const uid = auth.currentUser.uid;
+                        const locationRef = ref(database, `trips_active/${orgId}/${tripId}/locations/${uid}`);
+                        
+                        if (isLocationHidden) {
+                            // If hiding, remove from DB
+                            remove(locationRef);
+                        } else {
+                            set(locationRef, {
+                                lat: coords.latitude,
+                                lng: coords.longitude,
+                                updated_at: serverTimestamp(),
+                            });
+                        }
+                    }
+                }
+            );
+
         };
-        setUserLocation(userCoords);
-        if (mapRef.current) {
-            mapRef.current.animateToRegion({
-                ...userCoords,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-            }, 1000);
+
+        startTracking();
+
+        if (orgId && tripId) {
+            locationsRef = ref(database, `trips_active/${orgId}/${tripId}/locations`);
+            onValue(locationsRef, (snapshot) => {
+                const locData = snapshot.val() || {};
+                setParticipants(locData);
+            });
+
+            // Listen for Safety Point
+            const safetyRef = ref(database, `trips_active/${orgId}/${tripId}/safety_point`);
+            onValue(safetyRef, (snap) => {
+                setSafetyPoint(snap.val());
+                setIsSafetyActive(!!snap.val());
+            });
+
+            // Listen for Incoming Requests
+            if (auth.currentUser) {
+                const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${auth.currentUser.uid}`);
+                onValue(notifRef, (snap) => {
+                    if (snap.exists()) {
+                        const notifs = snap.val();
+                        const latest = Object.values(notifs).sort((a,b) => b.timestamp - a.timestamp)[0];
+                        if (latest && latest.type === 'location_request' && (!incomingRequest || latest.timestamp > incomingRequest.timestamp)) {
+                            setIncomingRequest(latest);
+                            setLocationRequestModal(true);
+                        }
+                    }
+                });
+            }
         }
-    };
+
+
+
+        // Fetch Current User Name
+
+        if (auth.currentUser) {
+            const myProfileRef = ref(database, `users/${auth.currentUser.uid}/profile`);
+            onValue(myProfileRef, (snap) => {
+                if (snap.exists()) {
+                    setUserName(`${snap.val().firstName || ''} ${snap.val().lastName || ''}`.trim() || 'User');
+                }
+            }, { onlyOnce: true });
+        }
+
+
+        return () => {
+
+            if (locationWatcher) {
+                locationWatcher.remove();
+            }
+            if (locationsRef) {
+                off(locationsRef);
+            }
+        };
+    }, [orgId, tripId]);
+
+    // Fetch Trip Participants Profile Data with Privacy Masking
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const pRef = ref(database, `trips_participants/${tripId}`);
+        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
+
+        let organizerId = null;
+        get(tripDataRef).then(snap => {
+            if (snap.exists()) {
+                organizerId = snap.val().organizer_id;
+            }
+        });
+
+        const unsubscribe = onValue(pRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            let uids = [];
+            if (Array.isArray(val)) {
+                uids = val.filter(v => v !== null);
+            } else {
+                uids = Object.keys(val);
+            }
+
+            // Ensure organizer is included
+            if (organizerId && !uids.includes(organizerId)) {
+                uids.push(organizerId);
+            }
+
+            uids.forEach((uid) => {
+                const profileRef = ref(database, `users/${uid}/profile`);
+                const nameRef = ref(database, `users/${uid}/full_name`);
+                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+                
+                Promise.all([get(profileRef), get(nameRef), get(visibilityRef)]).then(([userSnap, nameSnap, visSnap]) => {
+                    const profile = userSnap.val() || {};
+                    const fullName = nameSnap.val();
+                    const visibility = visSnap.val() || {};
+                    const isCurrentUser = uid === auth.currentUser?.uid;
+                    const amIAdmin = isAdmin;
+
+                    const canSeePII = (field) => {
+                        if (isCurrentUser) return true;
+                        const setting = visibility[field] || 'Show to organizer';
+                        if (setting === 'Show to everyone') return true;
+                        if (setting === 'Show to organizer' && amIAdmin) return true;
+                        return false;
+                    };
+
+                    let displayName = 'User';
+                    if (canSeePII('name')) {
+                        if (profile.firstName || profile.lastName) {
+                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                        } else if (fullName) {
+                            displayName = fullName;
+                        } else if (isCurrentUser) {
+                            displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
+                        }
+                    } else if (isCurrentUser) {
+                        displayName = 'You';
+                    }
+
+                    const displayImage = canSeePII('photo') && profile.photoURL 
+                        ? profile.photoURL 
+                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+
+                    const pData = {
+                        id: uid,
+                        name: displayName,
+                        image: displayImage,
+                        isOrganizer: uid === organizerId,
+                    };
+
+                    setParticipantsList(prev => {
+                        const filtered = prev.filter(p => p.id !== uid);
+                        return [...filtered, pData];
+                    });
+                }).catch(err => {
+                    console.warn(`Error fetching participant ${uid}:`, err);
+                });
+            });
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId, isAdmin]);
+
 
     const centerOnUser = () => {
         if (userLocation && mapRef.current) {
@@ -170,14 +360,44 @@ const LiveLocationScreen = () => {
         }
     };
 
-    const handleQuestionPress = (participant) => {
-        setSelectedParticipant(participant);
-        setShowParticipantsList(false);
-        // Small delay to ensure the first modal starts closing before the next opens (iOS requirement)
-        setTimeout(() => {
-            setLocationRequestModal(true);
-        }, 500);
+    const toggleSafetyPoint = async () => {
+        if (!isAdmin || !userLocation || !orgId || !tripId) return;
+        
+        const safetyRef = ref(database, `trips_active/${orgId}/${tripId}/safety_point`);
+        if (isSafetyActive) {
+            await remove(safetyRef);
+        } else {
+            await set(safetyRef, {
+                lat: userLocation.latitude,
+                lng: userLocation.longitude,
+                created_at: serverTimestamp(),
+                by: auth.currentUser.uid
+            });
+        }
     };
+
+    const handleQuestionPress = async (participant) => {
+        if (!orgId || !tripId || !auth.currentUser) return;
+        
+        const targetUid = participant.id;
+        try {
+            await set(ref(database, `trips_active/${orgId}/${tripId}/notifications/${targetUid}/${Date.now()}`), {
+                fromUid: auth.currentUser.uid,
+                name: userName,
+                type: 'location_request',
+                timestamp: serverTimestamp(),
+            });
+            
+            setSelectedParticipant(participant);
+            setShowParticipantsList(false);
+            // Internal modal logic skip - the target will get it. 
+            // We just show a confirmation if needed, but let's keep it simple.
+        } catch (error) {
+            console.warn("Failed to send location request:", error);
+        }
+    };
+
+
 
     const handleLocationPress = (participant) => {
         setSelectedParticipant(participant);
@@ -222,59 +442,106 @@ const LiveLocationScreen = () => {
                         initialRegion={mapRegion}
                         customMapStyle={darkMapStyle}
                         onPress={() => setSelectedMarker(null)}
+                        moveOnMarkerPress={false}
                     >
-                        {/* Participant Markers */}
-                        {MOCK_PARTICIPANTS.map((participant) => (
+                        {/* Public Safety Point Marker */}
+                        {safetyPoint && (
                             <Marker
-                                key={`participant-${participant.id}`}
-                                identifier={participant.id}
-                                coordinate={{
-                                    latitude: participant.latitude,
-                                    longitude: participant.longitude,
-                                }}
-                                zIndex={selectedMarker?.id === participant.id ? 100 : 10}
-                                tracksViewChanges={true}
-                                onPress={() => {
-                                    setSelectedMarker(participant);
-                                }}
+                                coordinate={{ latitude: safetyPoint.lat, longitude: safetyPoint.lng }}
+                                title="Safe Point"
+                                onPress={() => handleLocationPress({ latitude: safetyPoint.lat, longitude: safetyPoint.lng, name: 'Safe Point' })}
                             >
-                                <View
-                                    style={[
-                                        styles.participantMarker,
-                                        selectedMarker?.id === participant.id && styles.selectedMarkerGlow
-                                    ]}
-                                    pointerEvents="none"
-                                >
-                                    <View style={styles.markerCircle}>
-                                        <Image
-                                            source={{ uri: participant.avatar }}
-                                            style={styles.markerAvatar}
-                                            resizeMode="cover"
-                                        />
+                                <View style={[styles.participantMarker, { backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }]}>
+                                    <View style={[styles.markerCircle, { borderColor: '#942F31' }]}>
+                                        <SafetyIcon color="#942F31" size={30} />
                                     </View>
                                 </View>
+                            </Marker>
+                        )}
 
-                                <Callout
-                                    tooltip
-                                    onPress={() => handleQuestionPress(participant)}
-                                >
-                                    <View style={styles.calloutContainer}>
-                                        <View style={styles.calloutContent}>
-                                            <View style={styles.requestBtn}>
-                                                <Text style={styles.requestBtnText}>Request Location</Text>
+
+                        {/* Participant Markers */}
+                        {Object.entries(participants)
+                            .filter(([uid, loc]) => loc.lat && loc.lng)
+                            .map(([uid, loc]) => {
+                                const isMe = uid === auth.currentUser?.uid;
+                                const isSelected = selectedMarker?.id === uid;
+                                const p = participantsList.find(part => part.id === uid);
+                                
+                                // Default to user's auth photo for "Me" if list hasn't loaded
+                                let avatarUri = p?.image;
+                                if (isMe && !avatarUri) {
+                                    avatarUri = auth.currentUser?.photoURL || `https://ui-avatars.com/api/?name=${userName?.[0] || 'U'}&background=B99A4A&color=fff`;
+                                } else if (!avatarUri) {
+                                    avatarUri = `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff`;
+                                }
+
+                                return (
+                                    <Marker
+                                        key={`participant-${uid}`}
+                                        identifier={uid}
+                                        coordinate={{
+                                            latitude: loc.lat,
+                                            longitude: loc.lng,
+                                        }}
+                                        zIndex={isSelected ? 100 : (isMe ? 50 : 10)}
+                                        anchor={{ x: 0.5, y: 0.5 }}
+                                        onSelect={() => {
+
+                                            setSelectedMarker({ id: uid, latitude: loc.lat, longitude: loc.lng });
+                                        }}
+                                        onDeselect={() => {
+                                            setSelectedMarker(null);
+                                        }}
+                                        title={p?.name || "Participant"}
+                                    >
+
+
+
+                                        <View
+                                            style={[
+                                                styles.participantMarker,
+                                                isSelected && styles.selectedMarkerGlow,
+                                                isMe && { borderColor: '#FFF' } // Optional: White border for "Me"
+                                            ]}
+                                        >
+                                            <View style={styles.markerCircle}>
+                                                <Image
+                                                    source={{ uri: avatarUri }}
+                                                    style={styles.markerAvatar}
+                                                    resizeMode="cover"
+                                                />
                                             </View>
                                         </View>
-                                        <View style={styles.calloutPointer} />
-                                    </View>
-                                </Callout>
-                            </Marker>
-                        ))}
+
+                                        {!isMe && (
+                                            <Callout
+                                                tooltip
+                                                onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
+                                            >
+                                                <View style={styles.calloutContainer}>
+                                                    <View style={styles.calloutContent}>
+                                                        <View style={styles.requestBtn}>
+                                                            <Text style={styles.requestBtnText}>Request Location</Text>
+                                                        </View>
+                                                    </View>
+                                                    <View style={styles.calloutPointer} />
+                                                </View>
+                                            </Callout>
+                                        )}
+                                    </Marker>
+                                );
+                        })}
                     </MapView>
+
 
                     {/* Control Buttons */}
                     <View style={styles.controlButtons}>
-                        <TouchableOpacity style={styles.controlBtn}>
-                            <HideLocationIcon />
+                        <TouchableOpacity 
+                            style={[styles.controlBtn, isLocationHidden && { backgroundColor: '#942F31' }]} 
+                            onPress={() => setIsLocationHidden(!isLocationHidden)}
+                        >
+                            <HideLocationIcon color={isLocationHidden ? "#FFF" : "#B99A4A"} />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.controlBtn} onPress={centerOnUser}>
                             <CrosshairsIcon />
@@ -282,12 +549,13 @@ const LiveLocationScreen = () => {
                         {isAdmin && (
                             <TouchableOpacity
                                 style={[styles.controlBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#fff' }, isSafetyActive && { borderWidth: 1, borderColor: '#942F31' }]}
-                                onPress={() => setIsSafetyActive(!isSafetyActive)}
+                                onPress={toggleSafetyPoint}
                             >
                                 <SafetyIcon color={isSafetyActive ? "#942F31" : "white"} size={26} />
                             </TouchableOpacity>
                         )}
                     </View>
+
 
                     {/* List Participant Button */}
                     <TouchableOpacity
@@ -322,50 +590,68 @@ const LiveLocationScreen = () => {
                             {/* Search Bar */}
                             <View style={styles.searchContainer}>
                                 <Ionicons name="search" size={20} color="#71717A" style={styles.searchIcon} />
-                                <Text style={styles.searchPlaceholder}>Search participant</Text>
+                                <TextInput 
+                                    style={styles.searchTextInput}
+                                    placeholder="Search participant"
+                                    placeholderTextColor="#71717A"
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                />
                             </View>
 
-                            <ScrollView style={styles.participantsList}>
-                                {MOCK_PARTICIPANTS.map((participant) => (
-                                    <TouchableOpacity
-                                        key={participant.id}
-                                        style={styles.participantItem}
-                                        onPress={() => {
-                                            setSelectedMarker(participant);
-                                            setShowParticipantsList(false);
-                                            if (mapRef.current) {
-                                                mapRef.current.animateToRegion({
-                                                    latitude: participant.latitude,
-                                                    longitude: participant.longitude,
-                                                    latitudeDelta: 0.01,
-                                                    longitudeDelta: 0.01,
-                                                }, 1000);
-                                            }
-                                        }}
-                                    >
-                                        <Image
-                                            source={{ uri: participant.avatar }}
-                                            style={styles.participantAvatar}
-                                        />
-                                        <Text style={styles.participantName}>{participant.name}</Text>
 
-                                        {/* Action Buttons */}
-                                        <View style={styles.actionButtons}>
-                                            <TouchableOpacity
-                                                style={styles.questionBtn}
-                                                onPress={() => handleQuestionPress(participant)}
-                                            >
+                            <ScrollView style={styles.participantsList}>
+                                {Object.entries(participants).map(([uid, loc]) => {
+                                    const p = participantsList.find(part => part.id === uid);
+                                    if (uid === auth.currentUser?.uid) return null;
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={uid}
+                                            style={styles.participantItem}
+                                            onPress={() => {
+                                                const activePart = { id: uid, latitude: loc.lat, longitude: loc.lng };
+                                                setSelectedMarker(activePart);
+                                                setShowParticipantsList(false);
+                                                if (mapRef.current && loc.lat && loc.lng) {
+                                                    mapRef.current.animateToRegion({
+                                                        latitude: loc.lat,
+                                                        longitude: loc.lng,
+                                                        latitudeDelta: 0.01,
+                                                        longitudeDelta: 0.01,
+                                                    }, 1000);
+                                                }
+                                            }}
+                                        >
+                                            <Image
+                                                source={{ uri: p?.image || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff` }}
+                                                style={styles.participantAvatar}
+                                            />
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={styles.participantName}>{p?.name || `User (${uid.substring(0, 5)})`}</Text>
+                                                <Text style={{ color: '#71717A', fontSize: 13, fontFamily: Typography.sans.regular }}>Active Now</Text>
+                                            </View>
+
+                                            <View style={styles.actionButtons}>
+                                                <TouchableOpacity
+                                                    style={styles.questionBtn}
+                                                    onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
+                                                >
+
                                                 <Text style={styles.questionText}>?</Text>
                                             </TouchableOpacity>
                                             <TouchableOpacity
                                                 style={styles.locateBtn}
-                                                onPress={() => handleLocationPress(participant)}
+                                                onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
                                             >
                                                 <LocationPinIcon />
                                             </TouchableOpacity>
                                         </View>
-                                    </TouchableOpacity>
-                                ))}
+                                        </TouchableOpacity>
+                                    );
+                                })}
+
+
                             </ScrollView>
                         </Animated.View>
                     </Modal>
@@ -390,10 +676,14 @@ const LiveLocationScreen = () => {
                         >
                             <View style={styles.modalHandle} />
                             <Text style={styles.alertTitle}>Location requested</Text>
+                            <Text style={{ color: '#A1A1AA', textAlign: 'center', marginBottom: 20 }}>
+                                {incomingRequest?.name} is asking for your live location.
+                            </Text>
                             <TouchableOpacity
                                 style={styles.gradientButtonWrapper}
                                 onPress={() => setLocationRequestModal(false)}
                             >
+
                                 <LinearGradient
                                     colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
                                     start={{ x: 0, y: 0 }}
@@ -577,11 +867,12 @@ const styles = StyleSheet.create({
         borderColor: '#B99A4A',
     },
     participantMarker: {
-        width: 100,
-        height: 100,
+        width: 64,
+        height: 64,
         alignItems: 'center',
         justifyContent: 'center',
     },
+
     selectedMarkerGlow: {
         // Glow effect
         shadowColor: '#B99A4A',
@@ -722,7 +1013,15 @@ const styles = StyleSheet.create({
         color: '#71717A',
         fontSize: 16,
     },
+    searchTextInput: {
+        flex: 1,
+        color: '#FFF',
+        fontSize: 16,
+        fontFamily: Typography.sans.regular,
+        paddingVertical: 10,
+    },
     participantsList: {
+
         paddingHorizontal: 24,
     },
     participantItem: {

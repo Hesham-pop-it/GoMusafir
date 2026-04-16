@@ -13,10 +13,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
+import { auth, database, functions } from '../../config/firebase';
+import { ref, onValue, get } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
+import { Alert } from 'react-native';
 
 const TrashIcon = ({ color = "#FF383C" }) => (
     <Svg width="24" height="28" viewBox="0 0 24 28" fill="none">
@@ -27,16 +31,70 @@ const TrashIcon = ({ color = "#FF383C" }) => (
     </Svg>
 );
 
-const MOCK_TEAM = [
-    { id: '1', name: 'Rahman', role: 'Manager', avatar: 'https://randomuser.me/api/portraits/men/32.jpg' },
-    { id: '2', name: 'Gofur', role: 'Co-Host', avatar: 'https://randomuser.me/api/portraits/men/33.jpg' },
-];
-
 const JourneyTeamScreen = () => {
     const navigation = useNavigation();
     const [isDeleteMode, setIsDeleteMode] = useState(false);
     const [selectedMembers, setSelectedMembers] = useState([]);
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+    
+    // Live State
+    const [team, setTeam] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    React.useEffect(() => {
+        const currentUser = auth.currentUser;
+        if (!currentUser) return;
+
+        // 1. Get orgId
+        const orgRef = ref(database, `users/${currentUser.uid}/staff_org_id`);
+        const unsubscribeUser = onValue(orgRef, (snap) => {
+            const orgId = snap.val();
+            if (!orgId) {
+                setIsLoading(false);
+                return;
+            }
+
+            // 2. Fetch staff list block
+            const staffRef = ref(database, `orgs/${orgId}/staff`);
+            onValue(staffRef, async (staffSnap) => {
+                if (!staffSnap.exists()) {
+                    setTeam([]);
+                    setIsLoading(false);
+                    return;
+                }
+
+                const staffList = staffSnap.val(); // { uid: "manager", uid2: "co-host" }
+                // 3. Fetch user details for each staff member safely
+                const promises = Object.keys(staffList).map(async (uid) => {
+                    const role = staffList[uid];
+                    // Strip demoted members
+                    if (role === 'none' || !role) return null;
+
+                    try {
+                        const userSnap = await get(ref(database, `users/${uid}`));
+                        const profile = userSnap.exists() ? userSnap.val() : {};
+                        
+                        return {
+                            id: uid,
+                            name: profile.first_name ? `${profile.first_name} ${profile.last_name || ''}`.trim() : 'Unknown User',
+                            role: role.charAt(0).toUpperCase() + role.slice(1),
+                            avatar: profile.profile_picture || 'https://via.placeholder.com/150',
+                            isSuperAdmin: profile.staff_role === 'admin'
+                        };
+                    } catch (e) {
+                        return null;
+                    }
+                });
+
+                const results = await Promise.all(promises);
+                setTeam(results.filter(t => t !== null));
+                setIsLoading(false);
+            });
+        });
+
+        return () => unsubscribeUser();
+    }, []);
 
     const toggleDeleteMode = () => {
         setIsDeleteMode(!isDeleteMode);
@@ -58,7 +116,7 @@ const JourneyTeamScreen = () => {
                 <Text style={styles.nameText}>{item.name}</Text>
                 <Text style={styles.roleText}>{item.role}</Text>
             </View>
-            {isDeleteMode && (
+            {isDeleteMode && item.id !== auth.currentUser?.uid && !item.isSuperAdmin && (
                 <TouchableOpacity onPress={() => toggleSelectMember(item.id)}>
                     {selectedMembers.includes(item.id) ? (
                         <View style={styles.customCheckboxActive}>
@@ -87,7 +145,7 @@ const JourneyTeamScreen = () => {
                 <Text style={styles.title}>Journey Team</Text>
 
                 <FlatList
-                    data={MOCK_TEAM}
+                    data={team}
                     keyExtractor={item => item.id}
                     renderItem={renderMember}
                     contentContainerStyle={styles.listContent}
@@ -137,15 +195,28 @@ const JourneyTeamScreen = () => {
                                 innerBg="#1E2124"
                             />
                             <TouchableOpacity
-                                style={styles.confirmDeleteButton}
-                                onPress={() => {
-                                    setDeleteModalVisible(false);
-                                    setIsDeleteMode(false);
-                                    setSelectedMembers([]);
-                                    // Real app would handle actual deletion here
+                                style={[styles.confirmDeleteButton, isDeleting && { opacity: 0.5 }]}
+                                disabled={isDeleting}
+                                onPress={async () => {
+                                    setIsDeleting(true);
+                                    try {
+                                        const updateRole = httpsCallable(functions, 'updateMemberRole');
+                                        // Execute updates safely (S20 audit trail triggered server-side)
+                                        const promises = selectedMembers.map(uid => updateRole({ targetUid: uid, newRole: "none" }));
+                                        await Promise.all(promises);
+
+                                        setDeleteModalVisible(false);
+                                        setIsDeleteMode(false);
+                                        setSelectedMembers([]);
+                                    } catch (error) {
+                                        Alert.alert("Error", error.message || "Failed to delete members.");
+                                        setDeleteModalVisible(false);
+                                    } finally {
+                                        setIsDeleting(false);
+                                    }
                                 }}
                             >
-                                <Text style={styles.confirmDeleteButtonText}>Delete</Text>
+                                <Text style={styles.confirmDeleteButtonText}>{isDeleting ? "Processing..." : "Delete"}</Text>
                             </TouchableOpacity>
                         </View>
                     </View>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -19,15 +19,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
+import { auth, database } from '../../config/firebase';
+import { signOut } from 'firebase/auth';
+import { ref, onValue, update } from 'firebase/database';
+
 
 const { width } = Dimensions.get('window');
 
 const TripSettingsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode } = route.params || {};
+    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
     const invitationCode = directCode || trip?.invitationCode;
-    const isAdmin = !invitationCode;
+    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
@@ -44,6 +48,21 @@ const TripSettingsScreen = () => {
         location: 'Show to organizer',
     });
 
+    useEffect(() => {
+        const user = auth.currentUser;
+        if (!user || !trip?.id) return;
+
+        const visibilityRef = ref(database, `users/${user.uid}/participant_visibility/${trip.id}`);
+        const unsubscribe = onValue(visibilityRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setVisibilitySettings(prev => ({ ...prev, ...snapshot.val() }));
+            }
+        });
+
+        return () => unsubscribe();
+    }, [trip?.id]);
+
+
     const visibilityOptions = [
         'Show to organizer',
         'Show to everyone',
@@ -55,10 +74,22 @@ const TripSettingsScreen = () => {
         setExpandedField(expandedField === field ? null : field);
     };
 
-    const handleSelectVisibility = (field, option) => {
+    const handleSelectVisibility = async (field, option) => {
+        const user = auth.currentUser;
+        if (!user || !trip?.id) return;
+
         setVisibilitySettings(prev => ({ ...prev, [field]: option }));
         setExpandedField(null);
+
+        try {
+            await update(ref(database, `users/${user.uid}/participant_visibility/${trip.id}`), {
+                [field]: option
+            });
+        } catch (error) {
+            console.warn("Failed to update visibility setting:", error);
+        }
     };
+
 
     const handleDeleteTrip = () => {
         setDeleteModalVisible(false);
@@ -74,13 +105,16 @@ const TripSettingsScreen = () => {
         setRequestSentVisible(true);
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
         setLogoutModalVisible(false);
-        navigation.reset({
-            index: 0,
-            routes: [{ name: 'Welcome' }],
-        });
+        try {
+            await signOut(auth);
+            // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
+        } catch (error) {
+            console.warn("Logout failed:", error);
+        }
     };
+
 
     const { height: screenHeight } = Dimensions.get('window');
 

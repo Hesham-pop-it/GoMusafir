@@ -15,11 +15,58 @@ import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import CustomSwitch from '../../components/CustomSwitch';
 import { Typography } from '../../constants/Typography';
+import { auth, functions, database } from '../../config/firebase';
+import { signOut, deleteUser } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
+import { ref, onValue } from 'firebase/database';
+import { Alert } from 'react-native';
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
     const [signOutVisible, setSignOutVisible] = useState(false);
     const [deleteVisible, setDeleteVisible] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
+
+    React.useEffect(() => {
+        const user = auth.currentUser;
+        if (!user) return;
+
+        const userRef = ref(database, `users/${user.uid}/staff_org_id`);
+        const unsubscribe = onValue(userRef, (snapshot) => {
+            setIsAdmin(snapshot.exists() && !!snapshot.val());
+        });
+        return () => unsubscribe();
+    }, []);
+
+    const handleDeleteAccount = async () => {
+        setIsDeleting(true);
+        try {
+            if (isAdmin) {
+                // S3: Admin deleting organization + requires recent login
+                const deleteOrg = httpsCallable(functions, 'deleteOrganization');
+                await deleteOrg();
+            } else {
+                // Participant deleting their own account
+                await deleteUser(auth.currentUser);
+            }
+            setDeleteVisible(false);
+            // App.js onAuthStateChanged will handle navigation automatically
+        } catch (error) {
+            setDeleteVisible(false);
+            if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
+                Alert.alert(
+                    "Security Verification",
+                    "For your security, please log out and log back in to verify your identity before deleting your account.",
+                    [{ text: "OK" }]
+                );
+            } else {
+                Alert.alert("Error", error.message || "Failed to delete account");
+            }
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     const LinkItem = ({ label, onPress, showArrow = true }) => (
         <TouchableOpacity style={styles.linkItem} onPress={onPress}>
@@ -53,15 +100,19 @@ const SettingsScreen = ({ navigation }) => {
 
                 <ScrollView contentContainerStyle={styles.content}>
 
-                    {/* Team Members */}
-                    <SectionHeader title="Team Members" />
-                    <TouchableOpacity
-                        style={styles.addButton}
-                        onPress={() => navigation.navigate('JourneyTeam')}
-                    >
-                        <Text style={styles.addButtonText}>Add a Co-Host or Manager</Text>
-                        <Ionicons name="add" size={24} color="#A1A1AA" />
-                    </TouchableOpacity>
+                    {isAdmin && (
+                        <>
+                            {/* Team Members */}
+                            <SectionHeader title="Team Members" />
+                            <TouchableOpacity
+                                style={styles.addButton}
+                                onPress={() => navigation.navigate('JourneyTeam')}
+                            >
+                                <Text style={styles.addButtonText}>Add a Co-Host or Manager</Text>
+                                <Ionicons name="add" size={24} color="#A1A1AA" />
+                            </TouchableOpacity>
+                        </>
+                    )}
 
                     {/* App Settings */}
                     <SectionHeader title="App Settings" />
@@ -112,7 +163,7 @@ const SettingsScreen = ({ navigation }) => {
                             style={styles.deleteButton}
                             onPress={() => setDeleteVisible(true)}
                         >
-                            <Text style={styles.deleteButtonText}>Delete Company</Text>
+                            <Text style={styles.deleteButtonText}>{isAdmin ? "Delete Company" : "Delete Account"}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -135,9 +186,14 @@ const SettingsScreen = ({ navigation }) => {
 
                     <TouchableOpacity
                         style={styles.modalConfirmButton}
-                        onPress={() => {
+                        onPress={async () => {
                             setSignOutVisible(false);
-                            navigation.navigate('Welcome');
+                            try {
+                                await signOut(auth);
+                                // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
+                            } catch (error) {
+                                console.warn("Error signing out:", error);
+                            }
                         }}
                     >
                         <Text style={styles.modalConfirmText}>Sign Out</Text>
@@ -163,17 +219,15 @@ const SettingsScreen = ({ navigation }) => {
             >
                 <View style={styles.modalContent}>
                     <Text style={styles.modalMessageLarge}>
-                        Are you sure you want to delete the company account? Your data cannot be recovered after deletion.
+                        Are you sure you want to delete the {isAdmin ? "company" : ""} account? Your data cannot be recovered after deletion.
                     </Text>
 
                     <TouchableOpacity
-                        style={styles.modalConfirmButton}
-                        onPress={() => {
-                            setDeleteVisible(false);
-                            navigation.navigate('Welcome');
-                        }}
+                        style={[styles.modalConfirmButton, isDeleting && { opacity: 0.5 }]}
+                        onPress={handleDeleteAccount}
+                        disabled={isDeleting}
                     >
-                        <Text style={styles.modalConfirmText}>Delete</Text>
+                        <Text style={styles.modalConfirmText}>{isDeleting ? "Deleting..." : "Delete"}</Text>
                     </TouchableOpacity>
 
                     <GradientBorderButton
@@ -317,7 +371,7 @@ const styles = StyleSheet.create({
     modalTitle: {
         fontSize: 22,
         color: '#FFF',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         marginBottom: 16,
     },
     modalMessage: {
@@ -329,7 +383,7 @@ const styles = StyleSheet.create({
     modalMessageLarge: {
         fontSize: 18,
         color: '#FFF',
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
         textAlign: 'center',
         marginBottom: 32,
         lineHeight: 26,
@@ -346,7 +400,7 @@ const styles = StyleSheet.create({
     modalConfirmText: {
         color: '#FFF',
         fontSize: 18,
-        fontWeight: 'bold',
+        fontFamily: Typography.sans.bold,
     },
     modalCancelButton: {
         width: '100%',

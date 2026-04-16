@@ -2,6 +2,7 @@
   "expo": {
     "name": "GoMusafir",
     "slug": "GoMusafir",
+    "scheme": "gomusafir",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
@@ -20,6 +21,7 @@
     },
     "android": {
       "edgeToEdgeEnabled": false,
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#1A1E21"
@@ -43,6 +45,14 @@
       "favicon": "./assets/logo.png"
     },
     "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25"
+          }
+        }
+      ],
       "expo-font",
       [
         "expo-camera",
@@ -50,7 +60,13 @@
           "cameraPermission": "Allow GoMusafir to access your camera to scan QR codes."
         }
       ],
-      "expo-web-browser"
-    ]
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "619ef28d-9e0f-4e5c-8b41-5f21a2a1fd65"
+      }
+    }
   }
 }

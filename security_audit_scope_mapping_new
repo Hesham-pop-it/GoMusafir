@@ -1,0 +1,159 @@
+# GoMusafir: Security Audit Scope Allocation (Annotated)
+
+Each development item is annotated with one of:
+- **SECURITY** — Core security control, must be implemented for compliance.
+- **FEATURE** — Functional app feature with no distinct security role; would be built anyway.
+- **EXTRA_DEV** — Requires significant *additional* UI/Backend development on top of just writing a rule.
+
+External items are: **EXTERNAL_OPS** (ops/process/tools), **EXTERNAL_INFRA** (cloud config), **EXTERNAL_LEGAL** (legal/docs).
+
+| ID | Area | Requirement | Allocation | Annotation / Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | Identity | Business email verification | **APP_DEV** | SECURITY |
+| 2 | Identity | MFA for Admin accounts | **APP_DEV** | SECURITY |
+| 3 | Identity | Strong password policy (Business) | **APP_DEV** | SECURITY |
+| 4 | Identity | Password participant access | **APP_DEV** | SECURITY |
+| 5 | Identity | Session management & remote logout | **APP_DEV** | SECURITY |
+| 6 | Identity | New device sign-in alert | **APP_DEV** | SECURITY + EXTRA_DEV (push notification flow + email alert needed) |
+| 7 | Identity | Secure password reset | **APP_DEV** | SECURITY (Firebase handles most, needs UI flow) |
+| 8 | Identity | SSO support for enterprise | **APP_DEV** | SECURITY + EXTRA_DEV (entire SAML/OIDC flow is a major feature) |
+| 9 | Identity | Sensitive role approval workflow | **APP_DEV** |
+| 10 | Identity | Participant email verification | **APP_DEV** | SECURITY |
+| 11 | Identity | Strong password policy (Participant) | **APP_DEV** | SECURITY |
+| 12 | Identity | Session revocation | **APP_DEV** | SECURITY |
+| 13 | Identity | Device / session visibility | **APP_DEV** | EXTRA_DEV (requires "Active Sessions" list screen + revoke button) |
+| 14 | Identity | New device sign-in notification | **APP_DEV** | SECURITY + EXTRA_DEV (same as #6, notification infra required) |
+| 15 | Voice | Regional audio nodes | **APP_DEV** | FEATURE (infrastructure config, not a dev security task) |
+| 16 | Voice | Jitter buffer handling | **APP_DEV** | FEATURE (voice quality, no security role) |
+| 17 | Identity | Device trust / session visibility | **APP_DEV** | EXTRA_DEV (duplicate of #13, same session visibility screen) |
+| 18 | Authorization | RBAC (Admin, Host, Manager, Partic.) | **APP_DEV** | SECURITY |
+| 19 | Authorization | Least privilege support access | **EXTERNAL_OPS** | Internal policy for your support team |
+| 20 | Authorization | Role change audit trail | **APP_DEV** | SECURITY (backend log entry) |
+| 21 | Authorization | Trip-scoped participant permissions | **APP_DEV** | SECURITY |
+| 22 | Tenancy | Deny-by-default database rules | **APP_DEV** | SECURITY |
+| 23 | Tenancy | Organization isolation | **APP_DEV** | SECURITY |
+| 24 | Tenancy | Trip isolation | **APP_DEV** | SECURITY |
+| 25 | Tenancy | Field-level protections (PII visibility) | **APP_DEV** | SECURITY |
+| 26 | Tenancy | Write allowlists | **APP_DEV** | SECURITY |
+| 27 | Join & Invite | Auth before join completion | **APP_DEV** | SECURITY |
+| 28 | Join & Invite | Join rate limiting | **APP_DEV** | SECURITY |
+| 29 | Join & Invite | Invitation links expire automatically | **APP_DEV** | SECURITY |
+| 30 | Join & Invite | Join links single-purpose & scoped | **APP_DEV** | SECURITY |
+| 31 | Join & Invite | No open redirects | **APP_DEV** | SECURITY |
+| 32 | Join & Invite | QR join security | **APP_DEV** | SECURITY + EXTRA_DEV (QR scanner UI + generation flow) |
+| 33 | Join & Invite | Participant rejoin handling | **APP_DEV** | FEATURE (business logic, not a security control) |
+| 34 | Validation | API rate limiting | **APP_DEV** | SECURITY |
+| 35 | Validation | Secret handling (KMS/Vault) | **APP_DEV** | SECURITY |
+| 36 | Validation | Server-side input validation | **APP_DEV** | SECURITY |
+| 37 | Validation | Upload validation (type/size/malware) | **APP_DEV** | SECURITY + EXTRA_DEV (malware scanning integration required) |
+| 38 | Validation | Schema enforcement | **APP_DEV** | SECURITY |
+| 39 | Voice | Regional audio routing | **APP_DEV** | FEATURE (infra config, no security role) |
+| 40 | Voice | TURN / STUN resilience | **APP_DEV** | FEATURE (voice connectivity, no security role) |
+| 41 | Voice | Audio QoS telemetry | **APP_DEV** | EXTRA_DEV (requires telemetry dashboard/metrics collection) |
+| 42 | Voice | Host broadcast realtime | **APP_DEV** | FEATURE (core voice feature, not security) |
+| 43 | Voice | Mute all (Server-side enforced) | **APP_DEV** | SECURITY (prevents client tampering) |
+| 44 | Voice | Per participant mute/unmute | **APP_DEV** | FEATURE (voice management, not security) |
+| 45 | Voice | Active speaker detection | **APP_DEV** | FEATURE (UX, no security role) |
+| 46 | Voice | Participant speak permission logic | **APP_DEV** | SECURITY (enforces host-controlled permissions) |
+| 47 | Voice | Network health indicator | **APP_DEV** | FEATURE (UX quality, no security role) |
+| 48 | Voice | Adaptive bitrate and reconnect | **APP_DEV** | FEATURE (voice quality, no security role) |
+| 49 | Voice | Delayed clip fallback | **APP_DEV** | FEATURE (UX, no security role) |
+| 50 | Voice | Host offline behavior | **APP_DEV** | FEATURE (UX, no security role) |
+| 51 | Voice | Audio encrypted in transit | **APP_DEV** | SECURITY (config + provider selection) |
+| 52 | Voice | No recording by default | **APP_DEV** | SECURITY |
+| 53 | Voice | Mandatory microphone permission | **APP_DEV** | FEATURE (OS permission UX, required for app to work) |
+| 54 | Voice | Recording consent if enabled | **APP_DEV** | SECURITY + EXTRA_DEV (consent modal UI + log required) |
+| 55 | Chat | Trip-scoped group chat | **APP_DEV** | FEATURE (core feature, isolation rule is the security part) |
+| 56 | Chat | Template announcements | **APP_DEV** | FEATURE (no security role, purely UX) |
+| 57 | Chat | Rate limiting & abuse controls | **APP_DEV** | SECURITY |
+| 58 | Location | Opt-in location sharing | **APP_DEV** | SECURITY + FEATURE |
+| 59 | Location | Incognito mode | **APP_DEV** | FEATURE (privacy UX, not a security enforcement rule) |
+| 60 | Location | Pin route action | **APP_DEV** | FEATURE (no security role, map navigation UX) |
+| 61 | Location | Mandatory location permission | **APP_DEV** | FEATURE (OS permission UX, required for app to work) |
+| 62 | Location | Location request logic | **APP_DEV** | FEATURE (organizer UX, no core security role) |
+| 63 | Camera | Mandatory camera permission | **APP_DEV** | FEATURE (OS permission UX, required for QR scanning) |
+| 64 | Emergency | Emergency alert countdown | **APP_DEV** | FEATURE + EXTRA_DEV (full UI countdown + cancel flow) |
+| 65 | Emergency | Host notification reliability | **APP_DEV** | EXTRA_DEV (high-priority push notification logic + retry channel) |
+| 66 | Emergency | Alert abuse prevention | **APP_DEV** | SECURITY (rate limiting alerts) |
+| 67 | Emergency | Alert log (Forensics ready) | **APP_DEV** | SECURITY + EXTRA_DEV (admin-facing log viewer UI) |
+| 68 | Emergency | Do Not Disturb strategy | **APP_DEV** | FEATURE (notification escalation, no security role) |
+| 69 | Payments | Customer portal & billing security | **APP_DEV** | SECURITY + EXTRA_DEV (full billing dashboard/portal UI) |
+| 70 | Payments | Seat grant (webhook verified) | **APP_DEV** | SECURITY |
+| 71 | Payments | Billing data collection | **APP_DEV** | EXTRA_DEV (full billing form + storage) |
+| 72 | Payments | Price / region integrity | **APP_DEV** | SECURITY (server-side pricing logic) |
+| 73 | Payments | Idempotent checkout | **APP_DEV** | SECURITY (prevents duplicate payments) |
+| 74 | Privacy | Legal links in product | **APP_DEV** | FEATURE (no security role, just content links in UI) |
+| 75 | Privacy | Consent copy matches behavior | **APP_DEV** | FEATURE (documentation review, no code change needed) |
+| 76 | Privacy | Minimal participant fields | **APP_DEV** | FEATURE (schema design decision, already handled) |
+| 77 | Privacy | Retention schedule | **EXTERNAL_OPS** | Policy/legal document |
+| 78 | Privacy | Org authority confirmation | **APP_DEV** | EXTRA_DEV (onboarding checkbox/confirmation UI) |
+| 79 | Privacy | Participant join consent | **APP_DEV** | SECURITY + EXTRA_DEV (consent screen UI + immutable log) |
+| 80 | Privacy | Participant account deletion | **APP_DEV** | EXTRA_DEV (full account + data purge flow) |
+| 81 | Privacy | Data residency strategy | **EXTERNAL_OPS** | Policy/infrastructure config |
+| 82 | Privacy | Deletion flows (Org delete, leave/remove) | **APP_DEV** | EXTRA_DEV (org offboarding cascade logic) |
+| 83 | Privacy | International transfer safeguards | **EXTERNAL_LEGAL** | Legal agreement with vendors |
+| 84 | Logging | Immutable audit trail (Admin actions) | **APP_DEV** | SECURITY |
+| 85 | Logging | Voice moderation log | **APP_DEV** | SECURITY |
+| 86 | Logging | Exportable logs for enterprise | **APP_DEV** | EXTRA_DEV (admin export UI + CSV/JSON download feature) |
+| 87 | Logging | Time synchronization (NTP) | **EXTERNAL_INFRA** | GCP manages this natively |
+| 88 | Logging | Trusted log integrity | **APP_DEV** | SECURITY (write-only log design) |
+| 89 | Logging | Login logging | **APP_DEV** | SECURITY |
+| 90 | Logging | Trip lifecycle logging | **APP_DEV** | SECURITY |
+| 91 | Monitoring | Disaster recovery plan | **EXTERNAL_OPS** | Business/ops document |
+| 92 | Monitoring | Operational dashboards | **EXTERNAL_OPS** | Grafana/SIEM tool |
+| 93 | Monitoring | Centralized monitoring | **EXTERNAL_OPS** | SIEM/IDS/IPS tools |
+| 94 | Monitoring | On-call alerting | **EXTERNAL_OPS** | PagerDuty or equivalent |
+| 95 | Monitoring | Incident response runbook | **EXTERNAL_OPS** | Security team document |
+| 96 | Monitoring | Breach notification | **EXTERNAL_LEGAL** | Legal/compliance process |
+| 97 | Resilience | Horizontal scaling | **EXTERNAL_INFRA** | Cloud Native (auto-managed) |
+| 98 | Resilience | Load balancing | **EXTERNAL_INFRA** | Cloud Native |
+| 99 | Resilience | Database replication | **EXTERNAL_INFRA** | Cloud Native (Firebase HA) |
+| 100 | Resilience | CDN strategy | **EXTERNAL_INFRA** | Cloud Native |
+| 101 | Resilience | Encrypted backups | **EXTERNAL_INFRA** | Cloud Native |
+| 102 | Resilience | Restore testing | **EXTERNAL_OPS** | Manual test by ops team |
+| 103 | Resilience | Regional failover strategy | **EXTERNAL_INFRA** | Cloud Native |
+| 104 | Resilience | Capacity & load testing | **APP_DEV** | EXTRA_DEV (test scripts, not a runtime feature) |
+| 105 | SDLC | Secrets not in code | **APP_DEV** | SECURITY (developer practice) |
+| 106 | SDLC | Dependency scanning | **EXTERNAL_OPS** | GitHub Dependabot/Snyk |
+| 107 | SDLC | Build / release signing | **EXTERNAL_OPS** | CI/CD process |
+| 108 | SDLC | Environment separation | **EXTERNAL_INFRA** | Separate Firebase projects |
+| 109 | SDLC | Container image scanning | **EXTERNAL_OPS** | CI/CD tooling |
+| 110 | SDLC | SBOM | **EXTERNAL_OPS** | Tooling output |
+| 111 | SDLC | Secure CI/CD pipeline | **EXTERNAL_OPS** | CI/CD process |
+| 112 | SDLC | Secure coding standard | **APP_DEV** | FEATURE (developer process, no runtime code) |
+| 113 | Network | HTTPS + HSTS | **EXTERNAL_INFRA** | SSL cert + hosting config |
+| 114 | Network | WAF | **EXTERNAL_OPS** | Cloud Armor / WAF tool |
+| 115 | Network | DDoS protection | **EXTERNAL_INFRA** | GCP Shield (auto) |
+| 116 | Network | Firewall policy | **EXTERNAL_INFRA** | VPC/GCP rules |
+| 117 | Network | Private networking | **EXTERNAL_INFRA** | VPC peering config |
+| 118 | Key Mgmt | KMS-backed encryption keys | **APP_DEV** | SECURITY (integration code to use KMS) |
+| 119 | Key Mgmt | Key rotation policy | **EXTERNAL_OPS** | Policy + GCP KMS schedule |
+| 120 | Key Mgmt | Secrets manager | **APP_DEV** | SECURITY (integration code) |
+| 121 | Key Mgmt | Least-privilege service accounts | **EXTERNAL_INFRA** | IAM configuration |
+| 122 | Mobile | Secure local storage | **APP_DEV** | SECURITY |
+| 123 | Mobile | Root / jailbreak awareness | **APP_DEV** | SECURITY (requires library integration) |
+| 124 | Mobile | Certificate pinning | **APP_DEV** | SECURITY (requires network layer integration) |
+| 125 | Mobile | Universal / app links validation | **APP_DEV** | SECURITY (requires deep link handler code) |
+| 126 | Mobile | Minimum version enforcement | **APP_DEV** | EXTRA_DEV (requires "Force Update" UI screen + version check logic) |
+| 127 | Abuse | Brute-force protection | **APP_DEV** | SECURITY |
+| 128 | Abuse | Voice abuse controls | **APP_DEV** | SECURITY |
+| 129 | Abuse | Spam detection | **APP_DEV** | SECURITY + EXTRA_DEV (pattern detection logic in backend) |
+| 130 | Abuse | User reporting & blocking | **APP_DEV** | EXTRA_DEV (report UI, block list, admin review screen) |
+| 131 | Assurance | Penetration test | **EXTERNAL_OPS** | Third-party engagement |
+| 132 | Assurance | Vulnerability disclosure | **EXTERNAL_OPS** | Policy/webpage |
+| 133 | Assurance | Security contact | **EXTERNAL_OPS** | Policy/webpage |
+| 134 | Assurance | ISO 27001 alignment | **EXTERNAL_OPS** | Governance framework |
+| 135 | Assurance | OWASP ASVS alignment | **EXTERNAL_OPS** | Security review process |
+
+---
+
+## Summary
+
+| Category | Count | Description |
+| :--- | :--- | :--- |
+| **SECURITY** | ~50 | Core security controls — must be built for compliance |
+| **EXTRA_DEV** | ~18 | Needs significant UI + backend work beyond security logic |
+| **FEATURE** | ~18 | App features with no distinct security role |
+| **EXTERNAL_OPS** | ~25 | Handled by ops/security teams & tools (IDS, SIEM, PagerDuty, etc.) |
+| **EXTERNAL_INFRA** | ~18 | Managed by Cloud/GCP natively |
+| **EXTERNAL_LEGAL** | ~3 | Legal/compliance documents |

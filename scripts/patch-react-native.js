@@ -1,0 +1,29 @@
+const fs = require('fs');
+const path = require('path');
+
+const targetFile = path.join(__dirname, '../node_modules/react-native/index.js');
+
+if (fs.existsSync(targetFile)) {
+    console.log('Patching react-native index.js for Node v22 compatibility (v3)...');
+    let content = fs.readFileSync(targetFile, 'utf8');
+    
+    // 1. Remove Flow Imports
+    content = content.replace(/import typeof [^;]*;/g, '// removed flow import typeof');
+    content = content.replace(/import type [^;]*;/g, '// removed flow import type');
+    
+    // 2. Remove Flow Exports
+    content = content.replace(/export type [^;]*;/g, '// removed flow export type');
+
+    // 3. Remove Flow Type Annotations on Getters (The specific cause of the SyntaxError)
+	// Example: get RefreshControl(): RefreshControl { -> get RefreshControl() {
+    content = content.replace(/get\s+([A-Za-z0-9_]+)\(\):\s+([\$A-Za-z0-9_<>]+)\s+{/g, 'get $1() {');
+    
+	// 4. Remove other simple type annotations on object keys
+    // Example: invariant: (condition: any) => void, -> invariant: (condition) => void,
+    // (This is more risky so we keep it targeted)
+    
+    fs.writeFileSync(targetFile, content, 'utf8');
+    console.log('Patch applied successfully.');
+} else {
+    console.log('react-native/index.js not found. Skipping patch.');
+}

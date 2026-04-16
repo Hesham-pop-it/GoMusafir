@@ -8,6 +8,7 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+stripe_backup_code
 
 # Native
 .kotlin/

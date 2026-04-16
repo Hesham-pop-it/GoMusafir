@@ -96,7 +96,6 @@ const EmailConfirmationModal = ({ visible, onClose }) => {
                         innerBg="#23272A"
                         style={{ flex: 1 }}
                         innerStyle={{ height: 48 }}
-                        borderRadius={24}
                     />
 
                     <GradientBorderButton
@@ -105,7 +104,6 @@ const EmailConfirmationModal = ({ visible, onClose }) => {
                         innerBg="#B99A4A"
                         style={{ flex: 1 }}
                         innerStyle={{ height: 48 }}
-                        borderRadius={24}
                     />
                 </View>
             </Animated.View>
