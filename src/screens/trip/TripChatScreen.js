@@ -18,6 +18,7 @@ import Modal from 'react-native-modal';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
+import { Swipeable, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
@@ -28,9 +29,10 @@ import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, lim
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import * as Audio from 'expo-av';
+import { Audio } from 'expo-av';
 import { storage } from '../../config/firebase';
 import { ActivityIndicator, Linking, Vibration } from 'react-native';
+import ChatDatabase from '../../utils/chatDb';
 
 const { width, height } = Dimensions.get('window');
 const SCREEN_WIDTH = width;
@@ -109,10 +111,108 @@ const MOCK_MESSAGES = [
 const QUICK_OPTIONS = [
     { id: 'photo', label: 'Photo', icon: 'custom', color: '#007BFC', bg: '#1A2733' },
     { id: 'location', label: 'Location', icon: 'custom', color: '#06CF9C', bg: '#1A2927' },
-    { id: '5min', label: '5 Minutes', icon: 'custom', color: '#B99A4A', bg: '#2E2818' },
     { id: 'camera', label: 'Camera', icon: 'custom', color: '#FFFFFF', bg: '#26292E' },
     { id: 'add_template', label: 'Add Template', icon: 'custom', color: '#B99A4A', bg: '#23272A' },
 ];
+
+const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers }) => {
+    const swipeableRef = useRef(null);
+
+    const renderMeta = () => (
+        <View style={[styles.metaRow, isShortText && { marginTop: 0, marginLeft: 12 }, isImage && styles.imageMetaOverlay]}>
+            <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }, isImage && { color: 'rgba(255,255,255,0.9)' }]}>{item.time}</Text>
+            {isMe && (() => {
+                const buffer = 5000;
+                const isSeenByEveryone = currentParticipants.length > 0 && 
+                    currentParticipants.every(uid => (readPointers[uid] || 0) >= (item.rawTimestamp - buffer));
+                const tickColor = isSeenByEveryone ? "#2196F3" : (isImage ? "rgba(255,255,255,0.9)" : "#A1A1AA");
+                return (
+                    <MaterialCommunityIcons name="check-all" size={16} color={tickColor} style={{ marginLeft: 4 }} />
+                );
+            })()}
+        </View>
+    );
+
+    const renderLeftActions = () => {
+        return (
+            <View style={styles.swipeReplyAction}>
+                <Ionicons name="arrow-undo" size={20} color="#B99A4A" />
+            </View>
+        );
+    };
+
+    return (
+        <Swipeable
+            ref={swipeableRef}
+            renderLeftActions={renderLeftActions}
+            onSwipeableWillOpen={() => {
+                setReplyingTo(item);
+                setTimeout(() => {
+                    inputRef.current?.focus();
+                    swipeableRef.current?.close();
+                }, 0);
+            }}
+            friction={2}
+            leftThreshold={40}
+        >
+            <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]}>
+                {!isMe && (
+                    <Image source={{ uri: item.avatar }} style={styles.messageAvatar} />
+                )}
+
+                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther, isImage && { padding: 3 }]}>
+                    {/* Reply Preview */}
+                    {item.replyTo && (
+                        <View style={styles.replyContainer}>
+                            <View style={[styles.replyLine, { backgroundColor: item.replyTo.color || '#B99A4A' }]} />
+                            <View style={styles.replyContent}>
+                                <Text style={[styles.replySender, { color: item.replyTo.color || '#B99A4A' }]}>{item.replyTo.sender}</Text>
+                                <Text style={styles.replyText} numberOfLines={2}>{item.replyTo.text}</Text>
+                            </View>
+                        </View>
+                    )}
+
+                    {!isMe && !item.replyTo && (
+                        <Text style={styles.senderName}>{item.senderName}</Text>
+                    )}
+
+                    <View style={(isShortText && !isImage) ? { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' } : {}}>
+                        {item.type === 'image' ? (
+                            <View style={styles.imageWrapper}>
+                                <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
+                                {renderMeta()}
+                            </View>
+                        ) : item.type === 'location' ? (
+                            <TouchableOpacity 
+                                style={styles.locationContainer}
+                                onPress={() => {
+                                    const url = Platform.select({
+                                        ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
+                                        android: `geo:0,0?q=${item.latitude},${item.longitude}`
+                                    });
+                                    Linking.openURL(url);
+                                }}
+                            >
+                                <View style={styles.locationPreview}>
+                                    <Ionicons name="location" size={32} color="#B99A4A" />
+                                    <Text style={styles.locationText}>Shared Location</Text>
+                                    <Text style={styles.locationSubText}>Tap to open in Maps</Text>
+                                </View>
+                            </TouchableOpacity>
+                        ) : item.type === 'voice' ? (
+                            <VoicePlayer uri={item.audio_url || item.media_url} isMe={isMe} />
+                        ) : (
+                            <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
+                        )}
+                        {isShortText && renderMeta()}
+                    </View>
+
+                    {!isShortText && !isImage && renderMeta()}
+                </View>
+            </View>
+        </Swipeable>
+    );
+});
 
 const TripChatScreen = () => {
     const navigation = useNavigation();
@@ -120,6 +220,7 @@ const TripChatScreen = () => {
     const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
     const tripId = trip?.id || trip?.tripId;
     const orgId = trip?.org_id || trip?.orgId;
+    const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
     const invitationCode = directCode || trip?.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
@@ -140,12 +241,32 @@ const TripChatScreen = () => {
     const [recording, setRecording] = useState(null);
     const [isRecording, setIsRecording] = useState(false);
     const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
+    const [replyingTo, setReplyingTo] = useState(null);
 
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
 
     // Auto-focus keyboard on mount and start listening to DB
     useEffect(() => {
+        const initializeOfflineFirst = async () => {
+            if (!tripId) return;
+
+            // 1. Initialize DB and Load offline messages first
+            await ChatDatabase.init();
+            const localMsgs = await ChatDatabase.getMessages(tripId);
+            
+            if (localMsgs.length > 0) {
+                setMessages(localMsgs.map(m => ({
+                    ...m,
+                    sender: m.sender_id === auth.currentUser?.uid ? 'me' : 'other',
+                    time: new Date(m.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                    rawTimestamp: m.timestamp
+                })));
+            }
+        };
+
+        initializeOfflineFirst();
+
         // Fetch current user's name first
         const fetchUserName = async () => {
             if (auth.currentUser) {
@@ -155,7 +276,17 @@ const TripChatScreen = () => {
                         setCurrentUserFullName(userSnap.val());
                     }
                 } catch (err) {
-                    console.log("[Chat] Error fetching profile name:", err);
+                }
+            }
+
+            // Also resolve orgId if missing
+            if (!resolvedOrgId && tripId) {
+                try {
+                    const orgSnap = await get(ref(database, `trips_orgs/${tripId}`));
+                    if (orgSnap.exists()) {
+                        setResolvedOrgId(orgSnap.val());
+                    }
+                } catch (e) {
                 }
             }
         };
@@ -197,12 +328,18 @@ const TripChatScreen = () => {
                     setMessages((prev) => {
                         // Avoid duplicates
                         if (prev.find(m => m.id === msg.id)) return prev;
-                        return [...prev, msg];
+                        // Prepend for inverted list (newest first in array)
+                        return [msg, ...prev];
                     });
 
-                    setTimeout(() => {
-                        flatListRef.current?.scrollToEnd({ animated: true });
-                    }, 100);
+                    // S24: Save to local encrypted database for offline access
+                    ChatDatabase.saveMessage(tripId, {
+                        id: snapshot.key,
+                        ...data,
+                        timestamp: rawTs,
+                        sender_name: data.sender_name || 'Participant',
+                        avatar: data.avatar || 'https://ui-avatars.com/api/?name=User&background=B99A4A&color=fff'
+                    });
 
                     // Update our read pointer since we just "saw" a new message
                     if (auth.currentUser) {
@@ -257,6 +394,7 @@ const TripChatScreen = () => {
             // S18: Listen to shared templates
             const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
             const unsubTemplates = onValue(templatesRef, (snap) => {
+                if (!isAdmin) return; // S18: Participants should not see/use templates
                 const val = snap.val() ?? {};
                 const dbTemplates = Object.entries(val).map(([id, t]) => ({
                     id,
@@ -290,9 +428,11 @@ const TripChatScreen = () => {
                 unsubStaff();
                 unsubPointers();
                 unsubTemplates();
+                keyboardDidShowListener.remove();
+                keyboardDidHideListener.remove();
             };
         }
-    }, [orgId, tripId]);
+    }, [orgId, tripId, isAdmin]);
 
     // Fetch Names for Header Subtitle
     useEffect(() => {
@@ -313,12 +453,30 @@ const TripChatScreen = () => {
                 ];
                 setParticipantNames(sortedNames);
             } catch (err) {
-                console.log("[Chat] Error fetching participant names:", err);
             }
         };
 
         fetchNames();
     }, [currentParticipants]);
+
+    // Handle results if the activity was killed in the background (Android crash fix)
+    useEffect(() => {
+        const checkPendingResults = async () => {
+            try {
+                const result = await ImagePicker.getPendingResultAsync();
+                if (result && result.length > 0) {
+                    const firstResult = result[0];
+                    if (!firstResult.canceled && firstResult.assets && firstResult.assets.length > 0) {
+                        uploadAndSendMedia(firstResult.assets[0].uri, 'image');
+                    }
+                }
+            } catch (err) {
+            }
+        };
+        if (Platform.OS === 'android') {
+            checkPendingResults();
+        }
+    }, []);
 
     const toggleAttachments = () => {
         if (showAttachments) {
@@ -348,14 +506,30 @@ const TripChatScreen = () => {
         if (inputText.trim().length === 0 || !orgId || !tripId) return;
 
         const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
-        push(chatListRef, {
+        const messageData = {
             text: inputText.trim(),
             sender_id: auth.currentUser?.uid,
             sender_name: currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
             timestamp: serverTimestamp(),
             type: 'text'
+        };
+
+        if (replyingTo) {
+            messageData.replyTo = {
+                sender: replyingTo.senderName,
+                text: replyingTo.type === 'image' ? '📷 Photo' : 
+                      replyingTo.type === 'location' ? '📍 Location' : 
+                      replyingTo.type === 'voice' ? '🎤 Voice Message' : 
+                      replyingTo.text,
+                id: replyingTo.id,
+                color: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF')
+            };
+        }
+
+        push(chatListRef, messageData).then(() => {
+            setReplyingTo(null);
         }).catch(err => {
-            console.warn("Failed to send message", err);
+            alert("Failed to send. Please check your connection.");
         });
 
         setInputText('');
@@ -374,12 +548,16 @@ const TripChatScreen = () => {
             
             if (participantsSnap.exists()) {
                 const val = participantsSnap.val();
-                const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+                // S22: Correctly extract UIDs (keys) and ensure they are unique to prevent spamming
+                const rawUids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+                const uids = Array.from(new Set(rawUids.filter(id => typeof id === 'string')));
                 const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
                 const timestamp = serverTimestamp();
+                const targetOrgId = resolvedOrgId || orgId;
+                if (!targetOrgId) return;
 
                 const broadcastPromises = uids.map(uid => {
-                    const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
+                    const userNotifRef = ref(database, `trips_active/${targetOrgId}/${tripId}/notifications/${uid}`);
                     return push(userNotifRef, {
                         name: adminName,
                         message: message,
@@ -390,7 +568,7 @@ const TripChatScreen = () => {
                 await Promise.all(broadcastPromises);
             }
         } catch (error) {
-            console.error("Broadcast failed:", error);
+            console.error("Chat broadcast failed:", error);
         }
     };
 
@@ -409,7 +587,7 @@ const TripChatScreen = () => {
                 sender_id: auth.currentUser?.uid,
                 sender_name: currentUserFullName || 'Admin',
                 timestamp: serverTimestamp(),
-            }).catch(err => console.error("Failed to send template message", err));
+            }).catch(err => {});
 
             // 2. Broadcast as Notification
             triggerTemplateBroadcast(item.content);
@@ -421,9 +599,9 @@ const TripChatScreen = () => {
         } else if (item.id === 'location') {
             handleShareLocation();
         } else {
-            console.log('Pressed', item.label);
         }
     };
+
 
     const handlePickImage = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -435,7 +613,7 @@ const TripChatScreen = () => {
         let result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             allowsEditing: true,
-            quality: 1,
+            quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -452,7 +630,7 @@ const TripChatScreen = () => {
 
         let result = await ImagePicker.launchCameraAsync({
             allowsEditing: true,
-            quality: 1,
+            quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -469,23 +647,37 @@ const TripChatScreen = () => {
         try {
             const response = await fetch(uri);
             const blob = await response.blob();
-            const filename = `${Date.now()}_${auth.currentUser.uid}.jpg`;
+            
+            const isVoice = type === 'voice';
+            const extension = isVoice ? 'm4a' : 'jpg';
+            const contentType = isVoice ? 'audio/m4a' : 'image/jpeg';
+            
+            const filename = `${Date.now()}_${auth.currentUser.uid}.${extension}`;
             const fileRef = storageRef(storage, `chat_media/${tripId}/${filename}`);
+            const metadata = { contentType };
 
-            await uploadBytes(fileRef, blob);
+            await uploadBytes(fileRef, blob, metadata);
             const downloadUrl = await getDownloadURL(fileRef);
 
             const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
-            await push(chatListRef, {
+            const messageData = {
                 type: type,
-                [type === 'image' ? 'image_url' : 'media_url']: downloadUrl,
                 sender_id: auth.currentUser.uid,
                 sender_name: currentUserFullName || auth.currentUser.email?.split('@')[0] || 'User',
                 timestamp: serverTimestamp(),
-            });
+            };
+
+            if (type === 'image') {
+                messageData.image_url = downloadUrl;
+            } else if (type === 'voice') {
+                messageData.audio_url = downloadUrl;
+            } else {
+                messageData.media_url = downloadUrl;
+            }
+
+            await push(chatListRef, messageData);
 
         } catch (error) {
-            console.error("Failed to upload/send media:", error);
             alert("Failed to send media. Please try again.");
         } finally {
             setIsUploading(false);
@@ -516,7 +708,6 @@ const TripChatScreen = () => {
                 timestamp: serverTimestamp(),
             });
         } catch (error) {
-            console.error("Failed to share location:", error);
             alert("Failed to share location. Please try again.");
         } finally {
             setIsUploading(false);
@@ -524,26 +715,39 @@ const TripChatScreen = () => {
     };
 
     const startRecording = async () => {
+        if (isRecording || recording) return;
+
         try {
-            const { status } = await Audio.Audio.requestPermissionsAsync();
+            const { status } = await Audio.requestPermissionsAsync();
             if (status !== 'granted') {
                 alert('Microphone permission is required to record voice messages.');
                 return;
             }
 
-            await Audio.Audio.setAudioModeAsync({
+            // Cleanup any previous recording that might be hanging
+            if (recording) {
+                try {
+                    await recording.stopAndUnloadAsync();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                setRecording(null);
+            }
+
+            await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
             });
 
             Vibration.vibrate(50); // Haptic feedback for recording start
-            const { recording } = await Audio.Audio.Recording.createAsync(
-                Audio.Audio.RecordingOptionsPresets.HIGH_QUALITY
+            const { recording: newRecording } = await Audio.Recording.createAsync(
+                Audio.RecordingOptionsPresets.HIGH_QUALITY
             );
-            setRecording(recording);
+            setRecording(newRecording);
             setIsRecording(true);
         } catch (err) {
-            console.error('Failed to start recording', err);
+            setIsRecording(false);
+            setRecording(null);
         }
     };
 
@@ -554,13 +758,13 @@ const TripChatScreen = () => {
         try {
             await recording.stopAndUnloadAsync();
             const uri = recording.getURI();
-            setRecording(null);
             
             if (uri) {
                 uploadAndSendMedia(uri, 'voice');
             }
         } catch (error) {
-            console.error('Failed to stop recording', error);
+        } finally {
+            setRecording(null);
         }
     };
 
@@ -594,7 +798,6 @@ const TripChatScreen = () => {
                 setTemplateContent('');
                 setTemplateModalVisible(false);
             } catch (error) {
-                console.error("Failed to add template/send/broadcast:", error);
                 alert("Failed to create and broadcast template.");
             }
         }
@@ -606,76 +809,24 @@ const TripChatScreen = () => {
         participantsList: 'You, Titor, Sarah, John, Mike, Elena'
     };
 
-    const renderMessage = ({ item }) => {
+    const renderMessage = React.useCallback(({ item }) => {
         const isMe = item.sender === 'me';
+        const isImage = item.type === 'image';
+        const isShortText = (item.type === 'text' || !item.type) && (item.text || '').length < 16 && !item.replyTo;
+
         return (
-            <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]}>
-                {!isMe && (
-                    <Image source={{ uri: item.avatar }} style={styles.messageAvatar} />
-                )}
-
-                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther]}>
-                    {/* Reply Preview */}
-                    {item.replyTo && (
-                        <View style={styles.replyContainer}>
-                            <View style={[styles.replyLine, { backgroundColor: item.replyTo.color || '#B99A4A' }]} />
-                            <View style={styles.replyContent}>
-                                <Text style={[styles.replySender, { color: item.replyTo.color || '#B99A4A' }]}>{item.replyTo.sender}</Text>
-                                <Text style={styles.replyText} numberOfLines={2}>{item.replyTo.text}</Text>
-                            </View>
-                        </View>
-                    )}
-
-                    {!isMe && !item.replyTo && (
-                        <Text style={styles.senderName}>{item.senderName}</Text>
-                    )}
-
-                    {item.type === 'image' ? (
-                        <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
-                    ) : item.type === 'location' ? (
-                        <TouchableOpacity 
-                            style={styles.locationContainer}
-                            onPress={() => {
-                                const url = Platform.select({
-                                    ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
-                                    android: `geo:0,0?q=${item.latitude},${item.longitude}`
-                                });
-                                Linking.openURL(url);
-                            }}
-                        >
-                            <View style={styles.locationPreview}>
-                                <Ionicons name="location" size={32} color="#B99A4A" />
-                                <Text style={styles.locationText}>Shared Location</Text>
-                                <Text style={styles.locationSubText}>Tap to open in Maps</Text>
-                            </View>
-                        </TouchableOpacity>
-                    ) : item.type === 'voice' ? (
-                        <VoicePlayer uri={item.audio_url || item.media_url} isMe={isMe} />
-                    ) : (
-                        <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
-                    )}
-
-                    <View style={styles.metaRow}>
-                        <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }]}>{item.time}</Text>
-                        {isMe && (() => {
-                            // S18: Dynamic WhatsApp ticks logic
-                            // A message is "Seen By All" ONLY if every current participant has a pointer >= message.timestamp
-                            // We add a small 5-second buffer (5000ms) for sync delays
-                            const buffer = 5000;
-                            const isSeenByEveryone = currentParticipants.length > 0 && 
-                                currentParticipants.every(uid => (readPointers[uid] || 0) >= (item.rawTimestamp - buffer));
-                            
-                            const tickColor = isSeenByEveryone ? "#2196F3" : "#A1A1AA";
-                            
-                            return (
-                                <MaterialCommunityIcons name="check-all" size={16} color={tickColor} style={{ marginLeft: 4 }} />
-                            );
-                        })()}
-                    </View>
-                </View>
-            </View>
+            <ChatMessage
+                item={item}
+                isMe={isMe}
+                isImage={isImage}
+                isShortText={isShortText}
+                setReplyingTo={setReplyingTo}
+                inputRef={inputRef}
+                currentParticipants={currentParticipants}
+                readPointers={readPointers}
+            />
         );
-    };
+    }, [currentParticipants, readPointers]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
@@ -706,7 +857,8 @@ const TripChatScreen = () => {
     };
 
     return (
-        <View style={styles.container}>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+            <View style={styles.container}>
             {/* Header */}
             {/* Header */}
             <LinearGradient
@@ -753,15 +905,39 @@ const TripChatScreen = () => {
                         data={messages}
                         renderItem={renderMessage}
                         keyExtractor={item => item.id}
+                        inverted={true}
                         contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
                         onScrollBeginDrag={dismissAll}
                         keyboardDismissMode="interactive"
+                        initialNumToRender={15}
+                        maxToRenderPerBatch={10}
+                        windowSize={10}
+                        removeClippedSubviews={Platform.OS === 'android'}
                     />
 
                     {/* Input Bar - wrapped in SafeAreaView */}
                     <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
+                        {/* Reply Preview */}
+                        {replyingTo && (
+                            <View style={styles.replyPreviewContainer}>
+                                <View style={[styles.replyLine, { backgroundColor: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]} />
+                                <View style={styles.replyPreviewContent}>
+                                    <Text style={[styles.replySender, { color: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]}>{replyingTo.senderName}</Text>
+                                    <Text style={styles.replyPreviewText} numberOfLines={1}>
+                                        {replyingTo.type === 'image' ? '📷 Photo' : 
+                                         replyingTo.type === 'location' ? '📍 Location' : 
+                                         replyingTo.type === 'voice' ? '🎤 Voice Message' : 
+                                         replyingTo.text}
+                                    </Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.closeReplyBtn}>
+                                    <Ionicons name="close-circle" size={24} color="#A1A1AA" />
+                                </TouchableOpacity>
+                            </View>
+                        )}
+
                         {/* Input Bar */}
-                        <View style={[styles.inputBar, showAttachments && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }]}>
+                        <View style={[styles.inputBar, (showAttachments || replyingTo) && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: replyingTo ? 0 : 20, borderTopRightRadius: replyingTo ? 0 : 20 }]}>
                             <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
                                 {showAttachments ? (
                                     <MaterialCommunityIcons name="keyboard" size={24} color="#FFF" />
@@ -779,25 +955,31 @@ const TripChatScreen = () => {
                                 value={inputText}
                                 onChangeText={setInputText}
                                 onFocus={handleInputFocus}
+                                multiline={true}
+                                blurOnSubmit={false}
                             />
 
-                            <TouchableOpacity style={styles.iconBtn}>
+                            <TouchableOpacity style={styles.iconBtn} onPress={handleTakePhoto}>
                                 <Ionicons name="camera-outline" size={24} color="#FFF" />
                             </TouchableOpacity>
 
 
                             <TouchableOpacity
-                                style={[styles.sendButton, isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }]}
-                                onPress={inputText.trim().length > 0 ? handleSendMessage : null}
-                                onPressIn={inputText.trim().length === 0 ? startRecording : null}
-                                onPressOut={inputText.trim().length === 0 ? stopRecording : null}
-                                disabled={isUploading}
+                                style={[
+                                    styles.sendButton,
+                                    // isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
+                                ]}
+                                onPress={handleSendMessage}
+                                // onPressIn={inputText.trim().length === 0 ? startRecording : null}
+                                // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                disabled={isUploading || inputText.trim().length === 0}
                             >
                                 {isUploading ? (
                                     <ActivityIndicator size="small" color="#FFF" />
                                 ) : (
                                     <Ionicons
-                                        name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
+                                        name="send" // Forced to "send" for now
+                                        // name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
                                         size={20}
                                         color="#FFF"
                                     />
@@ -868,7 +1050,8 @@ const TripChatScreen = () => {
                     </TouchableOpacity>
                 </View>
             </Modal>
-        </View >
+            </View >
+        </GestureHandlerRootView>
     );
 };
 
@@ -927,7 +1110,7 @@ const styles = StyleSheet.create({
     messageAvatar: {
         width: 32,
         height: 32,
-        borderRadius: 16,
+        borderRadius: 12,
         marginRight: 8,
         alignSelf: 'flex-end', // Bottom align
     },
@@ -955,12 +1138,30 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 15,
         lineHeight: 20,
+        fontFamily: Typography.sans.regular,
     },
     messageImage: {
-        width: 200,
-        height: 200,
-        borderRadius: 12,
-        marginVertical: 4,
+        width: 250,
+        height: 300,
+        resizeMode: 'cover',
+        borderRadius: 10,
+        borderWidth: 0.5,
+        borderColor: 'rgba(255,255,255,0.2)',
+    },
+    imageWrapper: {
+        position: 'relative',
+        borderRadius: 10,
+        overflow: 'hidden',
+    },
+    imageMetaOverlay: {
+        position: 'absolute',
+        bottom: 6,
+        right: 6,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 10,
+        marginTop: 0,
     },
     locationContainer: {
         width: 200,
@@ -1016,8 +1217,36 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
     replyText: {
-        color: '#CCC',
+        color: '#fff',
         fontSize: 13,
+        fontFamily: Typography.sans.regular,
+    },
+
+    // Swipe & Preview
+    swipeReplyAction: {
+        justifyContent: 'center',
+        paddingLeft: 20,
+        width: 60,
+    },
+    replyPreviewContainer: {
+        flexDirection: 'row',
+        backgroundColor: '#23272A',
+        padding: 10,
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.05)',
+    },
+    replyPreviewContent: {
+        flex: 1,
+        marginLeft: 10,
+    },
+    replyPreviewText: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 12,
+    },
+    closeReplyBtn: {
+        padding: 4,
     },
 
     // Input Bar
@@ -1038,8 +1267,11 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#3F4346',
         borderRadius: 20,
-        height: 40,
+        minHeight: 40,
+        maxHeight: 120,
         paddingHorizontal: 16,
+        paddingTop: Platform.OS === 'ios' ? 10 : 5,
+        paddingBottom: Platform.OS === 'ios' ? 10 : 5,
         color: '#FFF',
         fontFamily: Typography.sans.bold,
     },
@@ -1063,11 +1295,11 @@ const styles = StyleSheet.create({
     optionsGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
+        justifyContent: 'flex-start',
+        paddingHorizontal: 10,
     },
     optionItem: {
-        width: '22%', // 4 items per row approx
+        width: '25%', 
         alignItems: 'center',
         marginBottom: 20,
     },
@@ -1194,7 +1426,7 @@ const VoicePlayer = ({ uri, isMe }) => {
                 setIsPlaying(true);
             }
         } else {
-            const { sound: newSound } = await Audio.Audio.Sound.createAsync(
+            const { sound: newSound } = await Audio.Sound.createAsync(
                 { uri },
                 { shouldPlay: true },
                 onPlaybackStatusUpdate
@@ -1229,8 +1461,9 @@ const VoicePlayer = ({ uri, isMe }) => {
                 <Ionicons name={isPlaying ? "pause" : "play"} size={24} color={isMe ? "#FFF" : "#B99A4A"} />
             </TouchableOpacity>
             <View style={voiceStyles.progressCard}>
-                <View style={[voiceStyles.progressBar, { width: `${(position / (duration || 1)) * 100}%`, backgroundColor: isMe ? '#FFF' : '#B99A4A' }]} />
-                <Text style={[voiceStyles.durationText, isMe && { color: 'rgba(255,255,255,0.7)' }]}>
+                <View style={voiceStyles.progressBar} />
+                <View style={[voiceStyles.progressActive, { width: `${(position / (duration || 1)) * 100}%`, backgroundColor: isMe ? '#FFF' : '#B99A4A' }]} />
+                <Text style={[voiceStyles.durationText, isMe && { color: 'rgba(255,255,255,0.8)' }]}>
                     {formatTime(isPlaying ? position : (duration || 0))}
                 </Text>
             </View>
@@ -1254,17 +1487,21 @@ const voiceStyles = StyleSheet.create({
         justifyContent: 'center',
     },
     progressBar: {
-        height: 2,
-        borderRadius: 1,
+        height: 3,
+        borderRadius: 1.5,
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        width: '100%',
+    },
+    progressActive: {
+        height: 3,
+        borderRadius: 1.5,
         position: 'absolute',
         left: 0,
-        bottom: 12,
     },
     durationText: {
-        fontSize: 10,
-        color: 'rgba(0,0,0,0.5)',
-        position: 'absolute',
-        right: 0,
-        bottom: 0,
+        fontSize: 11,
+        color: 'rgba(255,255,255,0.6)',
+        marginTop: 4,
+        fontFamily: Typography.sans.regular,
     }
 });

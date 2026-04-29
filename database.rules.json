@@ -22,12 +22,15 @@
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
               "$tripId": {
                  ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
-                 ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'manager'"
+                 ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager'",
+                 "visibility_config": {
+                    ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
+                 }
               }
            },
            "staff": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId) || (root.child('trips_orgs').child(root.child('users').child(auth.uid).child('current_trip').val()).val() == $orgId)",
-              ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).child('role').val() === 'admin'"
+              ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host'"
            },
            "metadata": {
               ".read": "true"
@@ -40,7 +43,7 @@
     },
     "trips_participants": {
          "$tripId": {
-            ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() != null && root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('trips').child($tripId).exists())",
+            ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).exists()",
            "$uid": {
               ".write": false
            }
@@ -50,6 +53,7 @@
         "$orgId": {
            "$tripId": {
               "locations": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  "$uid": {
                     ".write": "auth.uid === $uid"
                  }
@@ -77,7 +81,19 @@
               "templates": {
                  ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
-              }
+              },
+              "location_permissions": {
+                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 "$targetUid": {
+                    "$requesterUid": {
+                       ".write": "auth.uid === $targetUid"
+                    }
+                 }
+              },
+              "voice_channel": {
+                  ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())",
+                  ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() )"
+               }
            }
         }
     },

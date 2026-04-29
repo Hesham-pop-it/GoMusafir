@@ -28,8 +28,8 @@ import GlowBackground from '../../components/GlowBackground';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { auth, functions, database, storage } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, fetchSignInMethodsForEmail } from 'firebase/auth';
-import { ref as dbRef, set, remove, serverTimestamp, get } from 'firebase/database';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, fetchSignInMethodsForEmail, signOut } from 'firebase/auth';
+import { ref as dbRef, set, remove, update, serverTimestamp, get } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 
@@ -120,7 +120,6 @@ export const JoinFirstNameScreen = ({ navigation, route }) => {
     const previousData = route.params || {};
 
     const handleContinue = () => {
-        console.log("[JoinFlow] Moving to LastName with:", { ...previousData, firstName });
         navigation.navigate('JoinLastName', { ...previousData, firstName });
     };
 
@@ -152,7 +151,6 @@ export const JoinLastNameScreen = ({ navigation, route }) => {
     const previousData = route.params || {};
 
     const handleContinue = () => {
-        console.log("[JoinFlow] Moving to Phone with:", { ...previousData, lastName });
         navigation.navigate('JoinPhone', { ...previousData, lastName });
     };
 
@@ -203,6 +201,27 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 
         setIsLoading(true);
         try {
+            // S22: Check capacity BEFORE login/signup to avoid App.js session conflicts
+            const getMetadata = httpsCallable(functions, 'getInviteMetadata');
+            const metaResult = await getMetadata({ 
+                inviteCode: previousData.invitationCode,
+                email: email.trim().toLowerCase() 
+            });
+            const tripDetails = metaResult.data;
+
+            if (tripDetails.isFull && !tripDetails.alreadyJoined) {
+                setIsLoading(false);
+                Alert.alert(
+                    "Trip Full",
+                    `Sorry, this trip has reached its maximum capacity of ${tripDetails.totalSeats} participants.`,
+                    [{ 
+                        text: "OK", 
+                        onPress: () => navigation.navigate('Welcome') 
+                    }]
+                );
+                return;
+            }
+
             let userCredential;
             let currentUserId;
 
@@ -221,18 +240,29 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                         // RBAC Check: Admins cannot login as participants
                         // S6: Role-Based Access Control
                         const userSnap = await get(dbRef(database, `users/${currentUserId}`));
-                        if (userSnap.exists() && userSnap.val().staff_org_id) {
+                        const userData = userSnap.val() || {};
+                        const idTokenResult = await userCredential.user.getIdTokenResult(true);
+                        const role = idTokenResult.claims.role;
+                        const isStaff = !!userData.staff_org_id || ['admin', 'co-host', 'manager'].includes(role);
+
+                        if (isStaff) {
                             await signOut(auth);
                             Alert.alert("Account Conflict", "This business account cannot be used to join as a participant. Please use a separate participant account.");
                             setIsLoading(false);
                             return;
                         }
 
-                        // Set flag in database to prevent App.js from redirecting to Home instantly
-                        await set(dbRef(database, `users/${currentUserId}/join_flow_status`), {
+                        // Set flags in database to prevent App.js from redirecting to Home instantly
+                        const updates = {};
+                        updates[`users/${currentUserId}/join_flow_status`] = {
                             isJoining: true,
+                            invitationCode: previousData.invitationCode,
+                            isExistingUser: true,
                             updated_at: serverTimestamp()
-                        });
+                        };
+                        updates[`users/${currentUserId}/mfa_pending`] = true;
+                        
+                        await update(dbRef(database), updates);
 
                         // Navigate to Verification/Redeem path for existing users
                         const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
@@ -432,7 +462,6 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
 
     const handleContinue = () => {
         const fullPhone = `${selectedCountry.code}${phone}`;
-        console.log("[JoinFlow] Moving to ProfilePic with:", { ...previousData, phone: fullPhone });
         navigation.navigate('JoinProfilePicture', { ...previousData, phone: fullPhone });
     };
 
@@ -539,7 +568,6 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = () => {
-        console.log("[JoinFlow] Moving to Terms with:", { ...previousData, image: image ? "Selected" : "None" });
         navigation.navigate('JoinTerms', { ...previousData, image });
     };
 
@@ -597,17 +625,8 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                     await uploadBytes(picRef, blob);
                     photoURL = await getDownloadURL(picRef);
                 } catch (imgError) {
-                    console.warn("Image upload failed, continuing without photo.", imgError);
                 }
             }
-
-            console.log("[JoinFlow] Sending to redeemInvitation:", {
-                inviteCode: previousData.invitationCode,
-                firstName: previousData.firstName,
-                lastName: previousData.lastName,
-                phone: previousData.phone,
-                photoURL: photoURL ? "Present" : "Missing"
-            });
 
             const redeemInvite = httpsCallable(functions, 'redeemInvitation');
             const result = await redeemInvite({
@@ -627,6 +646,8 @@ export const JoinTermsScreen = ({ navigation, route }) => {
 
             // Clear the Join Flow flag in database so global navigation is restored
             if (auth.currentUser) {
+                // S22: Set current_trip so Home/App knows which trip to anchor to
+                await set(dbRef(database, `users/${auth.currentUser.uid}/current_trip`), tripId);
                 await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
             }
 
@@ -646,9 +667,11 @@ export const JoinTermsScreen = ({ navigation, route }) => {
 
 
         } catch (error) {
-            console.warn("Redeem Invite Error:", error);
-
-            Alert.alert("Error Joining Trip", error.message || "Failed to join. Please try again or check your invite code.");
+            Alert.alert(
+                "Error Joining Trip", 
+                error.message || "Failed to join. Please try again or check your invite code.",
+                [{ text: "OK", onPress: () => navigation.navigate('Welcome') }]
+            );
         } finally {
             setIsLoading(false);
         }

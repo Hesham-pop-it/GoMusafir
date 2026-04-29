@@ -27,14 +27,28 @@ const SettingsScreen = ({ navigation }) => {
     const [deleteVisible, setDeleteVisible] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isAdmin, setIsAdmin] = useState(false);
+    const [userRole, setUserRole] = useState(null);
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
 
     React.useEffect(() => {
         const user = auth.currentUser;
         if (!user) return;
 
+        // 1. Check if they are staff and get orgId
         const userRef = ref(database, `users/${user.uid}/staff_org_id`);
         const unsubscribe = onValue(userRef, (snapshot) => {
-            setIsAdmin(snapshot.exists() && !!snapshot.val());
+            const orgId = snapshot.val();
+            if (orgId) {
+                setIsAdmin(true);
+                // 2. Fetch their specific role within that organization
+                const roleRef = ref(database, `orgs/${orgId}/staff/${user.uid}`);
+                onValue(roleRef, (roleSnap) => {
+                    setUserRole(roleSnap.val());
+                }, { onlyOnce: true });
+            } else {
+                setIsAdmin(false);
+                setUserRole(null);
+            }
         });
         return () => unsubscribe();
     }, []);
@@ -42,7 +56,7 @@ const SettingsScreen = ({ navigation }) => {
     const handleDeleteAccount = async () => {
         setIsDeleting(true);
         try {
-            if (isAdmin) {
+            if (userRole === 'admin') {
                 // S3: Admin deleting organization + requires recent login
                 const deleteOrg = httpsCallable(functions, 'deleteOrganization');
                 await deleteOrg();
@@ -163,7 +177,7 @@ const SettingsScreen = ({ navigation }) => {
                             style={styles.deleteButton}
                             onPress={() => setDeleteVisible(true)}
                         >
-                            <Text style={styles.deleteButtonText}>{isAdmin ? "Delete Company" : "Delete Account"}</Text>
+                            <Text style={styles.deleteButtonText}>{userRole === 'admin' ? "Delete Company" : "Delete Account"}</Text>
                         </TouchableOpacity>
                     </View>
 
@@ -185,18 +199,20 @@ const SettingsScreen = ({ navigation }) => {
                     <Text style={styles.modalMessage}>Are you sure you want to sign out?</Text>
 
                     <TouchableOpacity
-                        style={styles.modalConfirmButton}
+                        style={[styles.modalConfirmButton, isLoggingOut && { opacity: 0.7 }]}
                         onPress={async () => {
-                            setSignOutVisible(false);
+                            setIsLoggingOut(true);
                             try {
                                 await signOut(auth);
                                 // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
                             } catch (error) {
                                 console.warn("Error signing out:", error);
+                                setIsLoggingOut(false);
                             }
                         }}
+                        disabled={isLoggingOut}
                     >
-                        <Text style={styles.modalConfirmText}>Sign Out</Text>
+                        <Text style={styles.modalConfirmText}>{isLoggingOut ? "Signing Out..." : "Sign Out"}</Text>
                     </TouchableOpacity>
 
                     <GradientBorderButton
@@ -219,7 +235,7 @@ const SettingsScreen = ({ navigation }) => {
             >
                 <View style={styles.modalContent}>
                     <Text style={styles.modalMessageLarge}>
-                        Are you sure you want to delete the {isAdmin ? "company" : ""} account? Your data cannot be recovered after deletion.
+                        Are you sure you want to delete the {userRole === 'admin' ? "company" : ""} account? Your data cannot be recovered after deletion.
                     </Text>
 
                     <TouchableOpacity

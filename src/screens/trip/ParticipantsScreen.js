@@ -22,8 +22,9 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
-import { database, auth } from '../../config/firebase';
-import { ref, onValue } from 'firebase/database';
+import { database, auth, functions } from '../../config/firebase';
+import { ref, onValue, get } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 
 const { width, height } = Dimensions.get('window');
 
@@ -49,6 +50,36 @@ const ParticipantsScreen = () => {
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+    const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
+    const [userRole, setUserRole] = useState('participant');
+    const [isAdminState, setIsAdminState] = useState(isAdmin);
+    const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
+
+    React.useEffect(() => {
+        const fetchRole = async () => {
+            if (auth.currentUser) {
+                const token = await auth.currentUser.getIdTokenResult();
+                const role = token.claims.role || 'participant';
+                setUserRole(role);
+                setIsAdminState(role === 'admin' || role === 'co-host' || role === 'manager');
+            }
+        };
+        fetchRole();
+    }, []);
+
+    // 0. Fetch Global Visibility Config
+    React.useEffect(() => {
+        if (!orgId || !tripId) return;
+        const configRef = ref(database, `orgs/${orgId}/trips/${tripId}/visibility_config`);
+        const unsubscribe = onValue(configRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setGlobalVisibilityConfig(snapshot.val());
+            } else {
+                setGlobalVisibilityConfig({});
+            }
+        });
+        return () => unsubscribe();
+    }, [orgId, tripId]);
 
     // Fetch Participants with Privacy Masking
     React.useEffect(() => {
@@ -100,13 +131,27 @@ const ParticipantsScreen = () => {
                     const fullName = nameSnap.val();
                     const visibility = visSnap.val() || {};
                     const isCurrentUser = uid === auth.currentUser?.uid;
-                    const amIAdmin = isAdmin;
+                    const amIAdmin = isAdminState;
 
                     const canSeePII = (field) => {
                         if (isCurrentUser) return true;
-                        const setting = visibility[field] || 'Show to organizer';
-                        if (setting === 'Show to everyone') return true;
-                        if (setting === 'Show to organizer' && amIAdmin) return true;
+                        
+                        // 1. Check Global Admin Config
+                        const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
+                        
+                        // Rule: 'Do not show' hides from EVERYONE including admin
+                        if (globalSetting === 'Do not show') return false;
+                        if (globalSetting === 'Show to organizer') return amIAdmin;
+                        if (globalSetting === 'Show to everyone') return true;
+                        
+                        // 2. If 'Custom choice', check personal choice
+                        if (globalSetting === 'Custom choice') {
+                            const personalSetting = visibility[field] || 'Show to organizer';
+                            if (personalSetting === 'Do not show') return false;
+                            if (personalSetting === 'Show to organizer') return amIAdmin;
+                            if (personalSetting === 'Show to everyone') return true;
+                        }
+                        
                         return false;
                     };
 
@@ -150,7 +195,7 @@ const ParticipantsScreen = () => {
         });
 
         return () => unsubscribe();
-    }, [tripId, orgId, isAdmin]);
+    }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
 
     const filteredParticipants = participants.filter(p =>
         p.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -177,8 +222,8 @@ const ParticipantsScreen = () => {
         return (
             <TouchableOpacity
                 style={styles.participantRow}
-                onPress={isAdmin ? () => toggleSelection(item.id) : null}
-                activeOpacity={isAdmin ? 0.7 : 1}
+                onPress={isAdminState ? () => toggleSelection(item.id) : null}
+                activeOpacity={isAdminState ? 0.7 : 1}
             >
                 <View style={[
                     styles.avatarContainer,
@@ -193,7 +238,7 @@ const ParticipantsScreen = () => {
                     ]}>{item.status}</Text>
                 </View>
 
-                {isAdmin && selectedIds.length > 0 && (
+                {isAdminState && selectedIds.length > 0 && (
                     <View
                         style={[styles.checkbox, isSelected && styles.checkboxSelected]}
                     >
@@ -204,9 +249,37 @@ const ParticipantsScreen = () => {
         );
     };
 
-    const handleDeletePress = () => {
+    const handleDeletePress = (type = 'this') => {
+        setDeleteType(type);
         setDetailVisible(false);
         setTimeout(() => setDeleteConfirmVisible(true), 300);
+    };
+
+    const confirmDelete = async () => {
+        if (!selectedParticipant) return;
+        
+        setDeleteConfirmVisible(false);
+        setIsLoading(true);
+        
+        try {
+            if (deleteType === 'all') {
+                const deleteGlobally = httpsCallable(functions, 'deleteUserGlobally');
+                await deleteGlobally({ targetUid: selectedParticipant.id });
+            } else {
+                const removeParticipant = httpsCallable(functions, 'removeParticipantFromTrip');
+                await removeParticipant({ 
+                    tripId: tripId, 
+                    targetUid: selectedParticipant.id 
+                });
+            }
+            Alert.alert("Success", `Participant has been removed ${deleteType === 'all' ? 'globally' : 'from this trip'}.`);
+        } catch (error) {
+            console.error("Delete Error:", error);
+            Alert.alert("Error", "Failed to delete participant. " + error.message);
+        } finally {
+            setIsLoading(false);
+            setSelectedParticipant(null);
+        }
     };
 
     // Swipe down to close logic for modals - Interactive Draggable version
@@ -272,7 +345,7 @@ const ParticipantsScreen = () => {
                     <Text style={styles.headerSubtitle}>{participantsCount} Joined</Text>
                 </View>
                 <View style={{ width: 40, alignItems: 'flex-end' }}>
-                    {isAdmin && selectedIds.length > 0 && (
+                    {isAdminState && selectedIds.length > 0 && (
                         <TouchableOpacity onPress={() => setMultiDeleteVisible(true)}>
                             <CustomDeleteIcon />
                         </TouchableOpacity>
@@ -350,7 +423,7 @@ const ParticipantsScreen = () => {
                                 </View>
                             </View>
 
-                            {!isAdmin && (
+                            {!isAdminState && (
                                 <TouchableOpacity
                                     style={styles.actionButtonOutline}
                                     onPress={() => {
@@ -364,7 +437,7 @@ const ParticipantsScreen = () => {
 
                             <TouchableOpacity
                                 style={styles.deleteButton}
-                                onPress={handleDeletePress}
+                                onPress={() => handleDeletePress('this')}
                             >
                                 <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
                                 <Text style={styles.deleteButtonText}>Delete for this trip</Text>
@@ -372,7 +445,7 @@ const ParticipantsScreen = () => {
 
                             <TouchableOpacity
                                 style={styles.deleteButton}
-                                onPress={handleDeletePress}
+                                onPress={() => handleDeletePress('all')}
                             >
                                 <Ionicons name="trash-outline" size={20} color="#FFF" style={styles.btnIcon} />
                                 <Text style={styles.deleteButtonText}>Delete for all trip</Text>
@@ -465,11 +538,7 @@ const ParticipantsScreen = () => {
                         />
                         <TouchableOpacity
                             style={styles.confirmDelete}
-                            onPress={() => {
-                                setDeleteConfirmVisible(false);
-                                setMultiConfirmVisible(false);
-                                setSelectedIds([]);
-                            }}
+                            onPress={confirmDelete}
                         >
                             <Text style={styles.confirmDeleteText}>Delete</Text>
                         </TouchableOpacity>

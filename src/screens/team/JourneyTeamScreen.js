@@ -72,17 +72,31 @@ const JourneyTeamScreen = () => {
                     if (role === 'none' || !role) return null;
 
                     try {
-                        const userSnap = await get(ref(database, `users/${uid}`));
-                        const profile = userSnap.exists() ? userSnap.val() : {};
+                        // FIX: Fetch users/${uid}/profile instead of root users/${uid} 
+                        // to bypass permission restrictions for non-admin staff.
+                        const profileSnap = await get(ref(database, `users/${uid}/profile`));
+                        const profile = profileSnap.exists() ? profileSnap.val() : {};
+                        
+                        // FIX: Support both camelCase and snake_case for name fields
+                        const firstName = profile.firstName || profile.first_name || '';
+                        const lastName = profile.lastName || profile.last_name || '';
+                        
+                        let name = (firstName + ' ' + lastName).trim();
+                        if (!name) {
+                            // Fallback to full_name at the user root if profile is empty (unlikely given rules, but safe)
+                            const userSnap = await get(ref(database, `users/${uid}/full_name`));
+                            name = userSnap.exists() ? userSnap.val() : 'Unknown User';
+                        }
                         
                         return {
                             id: uid,
-                            name: profile.first_name ? `${profile.first_name} ${profile.last_name || ''}`.trim() : 'Unknown User',
+                            name: name,
                             role: role.charAt(0).toUpperCase() + role.slice(1),
-                            avatar: profile.profile_picture || 'https://via.placeholder.com/150',
-                            isSuperAdmin: profile.staff_role === 'admin'
+                            avatar: profile.photoURL || profile.profile_picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(name[0] || 'U')}&background=B99A4A&color=fff`,
+                            isSuperAdmin: role === 'admin' // Role comes from org staff list, which is more reliable
                         };
                     } catch (e) {
+                        console.log(`[Team] Failed to fetch details for ${uid}:`, e.message);
                         return null;
                     }
                 });

@@ -21,7 +21,7 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { auth, database } from '../../config/firebase';
 import { signOut } from 'firebase/auth';
-import { ref, onValue, update } from 'firebase/database';
+import { ref, onValue, update, get } from 'firebase/database';
 
 
 const { width } = Dimensions.get('window');
@@ -29,9 +29,12 @@ const { width } = Dimensions.get('window');
 const TripSettingsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
+    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin, tripId: paramTripId, orgId: paramOrgId } = route.params || {};
+    const tripId = paramTripId || trip?.id || trip?.tripId || trip?.trip_id;
+    const orgId = paramOrgId || trip?.orgId || trip?.org_id;
     const invitationCode = directCode || trip?.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
+    const [userRole, setUserRole] = useState(isAdmin ? 'admin' : 'participant');
 
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
@@ -39,6 +42,12 @@ const TripSettingsScreen = () => {
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [seatCount, setSeatCount] = useState(1);
     const [expandedField, setExpandedField] = useState(null);
+
+    // Dynamic Seat Statistics State
+    const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
+    const [resolvedTripId, setResolvedTripId] = useState(tripId);
+    const [totalSeats, setTotalSeats] = useState(15); // Default fallback
+    const [filledSeats, setFilledSeats] = useState(0);
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
         lastname: 'Show to organizer',
@@ -47,6 +56,8 @@ const TripSettingsScreen = () => {
         photo: 'Show to organizer',
         location: 'Show to organizer',
     });
+
+    const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
 
     useEffect(() => {
         const user = auth.currentUser;
@@ -62,12 +73,115 @@ const TripSettingsScreen = () => {
         return () => unsubscribe();
     }, [trip?.id]);
 
+    // 1. Robust ID Resolution for Sync Path
+    useEffect(() => {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
 
-    const visibilityOptions = [
+        const resolveIds = async () => {
+            const user = auth.currentUser;
+            if (!user) return;
+
+            const tokenResult = await user.getIdTokenResult();
+            const role = tokenResult.claims.role || 'participant';
+            setUserRole(role);
+
+            let activeTripId = tripId || trip?.tripId || trip?.trip_id;
+            let activeOrgId = orgId || trip?.org_id;
+
+            // If orgId is missing, resolve it from user's joined trips
+            if (activeTripId && !activeOrgId) {
+                try {
+                    const joinedRef = ref(database, `users/${uid}/joined_trips/${activeTripId}`);
+                    const snapshot = await get(joinedRef);
+                    if (snapshot.exists()) {
+                        activeOrgId = snapshot.val().orgId || snapshot.val().org_id;
+                        console.log("[TripSettings] Resolved orgId:", activeOrgId);
+                    }
+                } catch (err) {
+                    console.warn("[TripSettings] ID Resolution Error:", err);
+                }
+            }
+
+            if (activeOrgId) setResolvedOrgId(activeOrgId);
+            if (activeTripId) setResolvedTripId(activeTripId);
+        };
+
+        resolveIds();
+    }, [tripId, orgId, trip]);
+
+    // 2. Real-time Seat Statistics Synchronization
+    useEffect(() => {
+        if (!resolvedTripId) return;
+
+        // A. Listen for Total Seats (Capacity)
+        // If resolvedOrgId is available, we use the full path, otherwise fallback to finding the org
+        const tripPath = resolvedOrgId 
+            ? `orgs/${resolvedOrgId}/trips/${resolvedTripId}`
+            : null; 
+
+        let unsubscribeTrip = null;
+        if (tripPath) {
+            const tripRef = ref(database, tripPath);
+            unsubscribeTrip = onValue(tripRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    // Field guess: total_seats, capacity, participants_limit
+                    const capacity = data.total_seats || data.capacity || data.participants_limit || 15;
+                    setTotalSeats(Number(capacity));
+                }
+            });
+        }
+
+        // B. Listen for Filled Seats (Participant Count)
+        const participantsRef = ref(database, `trips_participants/${resolvedTripId}`);
+        const unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const val = snapshot.val() || {};
+                let count = 0;
+                if (Array.isArray(val)) {
+                    count = val.filter(v => v !== null).length;
+                } else {
+                    count = Object.keys(val).length;
+                }
+                setFilledSeats(count);
+            } else {
+                setFilledSeats(0);
+            }
+        });
+
+        return () => {
+            if (unsubscribeTrip) unsubscribeTrip();
+            unsubscribeParticipants();
+        };
+    }, [resolvedOrgId, resolvedTripId]);
+
+    // 3. Global Visibility Configuration Sync
+    useEffect(() => {
+        if (!resolvedOrgId || !resolvedTripId) return;
+
+        const configRef = ref(database, `orgs/${resolvedOrgId}/trips/${resolvedTripId}/visibility_config`);
+        const unsubscribe = onValue(configRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setGlobalVisibilityConfig(snapshot.val());
+            }
+        });
+
+        return () => unsubscribe();
+    }, [resolvedOrgId, resolvedTripId]);
+
+
+    const adminVisibilityOptions = [
         'Show to organizer',
         'Show to everyone',
         'Do not show',
         'Custom choice'
+    ];
+
+    const participantVisibilityOptions = [
+        'Show to organizer',
+        'Show to everyone',
+        'Do not show'
     ];
 
     const toggleExpand = (field) => {
@@ -76,18 +190,36 @@ const TripSettingsScreen = () => {
 
     const handleSelectVisibility = async (field, option) => {
         const user = auth.currentUser;
-        if (!user || !trip?.id) return;
+        if (!user || (!resolvedTripId && !trip?.id)) return;
+        const currentTripId = resolvedTripId || trip?.id;
+        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
 
-        setVisibilitySettings(prev => ({ ...prev, [field]: option }));
-        setExpandedField(null);
-
-        try {
-            await update(ref(database, `users/${user.uid}/participant_visibility/${trip.id}`), {
-                [field]: option
-            });
-        } catch (error) {
-            console.warn("Failed to update visibility setting:", error);
+        if (isStaff) {
+            // Admin updates the GLOBAL config for the trip
+            try {
+                if (resolvedOrgId) {
+                    await update(ref(database, `orgs/${resolvedOrgId}/trips/${currentTripId}/visibility_config`), {
+                        [field]: option
+                    });
+                }
+            } catch (error) {
+                console.warn("Failed to update global visibility config:", error);
+            }
+        } else {
+            // Participant updates their personal visibility setting
+            // Only if global config says "Custom choice"
+            if (globalVisibilityConfig[field] === 'Custom choice') {
+                setVisibilitySettings(prev => ({ ...prev, [field]: option }));
+                try {
+                    await update(ref(database, `users/${user.uid}/participant_visibility/${currentTripId}`), {
+                        [field]: option
+                    });
+                } catch (error) {
+                    console.warn("Failed to update personal visibility setting:", error);
+                }
+            }
         }
+        setExpandedField(null);
     };
 
 
@@ -170,22 +302,47 @@ const TripSettingsScreen = () => {
 
     const VisibilityItem = ({ label, field }) => {
         const isExpanded = expandedField === field;
+        
+        // Logic to determine what to show
+        let currentValue = '';
+        let isLocked = false;
+        let options = [];
+
+        if (userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') {
+            currentValue = globalVisibilityConfig[field] || 'Show to organizer';
+            options = adminVisibilityOptions;
+        } else {
+            const adminSetting = globalVisibilityConfig[field] || 'Show to organizer';
+            if (adminSetting === 'Custom choice') {
+                currentValue = visibilitySettings[field] || 'Show to organizer';
+                options = participantVisibilityOptions;
+            } else {
+                currentValue = adminSetting;
+                isLocked = true;
+            }
+        }
+
         return (
             <View style={styles.visibilityItemContainer}>
                 <View style={styles.visibilityRow}>
                     <Text style={styles.visibilityLabel}>{label}</Text>
                     <View style={styles.rightColumn}>
                         <TouchableOpacity
-                            style={styles.visibilityValueContainer}
-                            onPress={() => toggleExpand(field)}
-                            activeOpacity={0.7}
+                            style={[styles.visibilityValueContainer, isLocked && { opacity: 0.5 }]}
+                            onPress={() => !isLocked && toggleExpand(field)}
+                            activeOpacity={isLocked ? 1 : 0.7}
                         >
-                            <Text style={styles.visibilityValue}>{visibilitySettings[field]}</Text>
-                            <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={16} color="#B99A4A" />
+                            <Text style={styles.visibilityValue}>{currentValue}</Text>
+                            {!isLocked && (
+                                <Ionicons name={isExpanded ? "chevron-down" : "chevron-forward"} size={16} color="#B99A4A" />
+                            )}
+                            {isLocked && (
+                                <Ionicons name="lock-closed" size={14} color="rgba(185, 154, 74, 0.5)" style={{ marginLeft: 4 }} />
+                            )}
                         </TouchableOpacity>
-                        {isExpanded && (
+                        {isExpanded && !isLocked && (
                             <View style={styles.expandedOptions}>
-                                {visibilityOptions.map((option, index) => (
+                                {options.map((option, index) => (
                                     <TouchableOpacity
                                         key={index}
                                         style={styles.optionItem}
@@ -193,7 +350,7 @@ const TripSettingsScreen = () => {
                                     >
                                         <Text style={[
                                             styles.optionText,
-                                            visibilitySettings[field] === option && { color: '#B99A4A' }
+                                            currentValue === option && { color: '#B99A4A' }
                                         ]}>
                                             {option}
                                         </Text>
@@ -232,7 +389,7 @@ const TripSettingsScreen = () => {
 
                         <View style={styles.totalSeatsOutlineCard}>
                             <Text style={styles.statsLabel}>Total seats</Text>
-                            <Text style={styles.statsValue}>15</Text>
+                            <Text style={styles.statsValue}>{totalSeats}</Text>
                         </View>
 
                         <View style={styles.seatsGrid}>
@@ -243,7 +400,7 @@ const TripSettingsScreen = () => {
                                 style={[styles.gradientCard, styles.halfCard]}
                             >
                                 <Text style={styles.statsLabel}>Filled seats</Text>
-                                <Text style={styles.statsValueText}>11</Text>
+                                <Text style={styles.statsValueText}>{filledSeats}</Text>
                             </LinearGradient>
 
                             <LinearGradient
@@ -253,11 +410,11 @@ const TripSettingsScreen = () => {
                                 style={[styles.gradientCard, styles.halfCard]}
                             >
                                 <Text style={styles.statsLabel}>Seats left</Text>
-                                <Text style={styles.statsValueText}>4</Text>
+                                <Text style={styles.statsValueText}>{Math.max(0, totalSeats - filledSeats)}</Text>
                             </LinearGradient>
                         </View>
 
-                        {isAdmin && (
+                        {(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') && (
                             <TouchableOpacity
                                 style={styles.increaseBtnWrapper}
                                 onPress={() => setSeatModalVisible(true)}
@@ -298,9 +455,9 @@ const TripSettingsScreen = () => {
                         {/* Action Button (Delete for Admin / Logout for Participant) */}
                         <TouchableOpacity
                             style={styles.deleteButton}
-                            onPress={() => isAdmin ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
+                            onPress={() => (userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
                         >
-                            <Text style={styles.deleteButtonText}>{isAdmin ? 'Delete Journey' : 'Log Out'}</Text>
+                            <Text style={styles.deleteButtonText}>{(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') ? 'Delete Journey' : 'Log Out'}</Text>
                         </TouchableOpacity>
 
                         <View style={{ height: 100 }} />

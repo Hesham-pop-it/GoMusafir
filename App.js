@@ -67,11 +67,9 @@ export default function App() {
 
     const getDeviceId = async () => {
       let id = await AsyncStorage.getItem('device_id');
-      console.log("[App] Retrieved Device ID:", id);
       if (!id) {
         id = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
         await AsyncStorage.setItem('device_id', id);
-        console.log("[App] Generated New Device ID:", id);
       }
       return id;
     };
@@ -82,7 +80,6 @@ export default function App() {
 
         // We wait for Firebase auth state to resolve to determine the initial route
         unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-          console.log("[App] Auth State Changed. User:", user ? user.uid : "null", "Verified:", user?.emailVerified);
           // Cleanup previous listener if any
           if (deviceRef) {
             off(deviceRef);
@@ -98,56 +95,61 @@ export default function App() {
             // Listen for takeovers
             onValue(deviceRef, (snapshot) => {
               const activeId = snapshot.val();
-              console.log("[App] Active Device Validation:", { activeId, currentDeviceId });
               if (activeId && activeId !== currentDeviceId) {
-                console.log("Session hijacked by another device! Signing out.");
                 Alert.alert("Session Ended", "This account has been logged in on another device. You have been signed out.");
                 signOut(auth);
               }
             });
 
-            // S6/S22: Check Custom Claims (Role) before deciding the initial route to prevent flickering
-            const idTokenResult = await user.getIdTokenResult(true);
-            const role = idTokenResult.claims.role || 'participant';
+            // S6/S22: Use a live listener for user data to detect MFA status changes instantly
+            const userRef = ref(database, `users/${user.uid}`);
+            onValue(userRef, async (snapshot) => {
+              const userData = snapshot.val() || {};
+              
+              const idTokenResult = await user.getIdTokenResult(true);
+              const role = idTokenResult.claims.role || 'participant';
+              const isStaff = role === 'admin' || role === 'co-host' || role === 'manager' || !!userData.staff_org_id;
+              
+              const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
+              let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
 
-            // Check if we should skip the Home/Overview redirect (e.g. during active Join flow)
-            const userSnap = await get(ref(database, `users/${user.uid}`));
-            const userData = userSnap.val() || {};
-            
-            const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
-            let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
+              // Check for local MFA lock to prevent flickering
+              const mfaLock = await AsyncStorage.getItem('mfa_lock');
 
-            // Self-repair: If they are marked as joining but already have trips or are staff, clear the flag
-            if (isJoining && (role === 'admin' || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
-              console.log("[App] Self-repair: User already onboarded but flag stuck. Clearing.");
-              await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
-              isJoining = false;
-            }
-
-            if (!isJoining) {
-              console.log("[App] Persistence check - role:", role, "uid:", user.uid);
-              if (role === 'admin') {
-                setInitialRoute("Home");
-              } else {
-                setInitialRoute("TripOverview");
+              // Self-repair logic: Only auto-exit join flow if they are stuck WITHOUT an invitation code
+              // but already have valid trips/staff status.
+              const invitationCode = joinSnap.val()?.invitationCode;
+              if (isJoining && !invitationCode && !userData.mfa_pending && !mfaLock && (isStaff || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
+                await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
+                isJoining = false;
               }
+
+              if (userData.mfa_pending || mfaLock) {
+                setInitialRoute("BusinessVerification");
+              } else if (!isJoining) {
+                if (isStaff) {
+                  setInitialRoute("Home");
+                } else {
+                  setInitialRoute("TripOverview");
+                }
+              }
+              
+              // Register device and push tokens (only need to do once, but safe here)
               registerForPushNotificationsAsync();
-            } else {
-              console.log("[App] User in Join Flow, keeping Welcome/Join as base.");
-            }
+              
+              // Only hide splash once we have determined the route
+              setTimeout(() => {
+                setAppIsReady(true);
+              }, 300);
+            });
 
           } else {
-            console.log("[App] No authenticated user found or email not verified.");
             setInitialRoute("Welcome");
-          }
-          
-          setTimeout(() => {
             setAppIsReady(true);
-          }, 300); // slight delay to let state settle
+          }
         });
 
       } catch (e) {
-        console.warn(e);
         setAppIsReady(true); // Don't block app if auth fails
       }
     };

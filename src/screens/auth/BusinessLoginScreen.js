@@ -21,7 +21,7 @@ import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
 import { auth, database, functions } from '../../config/firebase';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { ref, get } from 'firebase/database';
+import { ref, get, set } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 
 const BusinessLoginScreen = () => {
@@ -57,6 +57,10 @@ const BusinessLoginScreen = () => {
         if (!isFormValid) return;
         setIsLoading(true);
         try {
+            // S2: Set a local lock to prevent App.js from flickering to Home screen
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.setItem('mfa_lock', 'true');
+
             const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
             const user = userCredential.user;
 
@@ -67,14 +71,18 @@ const BusinessLoginScreen = () => {
             }
 
             // RBAC: Check if user has business/staff access
-            // S6: Role-Based Access Control
+            // S6: Role-Based Access Control - Double check both database and Custom Claims
             const userRef = ref(database, `users/${user.uid}`);
             const userSnap = await get(userRef);
             const userData = userSnap.val();
 
-            if (!userData?.staff_org_id) {
+            const idTokenResult = await user.getIdTokenResult(true);
+            const role = idTokenResult.claims.role;
+            const hasStaffAccess = !!userData?.staff_org_id || ['admin', 'co-host', 'manager'].includes(role);
+
+            if (!hasStaffAccess) {
                 await signOut(auth);
-                Alert.alert("Access Denied", "This account does not have business administrative access.");
+                Alert.alert("Access Denied", "This account is registered as a participant. Please log in using the 'Join as Participant' flow.");
                 setIsLoading(false);
                 return;
             }
@@ -82,6 +90,9 @@ const BusinessLoginScreen = () => {
             // MFA: Trigger OTP for every business login
             // S2: Mandatory Multi-Factor Authentication
             try {
+                // Set MFA pending flag to prevent App.js from auto-routing to Home
+                await set(ref(database, `users/${user.uid}/mfa_pending`), true);
+
                 const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
                 await sendOTP({ email: email.trim(), uid: user.uid, isMobile: true });
 
@@ -90,16 +101,15 @@ const BusinessLoginScreen = () => {
                     description: `A 6-digit code has been sent to ${email.trim()}. Please enter it to verify your login.`,
                     targetScreen: 'Home',
                     email: email.trim(),
-                    uid: user.uid
+                    uid: user.uid,
+                    isExistingUser: true
                 });
             } catch (otpError) {
-                console.warn("OTP Send Error:", otpError);
                 Alert.alert("Verification Failed", "Could not send verification code. Please try again.");
                 await signOut(auth);
             }
 
         } catch (error) {
-            console.warn(error);
             Alert.alert("Login Failed", error.message || "Invalid email or password.");
         } finally {
             setIsLoading(false);

@@ -10,12 +10,11 @@ const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreCl
 
 export async function registerForPushNotificationsAsync() {
     if (isExpoGo) {
-        console.log("Push notifications (Firebase/Notifee) are disabled in Expo Go. Use a Development Build.");
         return null;
     }
 
-    if (!Device.isDevice) {
-        console.log('Must use physical device for Push Notifications');
+    // Allow emulators for Android as they support FCM
+    if (Platform.OS === 'ios' && !Device.isDevice) {
         return null;
     }
 
@@ -27,7 +26,6 @@ export async function registerForPushNotificationsAsync() {
             authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
         if (!enabled) {
-            console.log('Failed to get push permission!');
             return null;
         }
 
@@ -41,7 +39,12 @@ export async function registerForPushNotificationsAsync() {
             });
         }
 
-        // 3. Get FCM Token
+        // 3. Register for remote messages (Critical for iOS)
+        if (Platform.OS === 'ios') {
+            await messaging().registerDeviceForRemoteMessages();
+        }
+
+        // 4. Get FCM Token
         const token = await messaging().getToken();
 
         // 4. Save to Database
@@ -51,7 +54,6 @@ export async function registerForPushNotificationsAsync() {
 
         // 5. Handle foreground messages
         messaging().onMessage(async remoteMessage => {
-            console.log('Foreground message received:', remoteMessage);
             await notifee.displayNotification({
                 title: remoteMessage.notification?.title || 'New Update',
                 body: remoteMessage.notification?.body || 'You have a new message from GoMusafir.',
@@ -67,7 +69,6 @@ export async function registerForPushNotificationsAsync() {
 
         return token;
     } catch (error) {
-        console.warn("Notification registration error:", error);
         return null;
     }
 }

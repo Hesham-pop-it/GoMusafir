@@ -104,7 +104,7 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
 // S6: Only admin can change roles. S8: Target user must belong to caller's org.
 exports.updateMemberRole = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = validate(schemas.updateRole, request.data);
   const callerOrgId = request.auth.token.orgId;
@@ -167,7 +167,7 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
 // S6: Admin only. S34: Rate limiting. Generates secure token for email invite.
 exports.inviteTeamMember = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = validate(schemas.inviteMember, request.data);
   const callerOrgId = request.auth.token.orgId;

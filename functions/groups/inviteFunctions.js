@@ -52,6 +52,20 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
     return { success: true, tripId, orgId, message: "Already joined." };
   }
 
+  // --- Seat Capacity Check ---
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  if (!tripSnap.exists()) {
+    throw new HttpsError("not-found", "Trip data not found.");
+  }
+  const trip = tripSnap.val();
+  const currentParticipants = trip.participants || 0;
+  const totalSeats = trip.total_seats || 15; // Fallback to 15 if not set
+
+  if (currentParticipants >= totalSeats) {
+    throw new HttpsError("resource-exhausted", `This trip is full. Maximum capacity is ${totalSeats} participants.`);
+  }
+  // --- End Capacity Check ---
+
   // S16: No open redirects — all data comes from server-validated DB, not URL params
 
   // S23: Write consent record under the org
@@ -147,11 +161,83 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
   return { success: true, tripId, orgId };
 });
 
+// ── Get Team Invite Metadata (public — no auth needed) ─────────────────────────
+exports.getTeamInviteMetadata = onCall({ region: "europe-west1" }, async (request) => {
+  const { token } = validate(schemas.getTeamInviteMetadata, request.data);
+
+  const inviteSnap = await db.ref(`org_invites/${token}`).get();
+  if (!inviteSnap.exists()) {
+    throw new HttpsError("not-found", "Invalid or expired invitation.");
+  }
+
+  const invite = inviteSnap.val();
+  if (invite.expiresAt && Date.now() > invite.expiresAt) {
+    throw new HttpsError("failed-precondition", "This invitation link has expired.");
+  }
+
+  const orgSnap = await db.ref(`orgs/${invite.orgId}/metadata/name`).get();
+  
+  return {
+    role: invite.role,
+    companyName: orgSnap.val(),
+    orgId: invite.orgId,
+    email: invite.email
+  };
+});
+
+// ── Redeem Team Invitation ───────────────────────────────────────────────────
+exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+
+  const { token } = validate(schemas.redeemTeamInvite, request.data);
+  const uid = request.auth.uid;
+
+  // S1: Email must be verified
+  const userRecord = await auth.getUser(uid);
+  if (!userRecord.emailVerified) {
+    throw new HttpsError("failed-precondition", "Please verify your email before joining as a team member.");
+  }
+
+  const inviteSnap = await db.ref(`org_invites/${token}`).get();
+  if (!inviteSnap.exists()) {
+    throw new HttpsError("not-found", "Invalid invitation link.");
+  }
+
+  const invite = inviteSnap.val();
+  if (invite.expiresAt && Date.now() > invite.expiresAt) {
+    throw new HttpsError("failed-precondition", "This invitation link has expired.");
+  }
+
+  const { orgId, role } = invite;
+
+  // 1. Set Custom User Claims (S6)
+  await auth.setCustomUserClaims(uid, { role, orgId });
+
+  // 2. Perform atomic updates (S8 Isolation)
+  const updates = {
+    [`orgs/${orgId}/staff/${uid}`]: role,
+    [`users/${uid}/staff_org_id`]: orgId,
+    [`org_invites/${token}`]: null, // Single-use (S15)
+  };
+
+  await db.ref().update(updates);
+
+  // 3. Audit Logging (S20)
+  await writeAuditLog(orgId, {
+    action: "TEAM_MEMBER_JOINED",
+    byUid: uid,
+    extra: { role, inviteToken: token }
+  });
+
+  return { success: true, orgId, role };
+});
+
 // ── Get Invite Metadata (public — no auth needed) ─────────────────────────────
 // Returns safe trip preview for the invite landing page.
 // S16: Only serves data from our DB, never reflects URL params back.
 exports.getInviteMetadata = onCall({ region: "europe-west1" }, async (request) => {
-  const { inviteCode } = request.data;
+  const { inviteCode, email } = request.data;
   if (!inviteCode || typeof inviteCode !== "string") {
     throw new HttpsError("invalid-argument", "inviteCode is required.");
   }
@@ -176,6 +262,27 @@ exports.getInviteMetadata = onCall({ region: "europe-west1" }, async (request) =
   const trip = tripSnap.val();
   const orgSnap = await db.ref(`orgs/${invite.org_id}/metadata/name`).get();
 
+  const currentParticipants = trip.participants || 0;
+  const totalSeats = trip.total_seats || 15;
+
+  let alreadyJoined = false;
+  
+  // Priority 1: Check by authenticated UID
+  if (request.auth) {
+    const joinedSnap = await db.ref(`trips_participants/${invite.trip_id}/${request.auth.uid}`).get();
+    alreadyJoined = joinedSnap.exists();
+  } 
+  // Priority 2: Check by provided email (if not already found by UID)
+  else if (email && typeof email === "string") {
+    try {
+      const userRecord = await auth.getUserByEmail(email.trim().toLowerCase());
+      const joinedSnap = await db.ref(`trips_participants/${invite.trip_id}/${userRecord.uid}`).get();
+      alreadyJoined = joinedSnap.exists();
+    } catch (e) {
+      // User might not exist or email not found - that's fine
+    }
+  }
+
   // Return only safe, non-sensitive fields
   return {
     tripTitle: trip.title,
@@ -183,5 +290,9 @@ exports.getInviteMetadata = onCall({ region: "europe-west1" }, async (request) =
     startDate: trip.start_date,
     endDate: trip.end_date,
     companyName: orgSnap.val(),
+    totalSeats: totalSeats,
+    filledSeats: currentParticipants,
+    alreadyJoined: alreadyJoined,
+    isFull: currentParticipants >= totalSeats
   };
 });

@@ -34,7 +34,7 @@ const InviteMemberScreen = () => {
         setIsInviting(true);
         try {
             const inviteTeamMember = httpsCallable(functions, 'inviteTeamMember');
-            await inviteTeamMember({ email, role: selectedRole });
+            await inviteTeamMember({ email, role: selectedRole.toLowerCase() });
             setSuccessModalVisible(true);
         } catch (error) {
             console.warn("Invite Error:", error);

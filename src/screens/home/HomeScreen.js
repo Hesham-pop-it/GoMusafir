@@ -422,25 +422,8 @@ const HomeScreen = ({ navigation }) => {
                     tripsSnapshot.forEach((child) => {
                         const tId = child.key;
                         trips.push({ id: tId, orgId: orgId, ...(child.val() || {}) });
-
-                        // Set up live count listener if not already active
-                        if (!countListeners.current[tId]) {
-                            const pRef = ref(database, `trips_participants/${tId}`);
-                            
-                            countListeners.current[tId] = onValue(pRef, (pSnap) => {
-                                const val = pSnap.val() ?? {};
-                                const count = Object.keys(val).length;
-                                // S18: If organizer isn't in participants, add 1
-                                const finalCount = (val[child.val()?.organizer_id]) ? count : count ;
-                                console.log(`[HomeScreen] Trip ${tId} count:`, finalCount);
-                                setParticipantsCounts(prev => ({ ...prev, [tId]: finalCount }));
-                            }, (error) => {
-                                console.warn(`[HomeScreen] Error counting for trip ${tId}:`, error);
-                            });
-                            
-                        // countListeners.push({ ref: pRef, unsub: unsubP })
-                        }
                     });
+
                     setAllTrips(trips);
                     setIsLoading(false);
 
@@ -463,7 +446,7 @@ const HomeScreen = ({ navigation }) => {
                     try {
                         const tripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}`));
                         if (tripSnap.exists()) {
-                            return { id: tripId, ...(tripSnap.val() || {}), org_id: orgId }; // Inject org_id so screens know where the trip lives
+                            return { id: tripId, ...(tripSnap.val() || {}), orgId: orgId }; // Inject orgId so screens know where the trip lives
                         }
                     } catch (error) {
                         console.warn(`Failed to fetch trip ${tripId}:`, error);
@@ -472,33 +455,27 @@ const HomeScreen = ({ navigation }) => {
                 })).then((tripsArray) => {
                     const validTrips = tripsArray.filter(t => t !== null);
                     
-                    // Set up listeners for participant trips
-                    validTrips.forEach(t => {
-                        if (!countListeners.current[t.id]) {
-                            const pRef = ref(database, `trips_participants/${t.id}`);
-                            countListeners.current[t.id] = onValue(pRef, (pSnap) => {
-                                const val = pSnap.val() ?? {};
-                                const count = Object.keys(val).length;
-                                // S18: If organizer isn't in participants, add 1
-                                const finalCount = (val[t.organizer_id]) ? count : (count + 1);
-                                setParticipantsCounts(prev => ({ ...prev, [t.id]: finalCount }));
-                            }, (error) => {
-                                console.warn(`[HomeScreen] Error counting (participant) for trip ${t.id}:`, error);
-                            });
-                        }
-                    });
-
                     setAllTrips(validTrips);
                     setIsLoading(false);
 
-                    // Automatic redirect for participants to their specific trip
+                    // Smart redirect for participants to their specific trip
                     if (validTrips.length > 0 && !orgId) {
-                        const targetTrip = validTrips[0];
-                        navigation.replace('TripOverview', {
-                            trip: targetTrip,
-                            isAdmin: false,
-                            invitationCode: targetTrip.invitation_code
-                        });
+                        const currentTripId = userData.current_trip;
+                        let targetTrip = null;
+
+                        if (currentTripId) {
+                            targetTrip = validTrips.find(t => t.id === currentTripId);
+                        }
+
+                        // S22: Only auto-redirect if a current trip is anchored or if they have exactly one trip
+                        if (targetTrip || validTrips.length === 1) {
+                            const finalTrip = targetTrip || validTrips[0];
+                            navigation.replace('TripOverview', {
+                                trip: finalTrip,
+                                isAdmin: false,
+                                invitationCode: finalTrip.invitation_code
+                            });
+                        }
                     }
                 });
 

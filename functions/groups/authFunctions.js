@@ -192,3 +192,62 @@ exports.checkUserExistence = onCall({ region: "europe-west1" }, async (request) 
   }
 });
 
+// ── Delete User Globally (Admin only) ─────────────────────────────────────────
+exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin"]);
+
+  const { targetUid } = request.data;
+  const orgId = request.auth.token.orgId;
+
+  if (!targetUid) throw new HttpsError("invalid-argument", "targetUid is required.");
+
+  // Verify target user belongs to caller's org for data isolation
+  const joinedTripsSnap = await db.ref(`users/${targetUid}/joined_trips`).get();
+  let belongsToOrg = false;
+  if (joinedTripsSnap.exists()) {
+    for (const tid of Object.keys(joinedTripsSnap.val())) {
+      const tOrgSnap = await db.ref(`trips_orgs/${tid}`).get();
+      if (tOrgSnap.exists() && tOrgSnap.val() === orgId) {
+        belongsToOrg = true;
+        break;
+      }
+    }
+  }
+
+  // Also check if they are staff of this org
+  const staffOrgSnap = await db.ref(`users/${targetUid}/staff_org_id`).get();
+  if (staffOrgSnap.exists() && staffOrgSnap.val() === orgId) {
+    belongsToOrg = true;
+  }
+
+  if (!belongsToOrg) {
+    throw new HttpsError("permission-denied", "You can only delete users who belong to your organization.");
+  }
+
+  // 1. Find all trips the user joined to clean up trips_participants
+  const joinedTrips = joinedTripsSnap.val() || {};
+  const updates = {
+    [`users/${targetUid}`]: null,
+    [`otp_codes/${targetUid}`]: null,
+  };
+
+  for (const tid of Object.keys(joinedTrips)) {
+    updates[`trips_participants/${tid}/${targetUid}`] = null;
+  }
+
+  // 2. Delete from Auth (Admin SDK)
+  await auth.deleteUser(targetUid);
+
+  // 3. Delete from DB
+  await db.ref().update(updates);
+
+  await writeAuditLog(orgId, {
+    action: "USER_DELETED_GLOBALLY",
+    byUid: request.auth.uid,
+    targetId: targetUid,
+  });
+
+  return { success: true };
+});
+

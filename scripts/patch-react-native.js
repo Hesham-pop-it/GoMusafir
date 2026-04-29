@@ -23,7 +23,29 @@ if (fs.existsSync(targetFile)) {
     // (This is more risky so we keep it targeted)
     
     fs.writeFileSync(targetFile, content, 'utf8');
-    console.log('Patch applied successfully.');
+    console.log('react-native patch applied successfully.');
 } else {
     console.log('react-native/index.js not found. Skipping patch.');
 }
+
+// --- Patch 2: @livekit/react-native package.json (Metro Exports fix) ---
+const livekitPkg = path.join(__dirname, '../node_modules/@livekit/react-native/package.json');
+if (fs.existsSync(livekitPkg)) {
+    console.log('Patching @livekit/react-native package.json for Metro resolution...');
+    let pkg = JSON.parse(fs.readFileSync(livekitPkg, 'utf8'));
+    
+    // Fix missing extensions in exports (Metro Requirement)
+    if (pkg.exports && pkg.exports['.'] && pkg.exports['.'].default === './lib/commonjs/index') {
+        pkg.exports['.'].default = './lib/commonjs/index.js';
+        console.log('Updated exports.default');
+    }
+    
+    if (pkg.main === 'lib/commonjs/index') {
+        pkg.main = 'lib/commonjs/index.js';
+        console.log('Updated main');
+    }
+
+    fs.writeFileSync(livekitPkg, JSON.stringify(pkg, null, 2), 'utf8');
+    console.log('@livekit/react-native patch applied successfully.');
+}
+

@@ -92,7 +92,7 @@ exports.verifyLinkToken = onCall({ region: "europe-west1" }, async (request) => 
 exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
-  const { title, destination, startDate, endDate, image, linkToken } = request.data;
+  const { title, destination, startDate, endDate, image, linkToken, totalSeats } = request.data;
   let orgId = request.auth?.token?.orgId;
   let uid = request.auth?.uid;
 
@@ -109,6 +109,11 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     const tokenData = tokenSnap.val();
     if (tokenData.used || Date.now() > tokenData.expiresAt || tokenData.action !== "CREATE_TRIP") {
       throw new HttpsError("permission-denied", "Link token is no longer valid.");
+    }
+
+    // Security: Ensure payment was completed before allowing trip creation
+    if (!tokenData.paid) {
+      throw new HttpsError("failed-precondition", "Payment is required before creating a trip. Please complete checkout first.");
     }
 
     orgId = tokenData.orgId;
@@ -133,6 +138,7 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     location: destination, // Mobile app expects 'location'
     date: `${formatDate(startDate)} - ${formatDate(endDate)}`, // Mobile app expects formatted string
     participants: 1, // S18: Organizer is the first participant
+    total_seats: parseInt(totalSeats) || 15, // Save seat capacity
     image: image || null, // Optional banner image URL
     status: "active",
     invitation_code: inviteCode,
@@ -201,7 +207,7 @@ exports.updateLiveLocation = onCall({ region: "europe-west1" }, async (request) 
 // S15: Invalidates the invite code when trip is closed.
 exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const { tripId } = request.data;
   if (!tripId) throw new HttpsError("invalid-argument", "tripId is required.");
@@ -237,7 +243,7 @@ exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
 // S15: Manually rotate invite code without closing the trip
 exports.rotateInviteCode = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const { tripId } = request.data;
   if (!tripId) throw new HttpsError("invalid-argument", "tripId is required.");
@@ -290,6 +296,42 @@ exports.setMuteAll = onCall({ region: "europe-west1" }, async (request) => {
     action: mute ? "TRIP_MUTED" : "TRIP_UNMUTED",
     byUid: request.auth.uid,
     targetId: tripId,
+  });
+
+  return { success: true };
+});
+
+// ── Remove Participant from Trip ──────────────────────────────────────────────
+exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin", "co-host", "manager"]);
+
+  const { tripId, targetUid } = request.data;
+  const orgId = request.auth.token.orgId;
+
+  if (!tripId || !targetUid) {
+    throw new HttpsError("invalid-argument", "tripId and targetUid are required.");
+  }
+
+  // Security: Check if trip belongs to caller's org
+  const tripOrgSnap = await db.ref(`trips_orgs/${tripId}`).get();
+  if (!tripOrgSnap.exists() || tripOrgSnap.val() !== orgId) {
+    throw new HttpsError("permission-denied", "Trip does not belong to your organization.");
+  }
+
+  // Atomic update to remove from participant list and user's joined list
+  const updates = {
+    [`trips_participants/${tripId}/${targetUid}`]: null,
+    [`users/${targetUid}/joined_trips/${tripId}`]: null,
+  };
+
+  await db.ref().update(updates);
+
+  await writeAuditLog(orgId, {
+    action: "PARTICIPANT_REMOVED",
+    byUid: request.auth.uid,
+    targetId: targetUid,
+    extra: { tripId }
   });
 
   return { success: true };

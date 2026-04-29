@@ -8,6 +8,9 @@ const tripFunctions = require("./groups/tripFunctions");
 const inviteFunctions  = require("./groups/inviteFunctions");
 const paymentFunctions  = require("./groups/paymentFunctions");
 const systemFunctions  = require("./groups/systemFunctions");
+const voiceFunctions   = require("./groups/voiceFunctions");
+const notificationFunctions = require("./groups/notificationFunctions");
+
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 exports.onUserSignup          = authFunctions.onUserSignup;
@@ -17,6 +20,7 @@ exports.verifyMFAState        = authFunctions.verifyMFAState;
 exports.sendCustomEmailOTP    = authFunctions.sendCustomEmailOTP;
 exports.verifyCustomEmailOTP  = authFunctions.verifyCustomEmailOTP;
 exports.checkUserExistence    = authFunctions.checkUserExistence;
+exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
 
 
 // ── Organization ──────────────────────────────────────────────────────────────
@@ -33,16 +37,28 @@ exports.rotateInviteCode      = tripFunctions.rotateInviteCode;
 exports.setMuteAll            = tripFunctions.setMuteAll;
 exports.requestTripLink       = tripFunctions.requestTripLink;
 exports.verifyLinkToken       = tripFunctions.verifyLinkToken;
+exports.removeParticipantFromTrip = tripFunctions.removeParticipantFromTrip;
 
 // ── Invites ───────────────────────────────────────────────────────────────────
 exports.redeemInvitation      = inviteFunctions.redeemInvitation;
+exports.redeemTeamInvitation  = inviteFunctions.redeemTeamInvitation;
 exports.getInviteMetadata     = inviteFunctions.getInviteMetadata;
+exports.getTeamInviteMetadata = inviteFunctions.getTeamInviteMetadata;
 
 // ── Payments (replaces GoMusafir-Website/server/server.js) ───────────────────
 exports.createCheckoutSession = paymentFunctions.createCheckoutSession;
 exports.stripeWebhookHandler  = paymentFunctions.stripeWebhookHandler;
 exports.verifyPayment         = paymentFunctions.verifyPayment;
+exports.getRegionalPricing    = paymentFunctions.getRegionalPricing;
 
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
 exports.dataCleanupCron       = systemFunctions.dataCleanupCron;
+
+// ── Voice Chat ────────────────────────────────────────────────────────────────
+exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
+exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
+

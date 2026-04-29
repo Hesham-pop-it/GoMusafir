@@ -18,14 +18,21 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
-import { functions } from '../../config/firebase';
+import { auth, database, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
+import { ref, set, update } from 'firebase/database';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
+    
+    // Support being an initial route by falling back to auth.currentUser
+    const userEmail = route?.params?.email || auth.currentUser?.email;
+    const userUid = route?.params?.uid || auth.currentUser?.uid;
+
     const {
-        title = "Check your business email",
-        description = "We've sent a secure code to your business email. Please check your inbox.",
+        title = "Security Verification",
+        description = `A 6-digit code has been sent to ${userEmail}. Please enter it to verify your login.`,
         targetScreen = "Home",
         buttonText = "Continue",
         resendText = "Resend Code"
@@ -39,7 +46,25 @@ const BusinessVerificationScreen = ({ route }) => {
 
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
+    const [recoveredParams, setRecoveredParams] = useState(null);
+
     useEffect(() => {
+        const recoverState = async () => {
+            if (!route?.params && userUid) {
+
+                try {
+                    const { get, ref } = await import('firebase/database');
+                    const snap = await get(ref(database, `users/${userUid}/join_flow_status`));
+                    if (snap.exists()) {
+                        setRecoveredParams(snap.val());
+                    }
+                } catch (e) {
+                    console.error("[Verification] Recovery failed:", e);
+                }
+            }
+        };
+        recoverState();
+
         // Auto focus on mount
         const timer = setTimeout(() => {
             inputRef.current?.focus();
@@ -80,37 +105,81 @@ const BusinessVerificationScreen = ({ route }) => {
             try {
                 const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
                 await verifyOTP({ 
-                    uid: route.params?.uid,
+                    uid: userUid,
                     otp 
                 });
 
+                // Use merged params (route or recovered)
+                const activeParams = route?.params || recoveredParams || {};
+
                 // On success, handle navigation
-                if (route.params?.isExistingUser) {
+                if (activeParams.isExistingUser) {
                     // S22: Accelerated path for existing users - Join trip immediately
                     const redeemInvite = httpsCallable(functions, 'redeemInvitation');
-                    await redeemInvite({
-                        inviteCode: route.params.invitationCode,
+                    const result = await redeemInvite({
+                        inviteCode: activeParams.invitationCode,
                         voiceConsent: true, // Returning users assumed to have active consent or re-grant
                         locationConsent: true,
-                        // We don't have fname/lname here, but redeemInvitation now handles missing profile info gracefully
                     });
+                    
+                    const resData = result.data || {};
+                    const newTripId = resData.tripId;
+                    const newOrgId = resData.orgId;
+
+                    // Clear security and flow flags ONLY after successful join
+                    const cleanupUpdates = {};
+                    cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
+                    cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
+                    if (newTripId) {
+                        cleanupUpdates[`users/${userUid}/current_trip`] = newTripId;
+                    }
+                    await update(ref(database), cleanupUpdates);
+
+                    // S2: Clear local security lock
+                    await AsyncStorage.removeItem('mfa_lock');
+
+                    // S22: Anchor this as the current trip and navigate
+                    navigation.reset({
+                        index: 0,
+                        routes: [{ 
+                            name: 'TripOverview', 
+                            params: { 
+                                ...activeParams,
+                                tripId: newTripId,
+                                orgId: newOrgId,
+                                isAdmin: false
+                            } 
+                        }],
+                    });
+                } else {
+                    // For new users, clear mfa flag but keep join_flow_status active
+                    const cleanupUpdates = {};
+                    cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
+                    await update(ref(database), cleanupUpdates);
+
+                    // S2: Clear local security lock
+                    await AsyncStorage.removeItem('mfa_lock');
 
                     navigation.reset({
                         index: 0,
-                        routes: [{ name: 'TripOverview', params: { ...route.params } }],
-                    });
-                } else {
-                    // New users continue to their next signup step (e.g. JoinFirstName)
-                    navigation.reset({
-                        index: 0,
-                        routes: [{ name: targetScreen, params: { ...route.params } }],
+                        routes: [{ name: activeParams.targetScreen || targetScreen, params: { ...activeParams } }],
                     });
                 }
 
             } catch (error) {
-                console.warn("OTP Verification Error:", error);
-
-                setIsError(true);
+                console.warn("Verification/Join Error:", error);
+                
+                // If it's a join error (e.g. Trip Full), redirect to Welcome
+                if (error.message && (error.message.includes("full") || error.message.includes("capacity"))) {
+                    Alert.alert(
+                        "Join Failed",
+                        error.message,
+                        [{ text: "OK", onPress: () => navigation.navigate('Welcome') }]
+                    );
+                } else {
+                    // Standard OTP mismatch or network error
+                    setIsError(true);
+                }
             } finally {
                 setIsLoading(false);
             }
@@ -118,19 +187,18 @@ const BusinessVerificationScreen = ({ route }) => {
     };
 
     const handleResend = async () => {
-        if (resendLoading || !route.params?.email) return;
+        if (resendLoading || !userEmail) return;
         setResendLoading(true);
         try {
             const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
             await sendOTP({ 
-                email: route.params?.email, 
-                uid: route.params?.uid,
+                email: userEmail, 
+                uid: userUid,
                 isMobile: true 
             });
             // Show toast or alert that it was sent
         } catch (error) {
             console.warn("OTP Resend Error:", error);
-
         } finally {
             setResendLoading(false);
         }
@@ -228,7 +296,8 @@ const BusinessVerificationScreen = ({ route }) => {
             </SafeAreaView>
         </GlowBackground>
     );
-};
+}
+
 
 const styles = StyleSheet.create({
     safeArea: {

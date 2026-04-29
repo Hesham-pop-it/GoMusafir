@@ -53,14 +53,22 @@ const updateLocationSchema = z.object({
   lng: z.number().min(-180).max(180),
 });
 
+const redeemTeamInviteSchema = z.object({
+  token: z.string().uuid(),
+});
+
+const getTeamInviteMetadataSchema = z.object({
+  token: z.string().uuid(),
+});
+
 const updateRoleSchema = z.object({
   targetUid: z.string().min(1),
-  newRole: z.enum(["Manager", "Co-host", "none"]),
+  newRole: z.enum(["manager", "co-host", "none"]),
 });
 
 const inviteMemberSchema = z.object({
   email: z.string().email(),
-  role: z.enum(["Manager", "Co-host"]),
+  role: z.enum(["manager", "co-host"]),
 });
 
 const checkoutSchema = z.object({
@@ -68,6 +76,8 @@ const checkoutSchema = z.object({
   planName: z.string().min(1),
   seats: z.number().int().positive().max(10000),
   journeyName: z.string().min(1).max(100),
+  countryCode: z.string().max(5).optional(),
+  linkToken: z.string().optional(),
 });
 
 module.exports = {
@@ -76,6 +86,8 @@ module.exports = {
     createOrg: createOrgSchema,
     createTrip: createTripSchema,
     redeemInvite: redeemInviteSchema,
+    redeemTeamInvite: redeemTeamInviteSchema,
+    getTeamInviteMetadata: getTeamInviteMetadataSchema,
     updateLocation: updateLocationSchema,
     updateRole: updateRoleSchema,
     inviteMember: inviteMemberSchema,

@@ -20,7 +20,7 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
-import { functions } from '../../config/firebase';
+import { functions, auth } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 
 const JoinWithLinkScreen = ({ navigation }) => {
@@ -54,32 +54,52 @@ const JoinWithLinkScreen = ({ navigation }) => {
     };
 
     const handleContinue = async () => {
+        
         if (invitationLink.trim().length === 0) {
             setIsValid(false);
             return;
         }
-
+        
         setIsLoading(true);
 
         try {
             // Extract code from link (e.g. gomusafir.app/join?code=XYZ or gomusafir.app/invite/XYZ or just XYZ)
             let codeInput = invitationLink.trim();
+            
             if (codeInput.includes('?code=')) {
                 codeInput = codeInput.split('?code=').pop().split('&')[0];
             } else if (codeInput.includes('/')) {
                 codeInput = codeInput.split('/').pop();
+            
             }
 
             // Call getInviteMetadata
             const getMetadata = httpsCallable(functions, 'getInviteMetadata');
             const result = await getMetadata({ inviteCode: codeInput });
-
             // If we are here, it's valid
             const tripDetails = result.data;
+
+            // Check if trip is full
+            // logic: Only block if trip is full AND (user is logged in but NOT already a participant)
+            // If user is logged out, we let them proceed to login/signup because they might be an existing participant.
+            const user = auth.currentUser;
+            const alreadyJoined = tripDetails.alreadyJoined;
+
+            if (tripDetails.isFull && !alreadyJoined && user) {
+                Alert.alert(
+                    "Trip Full",
+                    `Sorry, this trip has reached its maximum capacity of ${tripDetails.totalSeats} participants.`,
+                    [{ text: "OK" }]
+                );
+                setIsLoading(false);
+                return;
+            }
+
             // Navigate to Join Flow Start - Now starting with Email
             navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
 
         } catch (error) {
+            console.log(error)
             setIsValid(false);
         } finally {
             setIsLoading(false);
@@ -113,7 +133,7 @@ const JoinWithLinkScreen = ({ navigation }) => {
                                 onChangeText={handleLinkChange}
                                 autoCapitalize="none"
                                 autoCorrect={false}
-                            />                           
+                            />
                         </View>
                         {!isValid && (
                             <Text style={styles.errorText}>Invalid link. Please check the link and try again</Text>

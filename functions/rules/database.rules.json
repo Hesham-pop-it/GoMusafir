@@ -44,6 +44,10 @@
             ".write": "auth != null && !data.exists()",
             ".validate": "newData.hasChildren(['action', 'by', 'timestamp'])"
           }
+        },
+        "payments": {
+          ".read": "auth != null && auth.token.role == 'admin' && auth.token.orgId == $orgId",
+          ".write": false
         }
       }
     },
@@ -66,6 +70,14 @@
         ".read": "auth != null && root.child('trips_participants').child($tripId).child(auth.uid).exists()",
         "$uid": {
           ".write": "false"
+        }
+      }
+    },
+    "trips_active": {
+      "$orgId": {
+        "$tripId": {
+          ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || root.child('trips_participants').child($tripId).child(auth.uid).exists())",
+          ".write": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host'))"
         }
       }
     },

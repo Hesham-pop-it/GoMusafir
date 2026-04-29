@@ -18,9 +18,10 @@ import {
 import Modal from 'react-native-modal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ref, onValue, get, update, remove, query, limitToLast } from 'firebase/database';
+import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp } from 'firebase/database';
 
-import { database, auth } from '../../config/firebase';
+import { database, auth, functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
@@ -31,6 +32,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
+import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
 
 const { width, height } = Dimensions.get('window');
 
@@ -85,6 +87,7 @@ const TripOverviewScreen = () => {
     const [liveTripData, setLiveTripData] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
+    const [userRole, setUserRole] = useState(passedIsAdmin ? 'admin' : 'participant');
 
 
     const [visibilityModalVisible, setVisibilityModalVisible] = useState(false);
@@ -97,6 +100,7 @@ const TripOverviewScreen = () => {
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+    const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
     const [quickAlertVisible, setQuickAlertVisible] = useState(false);
     const [alertMessage, setAlertMessage] = useState('');
 
@@ -105,7 +109,7 @@ const TripOverviewScreen = () => {
     const [countdown, setCountdown] = useState(10);
     const [isMuted, setIsMuted] = useState(true);
     const [isAllMuted, setIsAllMuted] = useState(true);
-    const [isChannelStarted, setIsChannelStarted] = useState(true);
+    const [isChannelStarted, setIsChannelStarted] = useState(false);
     const [participantsList, setParticipantsList] = useState([]);
     const [notificationsList, setNotificationsList] = useState([]);
     const [lastChatMessage, setLastChatMessage] = useState(null);
@@ -113,11 +117,15 @@ const TripOverviewScreen = () => {
     const [userLocation, setUserLocation] = useState(null);
     const [participantsCount, setParticipantsCount] = useState(0);
     const [sharedTemplates, setSharedTemplates] = useState([]);
+    const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
+    const [activeSpeakerData, setActiveSpeakerData] = useState(null);
+    const [currentUserFullName, setCurrentUserFullName] = useState('');
+    const [resolvedOrgId, setResolvedOrgId] = useState(passedOrgId || trip?.orgId || trip?.org_id);
 
 
     // Stable ID resolution to avoid effect re-runs on temporary nulls
     const tripId = passedTripId || trip?.id || trip?.trip_id || liveTripData?.id;
-    const orgId = passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
+    const orgId = resolvedOrgId || passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
 
 
 
@@ -131,25 +139,64 @@ const TripOverviewScreen = () => {
                 const currentU = auth.currentUser;
                 if (currentU) {
                     const tokenResult = await currentU.getIdTokenResult();
-                    setIsAdmin(tokenResult.claims.role === 'admin');
+                    const role = tokenResult.claims.role || 'participant';
+                    setUserRole(role);
+                    setIsAdmin(role === 'admin' || role === 'co-host' || role === 'manager');
+
+                    // Fetch full name for notifications
+                    get(ref(database, `users/${currentU.uid}/full_name`)).then(snap => {
+                        if (snap.exists()) setCurrentUserFullName(snap.val());
+                    });
                 }
-
-
 
                 let activeTripId = tripId;
                 let activeOrgId = orgId;
 
-
-
-                // S22: If no trip info passed (app start), fetch current_trip from user profile
+                // S22: If no trip info passed (app start), fetch current_trip from user profile (The Secure Store)
                 if (!activeTripId && auth.currentUser) {
-                    const userRef = ref(database, `users/${auth.currentUser.uid}`);
-                    const userSnap = await get(userRef);
+                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
                     const userData = userSnap.val();
+                    
                     if (userData?.current_trip) {
                         activeTripId = userData.current_trip;
-                        // For participants, orgId is inside joined_trips node
-                        activeOrgId = userData.joined_trips?.[activeTripId]?.org_id || userData.staff_org_id;
+                    }
+                }
+
+                // If we still don't have a trip, return to Home instead of guessing
+                if (!activeTripId) {
+                    setIsLoading(false);
+                    navigation.navigate('Home');
+                    return;
+                }
+
+                // S22: If orgId is missing, resolve it from staff profile or joined trips
+                if (!activeOrgId && auth.currentUser) {
+                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+                    const userData = userSnap.val();
+                    
+                    if (userData?.staff_org_id) {
+                        activeOrgId = userData.staff_org_id;
+                    } else {
+                        const joinedSnap = await get(ref(database, `users/${auth.currentUser.uid}/joined_trips/${activeTripId}`));
+                        if (joinedSnap.exists()) {
+                            activeOrgId = joinedSnap.val().org_id || joinedSnap.val().orgId;
+                        }
+                    }
+                }
+
+                // S22: Anchor this trip as the 'current_trip' for the user session
+                if (auth.currentUser && activeTripId) {
+                    update(ref(database, `users/${auth.currentUser.uid}`), {
+                        current_trip: activeTripId
+                    }).catch(err => {});
+
+                    // Resolve orgId if still missing
+                    if (!activeOrgId) {
+                        const orgSnap = await get(ref(database, `trips_orgs/${activeTripId}`));
+                        if (orgSnap.exists()) {
+                            activeOrgId = orgSnap.val();
+                            setResolvedOrgId(activeOrgId);
+                        }
                     }
                 }
 
@@ -165,7 +212,6 @@ const TripOverviewScreen = () => {
                                 setLiveTripData({ ...data, orgId: inviteData.org_id, id: inviteData.trip_id });
                                 setIsLoading(false);
                             });
-
                         } else {
                             setIsLoading(false);
                         }
@@ -174,12 +220,15 @@ const TripOverviewScreen = () => {
                     // Direct sync (Admin or Resolved Participant)
                     tripRef = ref(database, `orgs/${activeOrgId}/trips/${activeTripId}`);
                     onValue(tripRef, (snapshot) => {
-                        setLiveTripData({ ...snapshot.val(), orgId: activeOrgId, id: activeTripId });
+                        if (snapshot.exists()) {
+                            setLiveTripData({ ...snapshot.val(), orgId: activeOrgId, id: activeTripId });
+                        }
                         setIsLoading(false);
                     });
+                } else {
+                    setIsLoading(false);
                 }
             } catch (error) {
-                console.warn("Error syncing trip data:", error);
                 setIsLoading(false);
             }
         };
@@ -190,6 +239,20 @@ const TripOverviewScreen = () => {
             // Cleanup would require tracking all listeners, for now we let it be
         };
     }, [invitationCode, trip]);
+
+    // 0. Fetch Global Visibility Config
+    useEffect(() => {
+        if (!orgId || !tripId) return;
+        const configRef = ref(database, `orgs/${orgId}/trips/${tripId}/visibility_config`);
+        const unsubscribe = onValue(configRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setGlobalVisibilityConfig(snapshot.val());
+            } else {
+                setGlobalVisibilityConfig({});
+            }
+        });
+        return () => unsubscribe();
+    }, [orgId, tripId]);
 
     // Mock data fallback if trip is missing or not yet loaded
     const DEFAULT_TRIP_IMAGE = require('../../../assets/Madinah.png');
@@ -239,7 +302,11 @@ const TripOverviewScreen = () => {
                 uids = Object.keys(val);
             }
 
-            // Ensure organizer is in the UIDs list to be fetched
+            // The real participant count is the number of entries in trips_participants
+            // (Excluding the organizer if they are only staff)
+            setParticipantsCount(uids.length);
+
+            // Ensure organizer is in the UIDs list to be fetched for the UI list
             if (organizerId && !uids.includes(organizerId)) {
                 uids.push(organizerId);
             }
@@ -250,12 +317,8 @@ const TripOverviewScreen = () => {
 
             if (uids.length === 0) {
                 setParticipantsList([]);
-                setParticipantsCount(0);
                 return;
             }
-
-            // Update participant count immediately for UI consistency
-            setParticipantsCount(uids.length);
 
             uids.forEach((uid) => {
                 const profileRef = ref(database, `users/${uid}/profile`);
@@ -274,9 +337,23 @@ const TripOverviewScreen = () => {
                     // Settings: 'Show to organizer', 'Show to everyone', 'Do not show'
                     const canSeePII = (field) => {
                         if (isCurrentUser) return true; // Can always see self
-                        const setting = visibility[field] || 'Show to organizer'; // Default
-                        if (setting === 'Show to everyone') return true;
-                        if (setting === 'Show to organizer' && amIAdmin) return true;
+                        
+                        // 1. Check Global Admin Config
+                        const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
+                        
+                        // Rule: 'Do not show' hides from EVERYONE including admin
+                        if (globalSetting === 'Do not show') return false;
+                        if (globalSetting === 'Show to organizer') return amIAdmin;
+                        if (globalSetting === 'Show to everyone') return true;
+                        
+                        // 2. If 'Custom choice', check participant's own setting
+                        if (globalSetting === 'Custom choice') {
+                            const personalSetting = visibility[field] || 'Show to organizer';
+                            if (personalSetting === 'Do not show') return false;
+                            if (personalSetting === 'Show to organizer') return amIAdmin;
+                            if (personalSetting === 'Show to everyone') return true;
+                        }
+                        
                         return false;
                     };
 
@@ -304,22 +381,75 @@ const TripOverviewScreen = () => {
                         status: uid === organizerId ? 'Organizer' : 'Joined', 
                         isSpeaking: false,
                         isOrganizer: uid === organizerId,
+                        canSeeLocation: canSeePII('location')
                     };
 
                     setParticipantsList(prev => {
                         const filtered = prev.filter(p => p.id !== uid);
-                        const newList = [...filtered, pData];
-                        setParticipantsCount(newList.length);
-                        return newList;
+                        return [...filtered, pData];
                     });
                 }).catch(err => {
-                    console.warn(`Error fetching participant ${uid}:`, err);
                 });
             });
         });
 
         return () => unsubscribe();
-    }, [tripId, orgId, isAdmin]);
+    }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
+
+    // 3. Sync Voice Channel State
+    useEffect(() => {
+        if (!orgId || !tripId) return;
+
+        const voiceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel`);
+        const unsubscribe = onValue(voiceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                setIsChannelStarted(data.isChannelStarted ?? false);
+                setIsAllMuted(data.isAllMuted ?? false);
+                if (isAdmin && data.adminMuted !== undefined) {
+                    setIsMuted(data.adminMuted);
+                }
+                setActiveSpeakerData(data.activeSpeaker || null);
+            } else {
+                setIsChannelStarted(false);
+                setActiveSpeakerData(null);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [orgId, tripId]);
+
+    const handleToggleMute = async () => {
+        const nextState = !isMuted;
+        setIsMuted(nextState); // Optimistic update
+        
+        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+        if (isStaff && orgId && tripId) {
+            update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                adminMuted: nextState
+            });
+        }
+    };
+
+    const handleToggleAllMute = async () => {
+        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+        if (!isStaff || !orgId || !tripId) return;
+        const nextState = !isAllMuted;
+        setIsAllMuted(nextState);
+        update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+            isAllMuted: nextState
+        });
+    };
+
+    const handleToggleChannel = async () => {
+        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+        if (!isStaff || !orgId || !tripId) return;
+        const nextState = !isChannelStarted;
+        setIsChannelStarted(nextState);
+        update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+            isChannelStarted: nextState
+        });
+    };
 
     // 2. Fetch Real Notifications (Location Requests)
     useEffect(() => {
@@ -355,7 +485,8 @@ const TripOverviewScreen = () => {
 
     // 3. Fetch Shared Templates for Admin
     useEffect(() => {
-        if (!orgId || !tripId || !isAdmin) return;
+        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+        if (!orgId || !tripId || !isStaff) return;
 
         const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
         const unsubscribe = onValue(templatesRef, (snapshot) => {
@@ -386,8 +517,17 @@ const TripOverviewScreen = () => {
                 const lastKey = Object.keys(data ?? {})[0];
                 if (lastKey) {
                     const msg = data[lastKey];
+                    
+                    // Apply privacy check for sender name if possible
+                    // However, we don't have participantsList easily accessible here with privacy flags
+                    // Let's use a simpler check: if name visibility is restricted globally to 'Do not show'
+                    const nameSetting = globalVisibilityConfig?.name || 'Show to everyone';
+                    let senderName = msg.sender_name || 'User';
+                    if (nameSetting === 'Do not show') senderName = 'User';
+                    else if (nameSetting === 'Show to organizer' && !isAdmin) senderName = 'User';
+
                     setLastChatMessage({
-                        senderName: msg.sender_name || 'User',
+                        senderName: senderName,
                         text: msg.text || '',
                         type: msg.type || ''
                     });
@@ -453,6 +593,10 @@ const TripOverviewScreen = () => {
         for (const [uid, loc] of Object.entries(liveLocations ?? {})) {
             if (uid === auth.currentUser?.uid || !loc) continue;
 
+            // Check visibility
+            const pProfile = participantsList.find(p => p.id === uid);
+            if (pProfile && pProfile.canSeeLocation === false) continue;
+
             const dist = Math.sqrt(
                 Math.pow(loc.lat - userLocation.latitude, 2) +
                 Math.pow((loc.lng || 0) - userLocation.longitude, 2)
@@ -474,18 +618,28 @@ const TripOverviewScreen = () => {
 
     const nearestParticipant = getNearestParticipant();
 
-    const handleAcceptNotification = async (notifId) => {
-
-
+    const handleAcceptNotification = async (notif) => {
         const myUid = auth.currentUser?.uid;
         if (!myUid || !orgId || !tripId) return;
 
         try {
-            // Remove the notification once accepted
-            await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notifId}`));
-            // In a real app, you might also trigger a location ping here
+            // 1. Grant permission if it's a location request
+            if (notif?.type === 'location_request' && notif?.fromUid) {
+                await set(ref(database, `trips_active/${orgId}/${tripId}/location_permissions/${myUid}/${notif.fromUid}`), true);
+            }
+
+            // 2. Mark as accepted for visual feedback
+            await update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`), {
+                status: 'accepted'
+            });
+
+            // 3. Remove after delay
+            setTimeout(async () => {
+                try {
+                    await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`));
+                } catch (e) {}
+            }, 2000);
         } catch (error) {
-            console.warn("Failed to accept notification:", error);
         }
     };
 
@@ -505,7 +659,6 @@ const TripOverviewScreen = () => {
                 title: 'Join Journey'
             });
         } catch (error) {
-            console.warn("Share error:", error);
         }
     };
 
@@ -514,9 +667,37 @@ const TripOverviewScreen = () => {
         setDetailVisible(true);
     };
 
-    const handleDeletePress = () => {
+    const handleDeletePress = (type = 'this') => {
+        setDeleteType(type);
         setDetailVisible(false);
         setTimeout(() => setDeleteConfirmVisible(true), 300);
+    };
+
+    const confirmDelete = async () => {
+        if (!selectedParticipant) return;
+        
+        setDeleteConfirmVisible(false);
+        setIsLoading(true);
+        
+        try {
+            if (deleteType === 'all') {
+                const deleteGlobally = httpsCallable(functions, 'deleteUserGlobally');
+                await deleteGlobally({ targetUid: selectedParticipant.id });
+            } else {
+                const removeParticipant = httpsCallable(functions, 'removeParticipantFromTrip');
+                await removeParticipant({ 
+                    tripId: tripId, 
+                    targetUid: selectedParticipant.id 
+                });
+            }
+            Alert.alert("Success", `Participant has been removed ${deleteType === 'all' ? 'globally' : 'from this trip'}.`);
+        } catch (error) {
+            console.error("Delete Error:", error);
+            Alert.alert("Error", "Failed to delete participant. " + error.message);
+        } finally {
+            setIsLoading(false);
+            setSelectedParticipant(null);
+        }
     };
 
     const sortedParticipants = [...participantsList].sort((a, b) => {
@@ -541,28 +722,19 @@ const TripOverviewScreen = () => {
     const handleQuickMsgPress = (template) => {
         setAlertMessage(template.message);
         setQuickAlertVisible(true);
-        // Alert.alert(
-        //     "Send Message to All",
-        //     `Would you like to broadcast this alert to all participants?\n\n"${template.message}"`,
-        //     [
-        //         { text: "Cancel", style: "cancel" },
-        //         { 
-        //             text: "Send to All", 
-        //             onPress: () => broadcastNotification(template.message)
-        //         }
-        //     ]
-        // );
     };
 
     const broadcastNotification = async (msg) => {
-        if (!orgId || !tripId) return;
+        if (!orgId || !tripId) {
+            alert("Trip information not fully loaded. Please wait.");
+            return;
+        }
 
         try {
             const timestamp = serverTimestamp();
             const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
             
             // 1. Fetch current UIDs directly from the source of truth (trips_participants)
-            // This is more reliable than using the UI state 'participantsList' which might be incomplete
             const participantsRef = ref(database, `trips_participants/${tripId}`);
             const participantsSnap = await get(participantsRef);
             
@@ -572,7 +744,14 @@ const TripOverviewScreen = () => {
             }
 
             const val = participantsSnap.val();
-            const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+            if (!val) {
+                alert("No participants found in this trip.");
+                return;
+            }
+            
+            // S22: Correctly extract UIDs (values) and ensure they are unique
+            const rawUids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+            const uids = Array.from(new Set(rawUids.filter(id => typeof id === 'string')));
 
             // 2. Broadcast to all found UIDs
             const promises = uids.map(uid => {
@@ -586,11 +765,48 @@ const TripOverviewScreen = () => {
             });
 
             await Promise.all(promises);
-            setAlertMessage("Notification Sent!");
-            setQuickAlertVisible(true); // Confirmation toast
+            setQuickAlertVisible(false); // Close preview
+            Alert.alert("Success", "Notification broadcasted to all participants.");
         } catch (error) {
             console.error("Broadcast failed:", error);
             alert("Failed to send notification.");
+        }
+    };
+
+    const triggerEmergencyAlert = async () => {
+        if (!orgId || !tripId) return;
+        try {
+            // 1. Get all staff members for this organization
+            const staffRef = ref(database, `orgs/${orgId}/staff`);
+            const staffSnap = await get(staffRef);
+            
+            if (staffSnap.exists()) {
+                const staffData = staffSnap.val();
+                // S22: Ensure unique Staff UIDs to prevent duplicate emergency alerts
+                const staffUids = Array.from(new Set(Object.keys(staffData)));
+                const userName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'A Participant';
+                const timestamp = serverTimestamp();
+
+                // 2. Send notification to each staff member (excluding the sender)
+                const promises = staffUids
+                    .filter(sUid => sUid !== auth.currentUser?.uid) // Don't notify yourself
+                    .map(sUid => {
+                        const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${sUid}`);
+                        return push(notifRef, {
+                            name: isAdmin ? "Admin" : userName,
+                            message: "needs immediate assistance!",
+                            timestamp: timestamp,
+                            type: 'emergency',
+                            senderUid: auth.currentUser?.uid
+                        });
+                    });
+
+                await Promise.all(promises);
+                // setAlertMessage("Emergency Alert Sent to all staff!");
+                // setQuickAlertVisible(true);
+            }
+        } catch (error) {
+            console.error("Emergency Alert Failed:", error);
         }
     };
 
@@ -608,11 +824,11 @@ const TripOverviewScreen = () => {
     );
 
     const [prayerTimes, setPrayerTimes] = useState({
-        Fajr: "05:00",
-        Dhuhr: "12:00",
-        Asr: "16:00",
-        Maghrib: "18:00",
-        Isha: "20:00",
+        Fajr: "--:--",
+        Dhuhr: "--:--",
+        Asr: "--:--",
+        Maghrib: "--:--",
+        Isha: "--:--",
     });
 
     useEffect(() => {
@@ -620,12 +836,10 @@ const TripOverviewScreen = () => {
             try {
                 let { status } = await Location.requestForegroundPermissionsAsync();
                 if (status !== 'granted') return;
-
                 let location = await Location.getCurrentPositionAsync({});
                 const { latitude, longitude } = location.coords;
-
                 const response = await fetch(
-                    `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=2`
+                    `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
                 );
                 const data = await response.json();
                 if (data.code === 200) {
@@ -639,7 +853,6 @@ const TripOverviewScreen = () => {
                     });
                 }
             } catch (error) {
-                console.log('Error fetching prayer times:', error);
             }
         };
 
@@ -679,7 +892,7 @@ const TripOverviewScreen = () => {
             }, 1000);
         } else if (countdown === 0) {
             setEmergencyModalVisible(false);
-            // Here you would trigger the actual alert to the host
+            triggerEmergencyAlert();
             setCountdown(10);
         }
         return () => clearInterval(timer);
@@ -877,27 +1090,31 @@ const TripOverviewScreen = () => {
                             <TouchableOpacity style={styles.channelHeader} onPress={() => navigation.navigate('VoiceChat', { trip: tripData })}>
                                 <View style={styles.avatarWrapper}>
                                     <Image
-                                        source={{ uri: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=3387&auto=format&fit=crop' }}
+                                        source={{ uri: activeSpeakerData?.avatar || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff' }}
                                         style={styles.speakerAvatar}
                                     />
-                                    {/* <View style={styles.liveIndicator} /> */}
+                                    {isChannelStarted && <View style={styles.liveIndicator} />}
                                 </View>
                                 <View style={styles.channelInfo}>
-                                    <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: '#34C759' }}>Live</Text></Text>
-                                    <Text style={styles.activeSpeaker}>Active speaker: Liam</Text>
+                                    <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: isChannelStarted ? '#34C759' : '#A1A1AA' }}>{isChannelStarted ? 'Live' : 'Offline'}</Text></Text>
+                                    <Text style={styles.activeSpeaker}>
+                                        {isChannelStarted ? (activeSpeakerData ? `Active speaker: ${activeSpeakerData.name}` : 'Ready for conversation') : 'Channel not started'}
+                                    </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={24} color="#fff" />
                             </TouchableOpacity>
 
                             {/* Audio Channel Controls */}
                             <View style={styles.controlsGrid}>
-                                {isAdmin ? (
+                                {(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') ? (
                                     <>
                                         <TouchableOpacity
-                                            onPress={() => setIsMuted(!isMuted)}
+                                            onPress={handleToggleMute}
+                                            disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
-                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
+                                                !isChannelStarted && { opacity: 0.5 }
                                             ]}
                                         >
                                             <View style={{ marginRight: 8 }}>
@@ -908,14 +1125,16 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, !isMuted && { color: '#D66A77', fontWeight: 'bold' }]}>
-                                                {isMuted ? 'Mute Myself' : 'Unmute Myself'}
+                                                {isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
-                                            onPress={() => setIsAllMuted(!isAllMuted)}
+                                            onPress={handleToggleAllMute}
+                                            disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
-                                                !isAllMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                                !isAllMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
+                                                !isChannelStarted && { opacity: 0.5 }
                                             ]}
                                         >
                                             <View style={{ marginRight: 8 }}>
@@ -926,24 +1145,24 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, !isAllMuted && { color: '#D66A77' }]}>
-                                                {isAllMuted ? 'Mute All' : 'Unmute All'}
+                                                {isAllMuted ? 'Unmute All' : 'Mute All'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[
                                                 styles.controlButtonOutline,
-                                                { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#34C759' : '#D66A77', borderColor: isChannelStarted ? '#34C759' : '#D66A77' }
+                                                { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#D66A77' : '#34C759', borderColor: isChannelStarted ? '#D66A77' : '#34C759' }
                                             ]}
-                                            onPress={() => setIsChannelStarted(!isChannelStarted)}
+                                            onPress={handleToggleChannel}
                                         >
                                             <Ionicons
-                                                name={isChannelStarted ? "play-circle-outline" : "pause-circle-outline"}
+                                                name={isChannelStarted ? "stop-circle-outline" : "play-circle-outline"}
                                                 size={20}
-                                                color={isChannelStarted ? "#FFF" : "#2D2528"}
+                                                color="#FFF"
                                                 style={{ marginRight: 8 }}
                                             />
-                                            <Text style={[styles.controlText, { color: isChannelStarted ? "#FFF" : "#2D2528" }]}>
-                                                {isChannelStarted ? 'Channel Start' : 'Channel Pause'}
+                                            <Text style={[styles.controlText, { color: "#FFF" }]}>
+                                                {isChannelStarted ? 'Stop Channel' : 'Start Channel'}
                                             </Text>
                                         </TouchableOpacity>
 
@@ -951,22 +1170,24 @@ const TripOverviewScreen = () => {
                                 ) : (
                                     <View style={{ width: '100%', alignItems: 'center' }}>
                                         <TouchableOpacity
-                                            onPress={() => setIsMuted(!isMuted)}
+                                            onPress={handleToggleMute}
+                                            disabled={isAllMuted}
                                             style={[
                                                 styles.controlButtonOutline,
                                                 { width: '100%', marginBottom: 0 },
-                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                                (!isMuted && !isAllMuted) && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
+                                                isAllMuted && { opacity: 0.5 }
                                             ]}
                                         >
                                             <View style={{ marginRight: 8 }}>
-                                                {isMuted ? (
+                                                {(isMuted || isAllMuted) ? (
                                                     <MicMutedIcon color="#FFF" size={20} />
                                                 ) : (
                                                     <MicUnmutedIcon color="#D66A77" size={20} />
                                                 )}
                                             </View>
-                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                                Mute Myself
+                                            <Text style={[styles.controlText, (!isMuted && !isAllMuted) && { color: '#D66A77' }]}>
+                                                {isAllMuted ? 'Muted by Organizer' : (isMuted ? 'Mute Myself' : 'Unmute Myself')}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
@@ -1015,6 +1236,7 @@ const TripOverviewScreen = () => {
                                         <Marker 
                                             coordinate={userLocation} 
                                             anchor={{ x: 0.5, y: 0.5 }}
+                                            tracksViewChanges={false}
                                         >
                                             <View style={styles.mapAvatar}>
                                                 <Image 
@@ -1101,17 +1323,25 @@ const TripOverviewScreen = () => {
                                                 <View style={styles.notificationItem}>
                                                     <View style={styles.notificationContent}>
                                                         <Text style={styles.notifName}>
-                                                            {item.name} <Text style={styles.notifMsg}>{item.message}</Text>
+                                                            {item.name} <Text style={[styles.notifMsg, item.type === 'emergency' && { color: '#FF4B4B', fontWeight: 'bold' }]}>{item.message}</Text>
                                                         </Text>
                                                     </View>
                                                     
-                                                    {item.type !== 'alert' && (
+                                                    {item.type !== 'alert' && item.type !== 'emergency' && item.type !== 'broadcast' && (
                                                         <TouchableOpacity 
-                                                            style={styles.acceptButton}
-                                                            onPress={() => handleAcceptNotification(item.id)}
+                                                            style={[styles.acceptButton, item.status === 'accepted' && { backgroundColor: '#A1A1AA' }]}
+                                                            onPress={() => handleAcceptNotification(item)}
+                                                            disabled={item.status === 'accepted'}
                                                         >
-                                                            <Ionicons name="checkmark-circle-outline" size={14} color="#FFF" style={{ marginRight: 6 }} />
-                                                            <Text style={styles.acceptButtonText}>Accept</Text>
+                                                            <Ionicons 
+                                                                name={item.status === 'accepted' ? "checkmark-done-circle" : "checkmark-circle-outline"} 
+                                                                size={14} 
+                                                                color="#FFF" 
+                                                                style={{ marginRight: 6 }} 
+                                                            />
+                                                            <Text style={styles.acceptButtonText}>
+                                                                {item.status === 'accepted' ? 'Accepted' : 'Accept'}
+                                                            </Text>
                                                         </TouchableOpacity>
                                                     )}
                                                 </View>
@@ -1178,7 +1408,7 @@ const TripOverviewScreen = () => {
 
                         {/* Quick Messages & Alert Row - Hide Quick Messages for Participants */}
                         <View style={styles.rowContainer}>
-                            {isAdmin && (
+                            {(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') && (
                                 <View style={[styles.sectionCard, styles.halfCard, styles.quickMsgCard]}>
                                     <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
                                         {sharedTemplates.length > 0 ? (
@@ -1202,12 +1432,8 @@ const TripOverviewScreen = () => {
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, styles.alertCard, !isAdmin && { flex: 1 }]}
                                 onPress={() => {
-                                    if (!isAdmin) {
-                                        setCountdown(10);
-                                        setEmergencyModalVisible(true);
-                                    } else {
-                                        navigation.navigate('AlertHistory');
-                                    }
+                                    setCountdown(10);
+                                    setEmergencyModalVisible(true);
                                 }}
                             >
                                 <View style={styles.alertIconContainer}>
@@ -1215,7 +1441,7 @@ const TripOverviewScreen = () => {
                                 </View>
                                 <View style={styles.alertContent}>
                                     {/* <Ionicons name="chevron-forward" size={20} color="#FFF" style={{ alignSelf: 'flex-end', marginBottom: 20 }} /> */}
-                                    <Text style={styles.alertTitle}>Ethan Carter</Text>
+                                    <Text style={styles.alertTitle}>SOS Alert</Text>
                                 </View>
                             </TouchableOpacity>
                         </View>
@@ -1269,80 +1495,15 @@ const TripOverviewScreen = () => {
                 </View>
             </Modal>
 
-            {/* Participant Detail Modal - Bottom Sheet */}
-            <Modal
+            <ParticipantDetailModal
                 isVisible={detailVisible}
-                onBackdropPress={() => setDetailVisible(false)}
-                onBackButtonPress={() => setDetailVisible(false)}
-                onSwipeComplete={() => setDetailVisible(false)}
-                swipeDirection="down"
-                swipeThreshold={100}
-                propagateSwipe={true}
-                useNativeDriver={false}
-                useNativeDriverForBackdrop={true}
-                animationIn="bounceInUp"
-                animationOut="bounceOutDown"
-                style={{ margin: 0, justifyContent: 'flex-end', }}
-            >
-
-
-
-                {selectedParticipant ? (
-                    <View style={styles.bottomSheet}>
-                        <View style={styles.handle} />
-                        <Text style={styles.sheetTitle}>Participant Detail</Text>
-                        <View style={styles.divider} />
-                        <View style={styles.detailHeader}>
-                            <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
-                            <Text style={styles.detailName}>{selectedParticipant.name}</Text>
-                        </View>
-
-                        {/* Real Map View */}
-                        <View style={styles.mapPlaceholder}>
-                            <MapView
-                                style={StyleSheet.absoluteFill}
-                                initialRegion={{
-                                    latitude: 21.4225,
-                                    longitude: 39.8262,
-                                    latitudeDelta: 0.01,
-                                    longitudeDelta: 0.01,
-                                }}
-                                customMapStyle={mapDarkStyle}
-                            >
-                                <Marker
-                                    coordinate={{ latitude: 21.4225, longitude: 39.8262 }}
-                                >
-                                    <View style={styles.mapPinContainer}>
-                                        <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
-                                    </View>
-                                </Marker>
-                            </MapView>
-                        </View>
-
-                        {isAdmin && (
-                            <>
-                                <TouchableOpacity
-                                    style={styles.deleteButtonPill}
-                                    onPress={handleDeletePress}
-                                >
-                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                    <Text style={{ color: '#fff' }}>Delete for this trip</Text>
-                                </TouchableOpacity>
-
-                                <TouchableOpacity
-                                    style={styles.deleteButtonPill}
-                                    onPress={handleDeletePress}
-                                >
-                                    <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                    <Text style={{ color: '#fff' }}>Delete for all trip</Text>
-                                </TouchableOpacity>
-                            </>
-                        )}
-                    </View>
-                ) : (
-                    <View />
-                )}
-            </Modal>
+                onClose={() => setDetailVisible(false)}
+                participant={selectedParticipant}
+                liveLocations={liveLocations}
+                isAdmin={isAdmin}
+                onDelete={handleDeletePress}
+                mapDarkStyle={mapDarkStyle}
+            />
 
             {/* Delete Confirmation Modal */}
             <Modal
@@ -1374,7 +1535,7 @@ const TripOverviewScreen = () => {
                         />
                         <TouchableOpacity
                             style={styles.confirmDeleteBtn}
-                            onPress={() => setDeleteConfirmVisible(false)}
+                            onPress={confirmDelete}
                         >
                             <Text style={styles.confirmDeleteText}>Delete</Text>
                         </TouchableOpacity>
@@ -1503,21 +1664,20 @@ const TripOverviewScreen = () => {
 
                     <Text style={styles.quickAlertMsg}>{alertMessage}</Text>
 
-                    <TouchableOpacity
-                        style={styles.quickAlertBtn}
-                        onPress={() => setQuickAlertVisible(false)}
-                    >
-                        <LinearGradient
-                            colors={['#D4AF37', '#B8860B']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={styles.quickAlertGradient}
+                    <View style={styles.confirmButtons}>
+                        <GradientBorderButton
+                            text="Cancel"
+                            onPress={() => setQuickAlertVisible(false)}
+                            style={{ flex: 1 }}
+                            innerBg="#1E2124"
+                        />
+                        <TouchableOpacity
+                            style={[styles.confirmDeleteBtn, { backgroundColor: '#B99A4A' }]}
+                            onPress={() => broadcastNotification(alertMessage)}
                         >
-                            <View style={styles.quickAlertInner}>
-                                <Text style={styles.quickAlertBtnText}>OK</Text>
-                            </View>
-                        </LinearGradient>
-                    </TouchableOpacity>
+                            <Text style={styles.confirmDeleteText}>Send All</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </Modal>
         </View >
@@ -1979,60 +2139,6 @@ const styles = StyleSheet.create({
         height: 0.2,
         backgroundColor: '#eeeeee',
         marginBottom: 24,
-    },
-    detailHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 24,
-    },
-    detailAvatar: {
-        width: 64,
-        height: 64,
-        borderRadius: 32,
-        marginRight: 16,
-    },
-    detailName: {
-        color: '#FFF',
-        fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.bold,
-    },
-    mapPlaceholder: {
-        width: '100%',
-        height: 180,
-        borderRadius: 20,
-        overflow: 'hidden',
-        marginBottom: 30,
-        backgroundColor: '#1A1E21',
-    },
-    mapImage: {
-        width: '100%',
-        height: '100%',
-    },
-    mapPinContainer: {
-        position: 'absolute',
-        top: '40%',
-        left: '50%',
-        transform: [{ translateX: -20 }, { translateY: -20 }],
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        borderWidth: 2,
-        borderColor: '#B99A4A',
-        overflow: 'hidden',
-    },
-    mapPinAvatar: {
-        width: '100%',
-        height: '100%',
-    },
-    deleteButtonPill: {
-        width: '100%',
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: '#942F31',
-        flexDirection: 'row',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 16,
     },
     confirmOverlay: {
         flex: 1,

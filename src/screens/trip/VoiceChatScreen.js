@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -8,14 +8,36 @@ import {
     ScrollView,
     Dimensions,
     Image,
-    StatusBar
+    StatusBar,
+    ActivityIndicator,
+    Alert,
+    PermissionsAndroid,
+    Platform,
+    Animated
 } from 'react-native';
+import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { useNavigation, useRoute } from '@react-navigation/native';
+import { 
+    LiveKitRoom, 
+    useTracks, 
+    useRoomContext,
+    AudioSession,
+    AndroidAudioTypePresets,
+    useIOSAudioManagement
+} from '@livekit/react-native';
+import { Track, ParticipantEvent, ConnectionQuality, setLogLevel } from 'livekit-client';
+
+// Silence LiveKit and WebRTC logs for a cleaner console
+setLogLevel('error');
+import * as Network from 'expo-network';
+import { database, functions, auth } from '../../config/firebase';
+import { ref, onValue, off, update } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
@@ -41,41 +63,639 @@ const MicMutedIcon = ({ color = "white", size = 20 }) => (
     </Svg>
 );
 
-const VoiceChatScreen = () => {
-    const navigation = useNavigation();
-    const route = useRoute();
-    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
-    const tripData = trip || {
-        image: require('../../../assets/Madinah.png'),
+const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading, isMuted, setIsMuted, isGlobalMuteActive }) => {
+    const room = useRoomContext();
+    // Include local track so users can see their own signal bars (helps debugging)
+    const tracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+    const [participantMap, setParticipantMap] = useState({});
+
+    // iOS specific audio management (v2)
+    useIOSAudioManagement(room);
+
+    // Sync local mute state with hardware
+    useEffect(() => {
+        if (room?.localParticipant) {
+            room.localParticipant.setMicrophoneEnabled(!isMuted);
+        }
+    }, [isMuted, room]);
+
+    // Ensure speakers are initialized
+    useEffect(() => {
+        const initAudio = async () => {
+            try {
+                await AudioSession.setDefaultRemoteAudioTrackVolume(1.0);
+            } catch (e) {
+            }
+        };
+        initAudio();
+    }, []);
+
+
+    // Fetch User Profiles for participants
+    useEffect(() => {
+        tracks.forEach(async (trackRef) => {
+            const uid = trackRef.participant.identity;
+            if (uid && !participantMap[uid]) {
+                const userRef = ref(database, `users/${uid}`);
+                onValue(userRef, (snap) => {
+                    const userData = snap.val() || {};
+                    const profile = userData.profile || {};
+                    
+                    let displayName = 'User';
+                    if (profile.firstName || profile.lastName) {
+                        displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                    } else if (userData.full_name) {
+                        displayName = userData.full_name;
+                    } else {
+                        displayName = 'Traveler';
+                    }
+
+                    const displayImage = profile.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+
+                    setParticipantMap(prev => ({
+                        ...prev,
+                        [uid]: {
+                            name: displayName,
+                            avatar: displayImage
+                        }
+                    }));
+                }, { onlyOnce: true });
+            }
+        });
+    }, [tracks]);
+
+    // Report active speaker to Firebase
+    useEffect(() => {
+        if (!room?.localParticipant || !auth.currentUser) return;
+
+        const onSpeakingChanged = (speaking) => {
+            if (speaking) {
+                const orgId = tripData.orgId || tripData.org_id;
+                const tripId = tripData.id || tripData.tripId;
+                const myUid = auth.currentUser.uid;
+                const myInfo = participantMap[myUid];
+                
+                if (orgId && tripId && myInfo) {
+                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                        activeSpeaker: {
+                            name: myInfo.name,
+                            avatar: myInfo.avatar,
+                            uid: myUid
+                        }
+                    });
+                }
+            }
+        };
+
+        room.localParticipant.on(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+        return () => {
+            room.localParticipant.off(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+        };
+    }, [room?.localParticipant, participantMap, tripData]);
+
+    const handleToggleMute = async () => {
+        const nextState = !isMuted;
+        setIsMuted(nextState);
+        
+        if (isAdmin) {
+            const orgId = tripData.orgId || tripData.org_id;
+            const tripId = tripData.id || tripData.tripId;
+            if (orgId && tripId) {
+                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                    adminMuted: nextState
+                });
+            }
+        }
     };
-    const invitationCode = directCode || tripData.invitationCode;
-    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
-    const participants = [
-        { id: 1, name: 'Ethan Carter', status: 'Speaking', isSpeaking: true, avatar: 'https://randomuser.me/api/portraits/men/32.jpg', network: 'good' },
-        { id: 2, name: 'Sophia Bennett', status: 'Muted', isSpeaking: false, avatar: 'https://randomuser.me/api/portraits/women/44.jpg', network: 'good' },
-        { id: 3, name: 'Liam Harper', status: 'Muted', isSpeaking: false, avatar: 'https://randomuser.me/api/portraits/men/32.jpg', network: 'fair' },
-        { id: 4, name: 'Olivia Reed', status: 'Muted', isSpeaking: false, avatar: 'https://randomuser.me/api/portraits/women/65.jpg', network: 'poor' },
-        { id: 5, name: 'Ahmed Badawi', status: 'Muted', isSpeaking: false, avatar: 'https://randomuser.me/api/portraits/men/44.jpg', network: 'none' },
-        { id: 6, name: 'Baskin Furqan', status: 'Muted', isSpeaking: false, avatar: 'https://randomuser.me/api/portraits/men/65.jpg', network: 'none' },
-    ];
+    const handleMuteAll = async () => {
+        const tripId = tripData.id || tripData.tripId;
+        const orgId = tripData.orgId || tripData.org_id;
+        if (!orgId || !tripId) return;
 
-    const [isMuted, setIsMuted] = useState(true);
-    const [isAllMuted, setIsAllMuted] = useState(true);
-    const [isChannelStarted, setIsChannelStarted] = useState(true);
-    const [isHoldingToTalk, setIsHoldingToTalk] = useState(false);
+        const nextState = !isGlobalMuteActive;
+        try {
+            await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                isAllMuted: nextState
+            });
+            // State will be updated by the listener
+        } catch (error) {
+            Alert.alert("Action Failed", "Could not update room state.");
+        }
+    };
 
-    const SignalBars = ({ type }) => {
-        if (type === 'none') return null;
-        const color = type === 'good' ? '#34C759' : type === 'fair' ? '#FFC107' : '#FF4B4B';
+    const SignalBars = ({ quality, networkType = 'cellular' }) => {
+        // connectionQuality in LiveKit: Excellent (2), Good (1), Poor (0)
+        // Some versions use: Excellent (3), Good (2), Poor (1) - we'll handle both
+        const isGood = quality === 2 || quality === ConnectionQuality.Excellent;
+        const isFair = quality === 1 || quality === ConnectionQuality.Good;
+        const isPoor = quality === 0 || quality === ConnectionQuality.Poor;
+
+        const color = isGood ? '#34C759' : isFair ? '#FFC107' : '#FF4B4B';
+        const iconName = networkType === 'wifi' ? 'wifi' : 'cellular';
+        
         return (
             <View style={styles.signalBars}>
+                {/* <Ionicons name={iconName} size={12} color={color} style={{ marginRight: 2 }} /> */}
                 <View style={[styles.signalBar, { height: 6, backgroundColor: color }]} />
-                <View style={[styles.signalBar, { height: 10, backgroundColor: type !== 'poor' ? color : '#444' }]} />
-                <View style={[styles.signalBar, { height: 14, backgroundColor: type === 'good' ? color : '#444' }]} />
+                <View style={[styles.signalBar, { height: 10, backgroundColor: (isGood || isFair) ? color : 'rgba(255,255,255,0.1)' }]} />
+                <View style={[styles.signalBar, { height: 14, backgroundColor: isGood ? color : 'rgba(255,255,255,0.1)' }]} />
             </View>
         );
     };
+
+    const SpeakerGlow = () => {
+        const pulseAnim = useRef(new Animated.Value(1)).current;
+        const opacityAnim = useRef(new Animated.Value(0.6)).current;
+
+        useEffect(() => {
+            Animated.loop(
+                Animated.parallel([
+                    Animated.sequence([
+                        Animated.timing(pulseAnim, {
+                            toValue: 1.4,
+                            duration: 1000,
+                            useNativeDriver: true,
+                        }),
+                        Animated.timing(pulseAnim, {
+                            toValue: 1,
+                            duration: 1000,
+                            useNativeDriver: true,
+                        })
+                    ]),
+                    Animated.sequence([
+                        Animated.timing(opacityAnim, {
+                            toValue: 0.2,
+                            duration: 1000,
+                            useNativeDriver: true,
+                        }),
+                        Animated.timing(opacityAnim, {
+                            toValue: 0.6,
+                            duration: 1000,
+                            useNativeDriver: true,
+                        })
+                    ])
+                ])
+            ).start();
+        }, []);
+
+        return (
+            <Animated.View 
+                style={[
+                    styles.glowCircle, 
+                    { 
+                        transform: [{ scale: pulseAnim }],
+                        opacity: opacityAnim
+                    }
+                ]} 
+            />
+        );
+    };
+
+    // Detect and sync network type (Safe check for native module)
+    useEffect(() => {
+        const updateNetworkType = async () => {
+            if (!room?.localParticipant) return;
+            try {
+                // Check if the native module is actually linked/available
+                if (Network && typeof Network.getNetworkStateAsync === 'function') {
+                    const state = await Network.getNetworkStateAsync();
+                    const type = state.type === Network.NetworkType.WIFI ? 'wifi' : 'cellular';
+                    
+                    const currentAttributes = room.localParticipant.attributes || {};
+                    if (currentAttributes.networkType !== type) {
+                        if (typeof room.localParticipant.setAttributes === 'function') {
+                            room.localParticipant.setAttributes({ ...currentAttributes, networkType: type });
+                        }
+                    }
+                }
+            } catch (e) {
+                // Silently fail if native module is missing (common before a rebuild)
+                // console.log("Network detection skipped: Native module not found yet.");
+            }
+        };
+
+        updateNetworkType();
+        const interval = setInterval(updateNetworkType, 15000);
+        return () => clearInterval(interval);
+    }, [room?.localParticipant]);
+
+    const navigation = useNavigation();
+
+    return (
+        <ImageBackground
+            source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+            style={styles.backgroundImage}
+            resizeMode="cover"
+        >
+            <LinearGradient
+                colors={['rgba(0,0,0,0.6)', '#1A1E21']}
+                style={styles.gradientOverlay}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 0.4 }}
+            />
+
+            <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
+                        <Ionicons name="arrow-back" size={24} color="#FFF" />
+                    </TouchableOpacity>
+                    <Text style={styles.headerTitle}>Voice Chat</Text>
+                    <View style={{ width: 40 }} />
+                </View>
+
+                <View style={[styles.topSection, { marginTop: 40 }]}>
+                    <View style={styles.controlsGrid}>
+                        {isAdmin ? (
+                            <>
+                                <View style={styles.controlRow}>
+                                    <TouchableOpacity
+                                        onPress={handleToggleMute}
+                                        style={[
+                                            styles.controlButtonOutline,
+                                            { flex: 1 },
+                                            !(isMuted || false) && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                        ]}
+                                    >
+                                        <View style={{ marginRight: 8 }}>
+                                            {/* {isMuted ? (
+                                                <MicMutedIcon color="#FFF" size={20} />
+                                            ) : (
+                                                <MicUnmutedIcon color="#D66A77" size={20} />
+                                            )} */}
+                                        </View>
+                                        <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
+                                            {isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={handleMuteAll}
+                                        style={[
+                                            styles.controlButtonOutline,
+                                            { flex: 1 },
+                                            isGlobalMuteActive && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                        ]}
+                                    >
+                                        {/* <View style={{ marginRight: 8 }}>
+                                            {!isGlobalMuteActive ? (
+                                                <MicMutedIcon color="#FFF" size={20} />
+                                            ) : (
+                                                <MicUnmutedIcon color="#D66A77" size={20} />
+                                            )}
+                                        </View> */}
+                                        <Text style={[styles.controlText, isGlobalMuteActive && { color: '#D66A77' }]}>
+                                            {isGlobalMuteActive ? 'Unmute All' : 'Mute All'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
+                                <TouchableOpacity
+                                    style={[
+                                        styles.controlButtonOutline,
+                                        { width: '100%', borderStyle: 'solid', backgroundColor: '#942F31', borderColor: '#942F31' }
+                                    ]}
+                                    onPress={onDisconnect}
+                                >
+                                    <Ionicons name="stop-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                                    <Text style={[styles.controlText, { color: '#FFF' }]}>
+                                        Stop Channel
+                                    </Text>
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <View style={styles.controlRow}>
+                                <TouchableOpacity
+                                    onPress={() => !(isGlobalMuteActive || false) && setIsMuted(!(isMuted || false))}
+                                    style={[
+                                        styles.controlButtonOutline,
+                                        { flex: 1, opacity: (isGlobalMuteActive || false) ? 0.6 : 1 },
+                                        !(isMuted || false) && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                    ]}
+                                    disabled={(isGlobalMuteActive || false)}
+                                >
+                                    <View style={{ marginRight: 8 }}>
+                                        {/* {(isMuted || false) ? (
+                                            <MicMutedIcon color="#FFF" size={20} />
+                                        ) : (
+                                            <MicUnmutedIcon color="#D66A77" size={20} />
+                                        )} */}
+                                    </View>
+                                    <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
+                                        {isGlobalMuteActive ? 'Muted by Admin' : (isMuted ? 'UnMute Myself' : 'Mute Myself')}
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={onDisconnect}
+                                    style={[
+                                        styles.controlButtonOutline,
+                                        {
+                                            borderColor: '#942F31',
+                                            backgroundColor: '#942F31',
+                                            flex: 1
+                                        }
+                                    ]}
+                                >
+                                    <Text style={[styles.controlText, { color: '#fff' }]}>Channel Leave</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+
+                    <View style={styles.statusRow}>
+                        <View style={styles.networkStatus}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
+                                <Text style={[styles.statusText, { color: '#34C759' }]}>Live Connected</Text>
+                            </View>
+                            <Text style={styles.sectionTitle}>Participants</Text>
+                        </View>
+                    </View>
+                </View>
+
+                <ScrollView
+                    style={styles.listSectionScroll}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                >
+                    <View style={styles.listSection}>
+                        {tracks.map((trackRef, index) => {
+                            const pData = participantMap[trackRef.participant.identity] || { 
+                                name: trackRef.participant.name || 'User', 
+                                avatar: 'https://randomuser.me/api/portraits/lego/1.jpg' 
+                            };
+                            const isSpeaking = trackRef.participant.isSpeaking;
+                            const isLocal = trackRef.participant.isLocal;
+
+                            return (
+                                <View key={trackRef.participant.identity}>
+                                    <View style={styles.participantRow}>
+                                        <View style={[
+                                            styles.avatarContainer,
+                                            isSpeaking && styles.speakingAvatarBorder
+                                        ]}>
+                                            {isSpeaking && <SpeakerGlow />}
+                                            <Image source={{ uri: pData.avatar }} style={styles.avatar} />
+                                        </View>
+
+                                        <View style={styles.participantInfo}>
+                                            <View style={styles.nameRow}>
+                                                <Text style={styles.nameText}>{pData.name} {isLocal ? '(You)' : ''}</Text>
+                                                <View style={styles.inlineStats}>
+                                                    <SignalBars 
+                                                        quality={trackRef.participant.connectionQuality} 
+                                                        networkType={trackRef.participant.attributes?.networkType || 'cellular'}
+                                                    />
+                                                </View>
+                                            </View>
+                                            <Text style={styles.statusSubText}>{isSpeaking ? 'Speaking' : (trackRef.participant.isMicrophoneEnabled ? 'Active' : 'Muted')}</Text>
+                                        </View>
+
+                                        <View style={styles.rightActions}>
+                                            {isSpeaking ? (
+                                                <View style={styles.micCircle}>
+                                                    <MicUnmutedIcon color="#FFF" size={25} />
+                                                </View>
+                                            ) : (
+                                                <MicMutedIcon color={trackRef.participant.isMicrophoneEnabled ? "#FFF" : "#D66A77"} size={25} />
+                                            )}
+                                        </View>
+                                    </View>
+                                    {index < tracks.length - 1 && <View style={styles.rowSeparator} />}
+                                </View>
+                            );
+                        })}
+                        <View style={{ height: 100 }} />
+                    </View>
+                </ScrollView>
+
+                <TripBottomTabBar activeRoute="VoiceChat" tripData={tripData} />
+            </SafeAreaView>
+        </ImageBackground>
+    );
+};
+
+const VoiceChatScreen = () => {
+    const navigation = useNavigation();
+    const route = useRoute();
+    const { trip: passedTrip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
+    
+    // Core state and trip data
+    const tripData = passedTrip || { image: require('../../../assets/Madinah.png') };
+    const tripId = tripData.id || tripData.tripId;
+    const invitationCode = directCode || tripData.invitationCode;
+    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (passedTrip?.isAdmin !== undefined ? passedTrip.isAdmin : !invitationCode);
+
+    // LiveKit Connection States
+    const [connectionDetails, setConnectionDetails] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [isConnected, setIsConnected] = useState(false);
+    const [isChannelActive, setIsChannelActive] = useState(false);
+    const [isMuted, setIsMuted] = useState(false);
+    const [isGlobalMuteActive, setIsGlobalMuteActive] = useState(false);
+    const [userRole, setUserRole] = useState('participant');
+    const [isAdminState, setIsAdminState] = useState(isAdmin);
+
+    useEffect(() => {
+        const fetchRole = async () => {
+            if (auth.currentUser) {
+                const token = await auth.currentUser.getIdTokenResult();
+                const role = token.claims.role || 'participant';
+                setUserRole(role);
+                setIsAdminState(role === 'admin' || role === 'co-host' || role === 'manager');
+            }
+        };
+        fetchRole();
+    }, []);
+
+    // Listener for Global Mute & Channel Status (Consolidated)
+    useEffect(() => {
+        if (!tripId || !tripData.orgId) return;
+
+        const voiceRef = ref(database, `trips_active/${tripData.orgId}/${tripId}/voice_channel`);
+        const unsubscribe = onValue(voiceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                setIsChannelActive(data.isChannelStarted ?? false);
+                setIsGlobalMuteActive(data.isAllMuted ?? false);
+                
+                if (data.isAllMuted && !isAdminState) {
+                    setIsMuted(true);
+                } else if (isAdminState && data.adminMuted !== undefined) {
+                    setIsMuted(data.adminMuted);
+                }
+            } else {
+                setIsChannelActive(false);
+            }
+        });
+        return () => unsubscribe();
+    }, [tripId, tripData.orgId, isAdminState]);
+
+    // Audio Session Lifecycle
+    useEffect(() => {
+        if (isConnected) {
+            const setupAudio = async () => {
+                try {
+                    // S22: Force loudspeaker globally for a "walkie-talkie" experience
+                    await Audio.setAudioModeAsync({
+                        allowsRecordingIOS: true,
+                        playsInSilentModeIOS: true,
+                        staysActiveInBackground: true,
+                        shouldRouteThroughEarpieceAndroid: false, // Force speaker on Android
+                    });
+
+                    await AudioSession.configureAudio({
+                        android: { audioTypeOptions: AndroidAudioTypePresets.communication },
+                        ios: { defaultOutput: 'speaker' },
+                    });
+                    await AudioSession.startAudioSession();
+                } catch (e) {
+                }
+            };
+            setupAudio();
+            return () => {
+                AudioSession.stopAudioSession().catch(e => {});
+            };
+        }
+    }, [isConnected]);
+
+    // Listener for Channel Activity
+    useEffect(() => {
+        if (!tripId) return;
+        const activeRef = ref(database, `orgs/${tripData.orgId}/trips/${tripId}/voice_state/is_active`);
+        const unsubscribe = onValue(activeRef, (snapshot) => {
+            const active = !!snapshot.val();
+            setIsChannelActive(active);
+            
+            // Auto-leave for participants when channel is stopped (S21)
+            if (!active && isConnected && !isAdminState) {
+                handleDisconnect();
+            }
+        });
+        return () => unsubscribe();
+    }, [tripId, tripData.orgId, isConnected, isAdminState]);
+
+    const requestMicrophonePermission = async () => {
+        if (Platform.OS === 'android') {
+            try {
+                const granted = await PermissionsAndroid.request(
+                    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+                    {
+                        title: "Microphone Permission",
+                        message: "GoMusafir needs access to your microphone for voice chat.",
+                        buttonNeutral: "Ask Me Later",
+                        buttonNegative: "Cancel",
+                        buttonPositive: "OK"
+                    }
+                );
+                return granted === PermissionsAndroid.RESULTS.GRANTED;
+            } catch (err) {
+                return false;
+            }
+        }
+        return true; // iOS handles this within the library/Info.plist
+    };
+
+    // Fetch Token logic
+    const fetchToken = async () => {
+        if (!tripId) {
+            Alert.alert("Error", "No trip information found.");
+            return;
+        }
+
+        const hasPermission = await requestMicrophonePermission();
+        if (!hasPermission) {
+            Alert.alert("Permission Required", "Microphone access is required to use voice chat.");
+            return;
+        }
+
+        try {
+            setLoading(true);
+
+            // If admin is starting, toggle status first and reset mute states
+            if (isAdminState && !isChannelActive) {
+                const toggle = httpsCallable(functions, 'toggleChannelStatus');
+                await toggle({ tripId, active: true });
+                
+                // Reset global mute state when starting fresh
+                const orgId = tripData.orgId || tripData.org_id;
+                if (orgId) {
+                    await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                        isAllMuted: false,
+                        adminMuted: false,
+                        isChannelStarted: true
+                    });
+                }
+                setIsMuted(false); // Ensure local state is also unmuted
+            }
+
+            const generateToken = httpsCallable(functions, 'generateLiveKitToken');
+            const { data } = await generateToken({ tripId });
+
+            if (data?.token && data?.url) {
+                setConnectionDetails({
+                    token: data.token,
+                    url: data.url
+                });
+                setIsConnected(true);
+                // Initialize local mute state based on global status
+                setIsMuted(isGlobalMuteActive);
+            } else {
+                throw new Error("Failed to receive connection details from server.");
+            }
+        } catch (error) {
+            const msg = error.code === 'failed-precondition' 
+                ? "The channel has not been started by the organizer yet."
+                : (error.message || "Failed to connect to the voice chat service.");
+            Alert.alert("Voice Chat Unavailable", msg);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleDisconnect = async () => {
+        if (isAdmin && isConnected) {
+            try {
+                if (isAdminState) {
+                    const toggle = httpsCallable(functions, 'toggleChannelStatus');
+                    await toggle({ tripId, active: false });
+                    
+                    const orgId = tripData.orgId || tripData.org_id;
+                    if (orgId) {
+                        await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                            isChannelStarted: false
+                        });
+                    }
+                }
+            } catch (e) {
+            }
+        }
+        setIsConnected(false);
+        setConnectionDetails(null);
+    };
+
+    if (isConnected && connectionDetails) {
+        return (
+            <View style={styles.container}>
+                <LiveKitRoom
+                    serverUrl={connectionDetails.url}
+                    token={connectionDetails.token}
+                    connect={true}
+                    audio={true}
+                    onDisconnected={handleDisconnect}
+                >
+                    <VoiceChatContent 
+                        tripData={tripData} 
+                        isAdmin={isAdminState} 
+                        onDisconnect={handleDisconnect}
+                        fetchToken={fetchToken}
+                        loading={loading}
+                        isMuted={isMuted}
+                        setIsMuted={setIsMuted}
+                        isGlobalMuteActive={isGlobalMuteActive}
+                    />
+                </LiveKitRoom>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -94,190 +714,111 @@ const VoiceChatScreen = () => {
                 />
 
                 <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
-                    {/* Fixed Background Header Layer (Z-Index: 0) */}
                     <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
                             <Ionicons name="arrow-back" size={24} color="#FFF" />
                         </TouchableOpacity>
-
                         <Text style={styles.headerTitle}>Voice Chat</Text>
-
                         <View style={{ width: 40 }} />
                     </View>
 
-                    {/* Fixed Top Section (Controls & Status) */}
                     <View style={[styles.topSection, { marginTop: 40 }]}>
-                        {/* Controls Grid */}
                         <View style={styles.controlsGrid}>
                             {isAdmin ? (
                                 <>
                                     <View style={styles.controlRow}>
-                                        <TouchableOpacity
-                                            onPress={() => setIsMuted(!isMuted)}
-                                            style={[
-                                                styles.controlButtonOutline,
-                                                { flex: 1 },
-                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
-                                            ]}
-                                        >
-                                            <View style={{ marginRight: 8 }}>
-                                                {isMuted ? (
-                                                    <MicMutedIcon color="#FFF" size={20} />
-                                                ) : (
-                                                    <MicUnmutedIcon color="#D66A77" size={20} />
-                                                )}
-                                            </View>
-                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                                {isMuted ? 'Mute Myself' : 'Unmute Myself'}
-                                            </Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity
-                                            onPress={() => setIsAllMuted(!isAllMuted)}
-                                            style={[
-                                                styles.controlButtonOutline,
-                                                { flex: 1 },
-                                                !isAllMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
-                                            ]}
-                                        >
-                                            <View style={{ marginRight: 8 }}>
-                                                {isAllMuted ? (
-                                                    <MicMutedIcon color="#FFF" size={20} />
-                                                ) : (
-                                                    <MicUnmutedIcon color="#D66A77" size={20} />
-                                                )}
-                                            </View>
-                                            <Text style={[styles.controlText, !isAllMuted && { color: '#D66A77' }]}>
-                                                {isAllMuted ? 'Mute All' : 'Unmute All'}
-                                            </Text>
-                                        </TouchableOpacity>
+                                        <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
+                                            <Text style={styles.controlText}> Mute Myself</Text>
+                                        </View>
+                                        <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
+                                            <Text style={styles.controlText}> Mute All</Text>
+                                        </View>
                                     </View>
                                     <TouchableOpacity
                                         style={[
                                             styles.controlButtonOutline,
-                                            { width: '100%', backgroundColor: isChannelStarted ? '#34C759' : '#D66A77', borderColor: isChannelStarted ? '#34C759' : '#D66A77' }
+                                            { width: '100%', borderStyle: 'solid', backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
                                         ]}
-                                        onPress={() => setIsChannelStarted(!isChannelStarted)}
+                                        onPress={fetchToken}
+                                        disabled={loading}
                                     >
-                                        <Ionicons
-                                            name={isChannelStarted ? "play-circle-outline" : "pause-circle-outline"}
-                                            size={20}
-                                            color="#FFF"
-                                            style={{ marginRight: 8 }}
-                                        />
-                                        <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                            {isChannelStarted ? 'Channel Start' : 'Channel Pause'}
-                                        </Text>
+                                        {loading ? (
+                                            <ActivityIndicator color="#FFF" size="small" />
+                                        ) : (
+                                            <>
+                                                <Ionicons
+                                                    name="play-circle-outline"
+                                                    size={20}
+                                                    color="#FFF"
+                                                    style={{ marginRight: 8 }}
+                                                />
+                                                <Text style={[styles.controlText, { color: '#FFF' }]}>
+                                                    Channel Start
+                                                </Text>
+                                            </>
+                                        )}
                                     </TouchableOpacity>
                                 </>
                             ) : (
                                 <View style={styles.controlRow}>
+                                    <View style={[styles.controlButtonOutline, { flex: 1, opacity: (isMuted || isGlobalMuteActive || false) ? 0.7 : 1 }]}>
+                                        <TouchableOpacity
+                                            style={{ flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'center' }}
+                                            onPress={() => !(isGlobalMuteActive || false) && setIsMuted(!(isMuted || false))}
+                                            disabled={(isGlobalMuteActive || false)}
+                                        >
+                                            {/* {(isMuted || isGlobalMuteActive || false) ? <MicMutedIcon color="#FFF" size={20} /> : <MicUnmutedIcon color="#FFF" size={20} />} */}
+                                            <Text style={styles.controlText}> {(isGlobalMuteActive || false) ? ' Force Muted' : ((isMuted || false) ? ' Unmute' : ' Mute')}</Text>
+                                        </TouchableOpacity>
+                                    </View>
                                     <TouchableOpacity
-                                        onPress={() => setIsMuted(!isMuted)}
-                                        style={[
-                                            styles.controlButtonOutline,
-                                            { flex: 1 },
-                                            !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
-                                        ]}
-                                    >
-                                        <View style={{ marginRight: 8 }}>
-                                            {isMuted ? (
-                                                <MicMutedIcon color="#FFF" size={20} />
-                                            ) : (
-                                                <MicUnmutedIcon color="#D66A77" size={20} />
-                                            )}
-                                        </View>
-                                        <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                            Mute Myself
-                                        </Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        activeOpacity={1}
-                                        onPressIn={() => setIsHoldingToTalk(true)}
-                                        onPressOut={() => setIsHoldingToTalk(false)}
+                                        onPress={fetchToken}
                                         style={[
                                             styles.controlButtonOutline,
                                             {
-                                                borderColor: '#3F4346',
-                                                backgroundColor: '#23272A',
+                                                borderColor: isChannelActive ? '#B99A4A' : '#3F4346',
+                                                backgroundColor: isChannelActive ? '#B99A4A' : '#23272A',
                                                 flex: 1
-                                            },
-                                            isHoldingToTalk && { backgroundColor: '#087443', borderColor: '#34C759' }
+                                            }
                                         ]}
+                                        disabled={loading || !isChannelActive}
                                     >
-                                        <Text style={[styles.controlText, { color: '#fff', opacity: 0.35 }]}>Hold to Talk</Text>
+                                        {loading ? (
+                                            <ActivityIndicator color="#FFF" size="small" />
+                                        ) : (
+                                            <Text style={[styles.controlText, { color: '#fff', opacity: isChannelActive ? 1 : 0.5 }]}>
+                                                Channel Join
+                                            </Text>
+                                        )}
                                     </TouchableOpacity>
                                 </View>
                             )}
                         </View>
 
-                        {/* Network Status & Summary */}
                         <View style={styles.statusRow}>
-                            <View style={styles.networkStatus}>
-                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                    <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
-                                    <Text style={[styles.statusText, { color: '#34C759' }]}>Good Network</Text>
+                                <View style={styles.networkStatus}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                        <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
+                                        <Text style={[styles.statusText, { color: '#34C759' }]}>Network Stable</Text>
+                                    </View>
+                                    <Text style={styles.sectionTitle}>Participants</Text>
                                 </View>
-                                <Text style={styles.sectionTitle}>Participants</Text>
-                            </View>
-                            <View style={styles.headerAvatars}>
-                                <Image source={{ uri: 'https://randomuser.me/api/portraits/women/44.jpg' }} style={[styles.smallAvatar, { zIndex: 2 }]} />
-                                <Image source={{ uri: 'https://randomuser.me/api/portraits/women/65.jpg' }} style={[styles.smallAvatar, { marginLeft: -12 }]} />
-                            </View>
                         </View>
                     </View>
 
-                    {/* Scrollable Bottom Section */}
                     <ScrollView
                         style={styles.listSectionScroll}
                         contentContainerStyle={styles.listContent}
                         showsVerticalScrollIndicator={false}
                     >
                         <View style={styles.listSection}>
-                            {participants.map((item, index) => (
-                                <View key={index}>
-                                    <View style={styles.participantRow}>
-                                        <View style={[
-                                            styles.avatarContainer,
-                                            item.isSpeaking && styles.speakingAvatarBorder
-                                        ]}>
-                                            <Image source={{ uri: item.avatar }} style={styles.avatar} />
-                                        </View>
-
-                                        <View style={styles.participantInfo}>
-                                            <View style={styles.nameRow}>
-                                                <Text style={styles.nameText}>{item.name}</Text>
-
-                                                <View style={styles.inlineStats}>
-                                                    <View style={[styles.miniDot, { backgroundColor: item.network === 'good' ? '#34C759' : item.network === 'poor' ? '#FFCC00' : '#942F31' }]} />
-                                                    {item.network !== 'none' && (
-                                                        <SignalBars type={item.network} />
-                                                    )}
-                                                </View>
-
-                                            </View>
-                                            <Text style={styles.statusSubText}>{item.status}</Text>
-                                        </View>
-
-                                        <View style={styles.rightActions}>
-                                            {item.isSpeaking ? (
-                                                <View style={styles.micCircle}>
-                                                    <MicUnmutedIcon color="#FFF" size={25} />
-                                                </View>
-                                            ) : (
-                                                <MicMutedIcon color="#D66A77" size={25} />
-                                            )}
-                                        </View>
-                                    </View>
-                                    {index === 0 && <View style={styles.rowSeparator} />}
-                                </View>
-                            ))}
-                            <View style={{ height: 100 }} />
+                            <Text style={{ color: '#888', textAlign: 'center', marginTop: 50 }}>
+                                Press Start to view live participants
+                            </Text>
                         </View>
                     </ScrollView>
 
-                    {/* Bottom Trip Navigation */}
                     <TripBottomTabBar activeRoute="VoiceChat" tripData={tripData} />
-
                 </SafeAreaView>
             </ImageBackground>
         </View>
@@ -287,7 +828,7 @@ const VoiceChatScreen = () => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.dark.background,
+        backgroundColor: '#1A1E21',
     },
     backgroundImage: {
         flex: 1,
@@ -311,9 +852,6 @@ const styles = StyleSheet.create({
     },
     iconButton: {
         padding: 5,
-    },
-    scrollContent: {
-        flexGrow: 1,
     },
     topSection: {
         paddingHorizontal: 20,
@@ -404,29 +942,32 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     avatarContainer: {
-        marginRight: 15,
-        padding: 2,
-        borderRadius: 28,
-    },
-    glowWrapper: {
-        width: 104, // Avatar width + padding
-        height: 104,
-        borderRadius: 52,
-        backgroundColor: 'rgba(52, 199, 89, 0.2)', // Light green "blur"
+        width: 54,
+        height: 54,
+        borderRadius: 27,
+        marginRight: 12,
         justifyContent: 'center',
         alignItems: 'center',
     },
     speakingAvatarBorder: {
         borderWidth: 2,
         borderColor: '#34C759',
-        elevation: 34,
         shadowColor: '#34C759',
         shadowOffset: {
             width: 0,
             height: 0,
         },
-        shadowOpacity: 0.8,
-        shadowRadius: 10
+        shadowOpacity: 1,
+        shadowRadius: 15,
+        elevation: 10,
+    },
+    glowCircle: {
+        position: 'absolute',
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        backgroundColor: '#34C759',
+        zIndex: -1,
     },
     avatar: {
         width: 48,
