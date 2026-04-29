@@ -114,34 +114,36 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
     updates[`users/${uid}/p_phone`] = encrypt(phone);
   }
 
-  // S22: Force capture profile info whenever provided to ensure data completeness
+  // S22: Force capture profile info and ENCRYPT IT (S12)
   const firstName = request.data.firstName || existingUser.profile?.firstName || "";
   const lastName = request.data.lastName || existingUser.profile?.lastName || "";
   const photoURL = request.data.photoURL || existingUser.profile?.photoURL || "";
 
-  // Always update if any profile field is provided or if profile is missing
-  if (request.data.firstName || request.data.lastName || request.data.phone || request.data.photoURL || !existingUser.profile) {
-    updates[`users/${uid}/profile`] = {
+  if (firstName || lastName || phone || photoURL || !existingUser.p_profile) {
+    const { encrypt } = require("../services/kmsService");
+    const profileBlob = JSON.stringify({
       firstName,
       lastName,
       phone,
       photoURL,
-      updated_at: admin.database.ServerValue.TIMESTAMP,
-    };
+      email: userRecord.email
+    });
     
-    // Sync to top-level full_name for Admin-Dashboard compatibility
+    // Store as encrypted blob
+    updates[`users/${uid}/p_profile`] = encrypt(profileBlob);
+    
+    // Also update top-level full_name but MASKED for basic UI identification without decryption
     if (firstName || lastName) {
-      updates[`users/${uid}/full_name`] = `${firstName} ${lastName}`.trim();
+        const maskedName = `${firstName.charAt(0)}*** ${lastName ? lastName.charAt(0) : ""}***`.trim();
+        updates[`users/${uid}/full_name`] = maskedName;
     }
   }
 
   // Final Merge and update
-  console.log(`[RedeemInvite] Atomic updates for UID: ${uid}`, Object.keys(updates));
   
   try {
     await db.ref().update(updates);
   } catch (dbErr) {
-    console.error("[RedeemInvite] Database update failed:", dbErr);
     throw new HttpsError("internal", "Failed to update participant status.");
   }
 
@@ -154,7 +156,6 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
       ipAddress: request.rawRequest?.ip,
     });
   } catch (auditErr) {
-    console.warn("Audit log failed, but join succeeded:", auditErr);
   }
 
 
@@ -220,6 +221,20 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
     [`users/${uid}/staff_org_id`]: orgId,
     [`org_invites/${token}`]: null, // Single-use (S15)
   };
+
+  // S35: Ensure basic profile exists so they don't show as "Unknown User"
+  if (userRecord.displayName) {
+    updates[`users/${uid}/full_name`] = userRecord.displayName;
+    const parts = userRecord.displayName.split(" ");
+    updates[`users/${uid}/profile`] = {
+        firstName: parts[0] || "",
+        lastName: parts.slice(1).join(" ") || "",
+        photoURL: userRecord.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userRecord.displayName[0] || 'U')}&background=B99A4A&color=fff`,
+        updated_at: Date.now()
+    };
+  } else {
+    updates[`users/${uid}/full_name`] = "Team Member";
+  }
 
   await db.ref().update(updates);
 

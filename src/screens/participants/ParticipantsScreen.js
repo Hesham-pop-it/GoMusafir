@@ -22,86 +22,29 @@ import CustomBottomTabBar from '../../components/CustomBottomTabBar';
 import * as NavigationBar from 'expo-navigation-bar';
 import ParticipantDetailsModal from '../../components/ParticipantDetailsModal';
 import { Typography } from '../../constants/Typography';
+import { auth, database, functions } from '../../config/firebase';
+import { ref, onValue, get } from 'firebase/database';
+import { httpsCallable } from 'firebase/functions';
+import { useLanguage } from '../../context/LanguageContext';
 
 const { width } = Dimensions.get('window');
 
-const PARTICIPANTS_DATA = [
-    {
-        id: '1',
-        name: 'Ahmed Badawi',
-        trip: 'Umrah Trip',
-        image: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=3387&auto=format&fit=crop',
-        email: 'ahmed.badawi@example.com',
-        phone: '+966 50 123 4567',
-        tripHistory: [
-            { name: 'Umrah Trip', status: 'Upcoming' },
-            { name: 'Hajj 2024', status: 'Complete' },
-            { name: 'Umrah Trip', status: 'Upcoming' },
-            { name: 'Hajj 2024', status: 'Complete' }
-        ],
-        likes: 120
-    },
-    {
-        id: '2',
-        name: 'Sarah Johnson',
-        trip: 'Umrah Trip',
-        image: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=1000&auto=format&fit=crop',
-        email: 'sarah.j@example.com',
-        phone: '+44 7700 900077',
-        tripHistory: [
-            { name: 'Umrah Trip', status: 'Upcoming' }
-        ],
-        likes: 85
-    },
-    {
-        id: '3',
-        name: 'Mohammed Ali',
-        trip: 'Hajj Trip',
-        image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=1000&auto=format&fit=crop',
-        email: 'm.ali@example.com',
-        phone: '+971 50 999 8888',
-        tripHistory: [
-            { name: 'Hajj Trip', status: 'Upcoming' },
-            { name: 'Turkey Tour', status: 'Complete' }
-        ],
-        likes: 200
-    },
-    {
-        id: '4',
-        name: 'Fatima Zahra',
-        trip: 'Umrah Trip',
-        image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=1000&auto=format&fit=crop',
-        email: 'fatima.z@example.com',
-        phone: '+20 100 123 4567',
-        tripHistory: [],
-        likes: 45
-    },
-];
+// PARTICIPANTS_DATA removed - now using live database
 
 const LANGUAGES = [
-    { code: 'AR', label: 'Arabic' },
-    { code: 'EN', label: 'English' },
-    { code: 'UR', label: 'Urdu' },
-    { code: 'ID', label: 'Indonesian' },
-    { code: 'TR', label: 'Turkish' },
-    { code: 'FR', label: 'French' },
-    { code: 'HI', label: 'Hindi' },
-    { code: 'BN', label: 'Bengali' },
-    { code: 'MS', label: 'Malay' },
-    { code: 'FA', label: 'Persian (Farsi)' },
-    { code: 'ES', label: 'Spanish' },
-    { code: 'PT', label: 'Portuguese' },
-    { code: 'RU', label: 'Russian' },
-    { code: 'DE', label: 'German' },
-    { code: 'NL', label: 'Dutch' },
+    { code: 'ar', label: 'Arabic' },
+    { code: 'en', label: 'English' },
+    { code: 'nl', label: 'Dutch' },
 ];
 
 const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
+    const { changeLanguage } = useLanguage();
+    
     const renderLanguageItem = ({ item }) => (
         <TouchableOpacity
             style={styles.languageItem}
             onPress={() => {
-                onSelect(item.code);
+                changeLanguage(item.code);
                 onClose();
             }}
         >
@@ -143,9 +86,9 @@ const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
     );
 };
 
-const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJourney, setSelectedJourney }) => {
+const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJourney, setSelectedJourney, allParticipants }) => {
     const [showJourneys, setShowJourneys] = useState(false);
-    const journeys = ['Umrah Trip', 'Hajj Trip', 'Turkey Tour', 'Egypt Tour', 'Morocco Tour'];
+    const journeys = Array.from(new Set(allParticipants.map(p => p.trip))).filter(Boolean);
 
     const handleSelect = (option) => {
         setSortOption(option);
@@ -173,7 +116,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJour
                         onPress={() => setShowJourneys(!showJourneys)}
                     >
                         <Ionicons name="home-outline" size={20} color="#A1A1AA" />
-                        <Text style={styles.journeyInputText}>{selectedJourney || 'Umrah Trip'}</Text>
+                        <Text style={styles.journeyInputText}>{selectedJourney || 'All Journeys'}</Text>
                     </TouchableOpacity>
 
                     {showJourneys && (
@@ -184,6 +127,15 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, selectedJour
                                 showsVerticalScrollIndicator={true}
                                 keyboardShouldPersistTaps="handled"
                             >
+                                <TouchableOpacity
+                                    style={styles.dropdownItem}
+                                    onPress={() => {
+                                        setSelectedJourney('');
+                                        setShowJourneys(false);
+                                    }}
+                                >
+                                    <Text style={styles.dropdownText}>All Journeys</Text>
+                                </TouchableOpacity>
                                 {journeys.map(item => (
                                     <TouchableOpacity
                                         key={item}
@@ -300,21 +252,161 @@ const ParticipantsScreen = ({ navigation }) => {
     const [filterVisible, setFilterVisible] = useState(false);
     const [languageVisible, setLanguageVisible] = useState(false);
     const [selectedLanguage, setSelectedLanguage] = useState('EN');
-    const [selectedJourney, setSelectedJourney] = useState('Umrah Trip');
+    const [selectedJourney, setSelectedJourney] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortOption, setSortOption] = useState('A-Z');
 
-    const [filteredData, setFilteredData] = useState(PARTICIPANTS_DATA);
-    const [detailsVisible, setDetailsVisible] = useState(false);
+    const { t, isRTL, language, changeLanguage } = useLanguage();
+    const [allParticipants, setAllParticipants] = useState([]);
+    const [filteredData, setFilteredData] = useState([]);
     const [selectedParticipant, setSelectedParticipant] = useState(null);
+    const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+    const [isDecrypting, setIsDecrypting] = useState(false);
 
-    const openDetails = (participant) => {
+    const handleParticipantPress = async (participant) => {
+        setIsDecrypting(true);
         setSelectedParticipant(participant);
-        setDetailsVisible(true);
+        setIsDetailsVisible(true);
+        
+        try {
+            const getProfile = httpsCallable(functions, 'getParticipantProfile');
+            const result = await getProfile({
+                targetUid: participant.id,
+                tripId: participant.tripId
+            });
+            
+            if (result.data) {
+                setSelectedParticipant(prev => {
+                    const newData = { ...prev };
+                    
+                    // Only update if the decrypted result is actually plaintext (no dots)
+                    // and not the same as what we already have
+                    if (result.data.email && !result.data.email.includes('.')) {
+                        newData.email = result.data.email;
+                    }
+                    if (result.data.phone && !result.data.phone.includes('.')) {
+                        newData.phone = result.data.phone;
+                    }
+                    if (result.data.fullName && !result.data.fullName.includes('*')) {
+                        newData.name = result.data.fullName;
+                    }
+                    
+                    return newData;
+                });
+            }
+        } catch (error) {
+            // Fallback to already loaded (possibly hashed) data is already handled by state
+        } finally {
+            setIsDecrypting(false);
+        }
     };
 
+    // 1. Fetch Live Data from Firebase
     useEffect(() => {
-        let result = [...PARTICIPANTS_DATA];
+        const user = auth.currentUser;
+        if (!user) return;
+
+        const fetchAllParticipants = async () => {
+            try {
+                // Get User's Org ID from Token
+                const tokenResult = await user.getIdTokenResult();
+                let orgId = tokenResult.claims.orgId;
+                
+                // Fallback: Get from profile if token claim isn't present
+                if (!orgId) {
+                    const profileSnap = await get(ref(database, `users/${user.uid}`));
+                    if (profileSnap.exists()) {
+                        orgId = profileSnap.val().staff_org_id || profileSnap.val().org_id;
+                    }
+                }
+
+                if (!orgId) {
+                    return;
+                }
+
+                // Listen to Org's Trips
+                const tripsRef = ref(database, `orgs/${orgId}/trips`);
+                const unsubscribeTrips = onValue(tripsRef, async (snapshot) => {
+                    if (snapshot.exists()) {
+                        const tripsData = snapshot.val();
+                        const participantsMap = new Map();
+                        const tripIds = Object.keys(tripsData);
+
+                        // For each trip, listen to its participants
+                        for (const tripId of tripIds) {
+                            try {
+                                const tripName = tripsData[tripId].title || "Unknown Trip";
+                                const pRef = ref(database, `trips_participants/${tripId}`);
+                                
+                                const pSnap = await get(pRef);
+                                if (pSnap.exists()) {
+                                    const pIds = Object.keys(pSnap.val());
+                                    for (const pUid of pIds) {
+                                        // Fetch Profile
+                                        try {
+                                            const uSnap = await get(ref(database, `users/${pUid}`));
+                                            if (uSnap.exists()) {
+                                                const profileData = uSnap.val();
+                                                const profile = profileData.profile || {};
+                                                
+                                                
+                                                const profileImage = profileData.photo || profileData.profile_photo || profile.photo || profile.photoURL || profileData.image;
+                                                
+                                                // Resolve Trip History
+                                                const tripHistory = [];
+                                                if (profileData.joined_trips) {
+                                                    for (const historyTripId in profileData.joined_trips) {
+                                                        const historyTrip = profileData.joined_trips[historyTripId];
+                                                        const title = tripsData[historyTripId]?.title || "Past Trip";
+                                                        tripHistory.push({
+                                                            name: title,
+                                                            status: historyTrip.status || "Joined"
+                                                        });
+                                                    }
+                                                }
+
+                                                participantsMap.set(pUid, {
+                                                    id: pUid,
+                                                    tripId: tripId,
+                                                    name: profileData.full_name || profileData.name || (profile.firstName ? `${profile.firstName} ${profile.lastName || ""}`.trim() : "Guest"),
+                                                    trip: tripName,
+                                                    image: profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(profileData.full_name || "Guest")}&background=B99A4A&color=fff`,
+                                                    email: profile.email || profileData.email || profileData.p_email || 'N/A',
+                                                    phone: profile.phone || profileData.p_phone || profileData.phone || profileData.phone_number || 'N/A',
+                                                    tripHistory: tripHistory,
+                                                    likes: profileData.likes || 0
+                                                });
+                                            } else {
+                                            }
+                                        } catch (profileErr) {
+                                        }
+                                    }
+                                }
+                            } catch (tripErr) {
+                            }
+                        }
+                        setAllParticipants(Array.from(participantsMap.values()));
+                    } else {
+                    }
+                }, (error) => {
+                });
+
+                return () => unsubscribeTrips();
+            } catch (err) {
+            }
+        };
+
+        fetchAllParticipants();
+    }, []);
+
+
+    // 2. Apply Filters & Sorting
+    useEffect(() => {
+        let result = [...allParticipants];
+
+        if (selectedJourney) {
+            result = result.filter(item => item.trip === selectedJourney);
+        }
 
         if (searchQuery) {
             result = result.filter(item =>
@@ -334,7 +426,23 @@ const ParticipantsScreen = ({ navigation }) => {
         }
 
         setFilteredData(result);
-    }, [searchQuery, sortOption]);
+    }, [allParticipants, searchQuery, sortOption, selectedJourney]);
+
+    const handleDeleteParticipant = async (participant) => {
+        if (!participant) return;
+        try {
+            const removeParticipant = httpsCallable(functions, 'removeParticipantFromTrip');
+            await removeParticipant({
+                tripId: participant.tripId,
+                targetUid: participant.id
+            });
+            // Update local state immediately for better UX
+            setAllParticipants(prev => prev.filter(p => p.id !== participant.id));
+            setDetailsVisible(false);
+        } catch (err) {
+            alert("Failed to delete participant. Please check your permissions.");
+        }
+    };
 
     useEffect(() => {
         if (Platform.OS === 'android') {
@@ -345,7 +453,7 @@ const ParticipantsScreen = ({ navigation }) => {
     const renderParticipantItem = ({ item }) => (
         <TouchableOpacity
             style={styles.card}
-            onPress={() => openDetails(item)}
+            onPress={() => handleParticipantPress(item)}
             activeOpacity={0.7}
         >
             <Image source={{ uri: item.image }} style={styles.avatar} />
@@ -369,27 +477,30 @@ const ParticipantsScreen = ({ navigation }) => {
                     setSortOption={setSortOption}
                     selectedJourney={selectedJourney}
                     setSelectedJourney={setSelectedJourney}
+                    allParticipants={allParticipants}
                 />
 
                 <ParticipantDetailsModal
-                    visible={detailsVisible}
-                    onClose={() => setDetailsVisible(false)}
+                    visible={isDetailsVisible}
+                    onClose={() => setIsDetailsVisible(false)}
                     participant={selectedParticipant}
+                    onDelete={handleDeleteParticipant}
+                    isDecrypting={isDecrypting}
                 />
 
                 <LanguageModal
                     visible={languageVisible}
                     onClose={() => setLanguageVisible(false)}
-                    onSelect={setSelectedLanguage}
-                    selectedLanguage={selectedLanguage}
+                    onSelect={changeLanguage}
+                    selectedLanguage={language}
                 />
 
                 <View style={styles.contentContainer}>
                     {/* Header */}
                     <View style={styles.header}>
                         <View>
-                            <Text style={styles.titleText}>Participants</Text>
-                            <Text style={styles.subtitleText}>May Allah Guide Every Step</Text>
+                            <Text style={styles.titleText}>{t('participants')}</Text>
+                            <Text style={styles.subtitleText}>{t('tagline')}</Text>
                         </View>
                         <View style={styles.headerIcons}>
                             <TouchableOpacity
@@ -424,7 +535,7 @@ const ParticipantsScreen = ({ navigation }) => {
                             <Ionicons name="search" size={20} color="#A1A1AA" style={styles.searchIcon} />
                             <TextInput
                                 style={styles.searchInput}
-                                placeholder="Search your trip"
+                                placeholder={t('search_placeholder')}
                                 placeholderTextColor="#A1A1AA"
                                 value={searchQuery}
                                 onChangeText={setSearchQuery}

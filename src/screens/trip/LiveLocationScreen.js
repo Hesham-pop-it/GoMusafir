@@ -111,6 +111,7 @@ const LiveLocationScreen = () => {
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
     const [userRole, setUserRole] = useState('participant');
+    const [locationPermissions, setLocationPermissions] = useState({});
 
 
     // Swipe down to close logic for modals - Interactive version
@@ -346,6 +347,30 @@ const LiveLocationScreen = () => {
         return () => {
             if (locationWatcher) locationWatcher.remove();
         };
+    }, [resolvedOrgId, tripId]);
+
+    // Listener for Location Permissions
+    useEffect(() => {
+        if (!resolvedOrgId || !tripId || !auth.currentUser) return;
+
+        const myUid = auth.currentUser.uid;
+        const permsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/location_permissions`);
+        
+        const unsubscribe = onValue(permsRef, (snapshot) => {
+            const allPerms = snapshot.val() || {};
+            const myPermissions = {};
+            
+            // Extract permissions granted to ME
+            Object.keys(allPerms).forEach(targetUid => {
+                if (allPerms[targetUid] && allPerms[targetUid][myUid] === true) {
+                    myPermissions[targetUid] = true;
+                }
+            });
+            
+            setLocationPermissions(myPermissions);
+        });
+
+        return () => unsubscribe();
     }, [resolvedOrgId, tripId]);
 
     // Fetch Trip Participants Profile Data - UID Targeted & Cached
@@ -774,20 +799,22 @@ const LiveLocationScreen = () => {
                                             </View>
 
                                             <View style={styles.actionButtons}>
-                                                <TouchableOpacity
-                                                    style={styles.questionBtn}
-                                                    onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                                >
-
-                                                <Text style={styles.questionText}>?</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity
-                                                style={styles.locateBtn}
-                                                onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                            >
-                                                <LocationPinIcon />
-                                            </TouchableOpacity>
-                                        </View>
+                                                {locationPermissions[uid] || (globalVisibilityConfig?.location === 'Show to everyone') || (isAdmin && globalVisibilityConfig?.location === 'Show to organizer') ? (
+                                                    <TouchableOpacity
+                                                        style={styles.locateBtn}
+                                                        onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
+                                                    >
+                                                        <LocationPinIcon />
+                                                    </TouchableOpacity>
+                                                ) : (
+                                                    <TouchableOpacity
+                                                        style={styles.questionBtn}
+                                                        onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
+                                                    >
+                                                        <Text style={styles.questionText}>?</Text>
+                                                    </TouchableOpacity>
+                                                )}
+                                            </View>
                                         </TouchableOpacity>
                                     );
                                 })}

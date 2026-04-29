@@ -9,24 +9,29 @@ import {
     Dimensions,
     PanResponder,
     Animated,
+    ActivityIndicator,
+    I18nManager,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { Colors } from '../constants/Colors';
 import GradientBorderButton from './GradientBorderButton';
 import { Typography } from '../constants/Typography';
+import { useLanguage } from '../context/LanguageContext';
 import { responsiveFontSize } from '../utils/responsive';
+import { Ionicons, FontAwesome, Feather } from '@expo/vector-icons';
 
 const { height } = Dimensions.get('window');
 
-const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
+const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDecrypting }) => {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const { t } = useLanguage();
 
     if (!participant) return null;
 
     // Split name for display
-    const nameParts = participant.name ? participant.name.split(' ') : ['Ethan', 'Carter'];
-    const firstName = nameParts[0] || 'Ethan';
-    const lastName = nameParts.slice(1).join(' ') || 'Carter';
+    const nameParts = participant.name ? participant.name.trim().split(/\s+/) : ['Guest'];
+    const firstName = nameParts[0] || 'Guest';
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
 
     const { height: screenHeight } = Dimensions.get('window');
 
@@ -109,13 +114,13 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                         {/* Name Fields */}
                         <View style={styles.row}>
                             <View style={styles.halfWidth}>
-                                <Text style={styles.label}>First Name</Text>
+                                <Text style={styles.label}>{t('first_name')}</Text>
                                 <View style={styles.inputContainer}>
                                     <Text style={styles.inputText}>{firstName}</Text>
                                 </View>
                             </View>
                             <View style={styles.halfWidth}>
-                                <Text style={styles.label}>Last Name</Text>
+                                <Text style={styles.label}>{t('last_name')}</Text>
                                 <View style={styles.inputContainer}>
                                     <Text style={styles.inputText}>{lastName}</Text>
                                 </View>
@@ -123,19 +128,27 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                         </View>
 
                         {/* Email */}
-                        <Text style={styles.label}>Email Address</Text>
+                        <Text style={styles.label}>{t('email')}</Text>
                         <View style={styles.inputContainer}>
-                            <Text style={styles.inputText}>{participant.email || 'ethan@gmail.com'}</Text>
+                            {isDecrypting && (participant.email === 'N/A' || participant.email?.includes('.')) ? (
+                                <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
+                            ) : (
+                                <Text style={styles.inputText}>{participant.email || 'N/A'}</Text>
+                            )}
                         </View>
 
                         {/* Phone */}
-                        <Text style={styles.label}>Phone Number</Text>
+                        <Text style={styles.label}>{t('phone')}</Text>
                         <View style={styles.inputContainer}>
-                            <Text style={styles.inputText}>{participant.phone || '+444545456'}</Text>
+                            {isDecrypting && (participant.phone === 'N/A' || participant.phone?.includes('.')) ? (
+                                <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
+                            ) : (
+                                <Text style={styles.inputText}>{participant.phone || 'N/A'}</Text>
+                            )}
                         </View>
 
                         {/* Trip History */}
-                        <Text style={styles.label}>Trip History</Text>
+                        <Text style={styles.label}>{t('trip_history')}</Text>
                         <View style={styles.tripHistoryContainer}>
                             {participant.tripHistory && participant.tripHistory.length > 0 ? (
                                 participant.tripHistory.map((trip, index) => (
@@ -150,7 +163,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                                 ))
                             ) : (
                                 <View style={styles.tripItem}>
-                                    <Text style={[styles.tripStatus, { fontStyle: 'italic' }]}>No trip history available</Text>
+                                    <Text style={[styles.tripStatus, { fontStyle: 'italic' }]}>{t('no_history')}</Text>
                                 </View>
                             )}
                         </View>
@@ -158,11 +171,16 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                     </ScrollView>
                     <View style={{ marginVertical: 24 }}>
                         {/* Delete Button */}
-                        <TouchableOpacity
-                            style={styles.deleteButton}
-                            onPress={() => setShowDeleteConfirm(true)}
+                        <TouchableOpacity 
+                            style={styles.removeButton} 
+                            onPress={() => Alert.alert(
+                                t('remove_participant'), 
+                                t('confirm_delete'), 
+                                [{ text: t('cancel') }, { text: t('delete'), onPress: () => onDelete(participant.id) }]
+                            )}
                         >
-                            <Text style={styles.deleteButtonText}>Delete Participant</Text>
+                            <Ionicons name="trash-outline" size={20} color="#FF4B4B" />
+                            <Text style={styles.removeButtonText}>{t('remove_participant')}</Text>
                         </TouchableOpacity>
 
                         {/* Bottom Spacer for scrolling */}
@@ -203,8 +221,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant }) => {
                             style={styles.confirmDeleteButton}
                             onPress={() => {
                                 setShowDeleteConfirm(false);
-                                onClose();
-                                // Handle actual deletion logic here
+                                if (onDelete) onDelete(participant);
                             }}
                         >
                             <Text style={styles.confirmDeleteButtonText}>Delete</Text>

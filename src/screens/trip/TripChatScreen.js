@@ -115,7 +115,7 @@ const QUICK_OPTIONS = [
     { id: 'add_template', label: 'Add Template', icon: 'custom', color: '#B99A4A', bg: '#23272A' },
 ];
 
-const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers }) => {
+const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, onImagePress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
@@ -156,11 +156,11 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
             leftThreshold={40}
         >
             <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]}>
-                {!isMe && (
+                {!isMe && item.avatar && (
                     <Image source={{ uri: item.avatar }} style={styles.messageAvatar} />
                 )}
 
-                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther, isImage && { padding: 3 }]}>
+                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther, isImage && { padding: 0, overflow: 'hidden' }]}>
                     {/* Reply Preview */}
                     {item.replyTo && (
                         <View style={styles.replyContainer}>
@@ -172,15 +172,29 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                         </View>
                     )}
 
-                    {!isMe && !item.replyTo && (
+                    {!isMe && !item.replyTo && item.senderName ? (
                         <Text style={styles.senderName}>{item.senderName}</Text>
-                    )}
+                    ) : null}
 
                     <View style={(isShortText && !isImage) ? { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' } : {}}>
                         {item.type === 'image' ? (
-                            <View style={styles.imageWrapper}>
-                                <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
-                                {renderMeta()}
+                            <View>
+                                <TouchableOpacity 
+                                    style={styles.imageWrapper}
+                                    onPress={() => onImagePress(item.image_url || item.media_url)}
+                                    activeOpacity={0.9}
+                                >
+                                    {(item.image_url || item.media_url) && (
+                                        <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
+                                    )}
+                                    {/* Only show meta on image if no caption, otherwise show below */}
+                                    {!item.text && renderMeta()}
+                                </TouchableOpacity>
+                                {item.text ? (
+                                    <View style={{ marginTop: 4, paddingHorizontal: 4 }}>
+                                        <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
+                                    </View>
+                                ) : null}
                             </View>
                         ) : item.type === 'location' ? (
                             <TouchableOpacity 
@@ -207,7 +221,7 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                         {isShortText && renderMeta()}
                     </View>
 
-                    {!isShortText && !isImage && renderMeta()}
+                    {((!isShortText && !isImage) || (isImage && item.text)) && renderMeta()}
                 </View>
             </View>
         </Swipeable>
@@ -242,6 +256,9 @@ const TripChatScreen = () => {
     const [isRecording, setIsRecording] = useState(false);
     const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
     const [replyingTo, setReplyingTo] = useState(null);
+    const [pendingImageUri, setPendingImageUri] = useState(null);
+    const [imageCaption, setImageCaption] = useState('');
+    const [viewerImage, setViewerImage] = useState(null);
 
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
@@ -612,12 +629,13 @@ const TripChatScreen = () => {
 
         let result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
-            allowsEditing: true,
+            allowsEditing: false,
             quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            uploadAndSendMedia(result.assets[0].uri, 'image');
+            setPendingImageUri(result.assets[0].uri);
+            setImageCaption('');
         }
     };
 
@@ -629,16 +647,17 @@ const TripChatScreen = () => {
         }
 
         let result = await ImagePicker.launchCameraAsync({
-            allowsEditing: true,
+            allowsEditing: false,
             quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            uploadAndSendMedia(result.assets[0].uri, 'image');
+            setPendingImageUri(result.assets[0].uri);
+            setImageCaption('');
         }
     };
 
-    const uploadAndSendMedia = async (uri, type) => {
+    const uploadAndSendMedia = async (uri, type, caption = '') => {
         if (!orgId || !tripId || !auth.currentUser) return;
 
         setIsUploading(true);
@@ -669,6 +688,7 @@ const TripChatScreen = () => {
 
             if (type === 'image') {
                 messageData.image_url = downloadUrl;
+                if (caption) messageData.text = caption;
             } else if (type === 'voice') {
                 messageData.audio_url = downloadUrl;
             } else {
@@ -824,6 +844,7 @@ const TripChatScreen = () => {
                 inputRef={inputRef}
                 currentParticipants={currentParticipants}
                 readPointers={readPointers}
+                onImagePress={setViewerImage}
             />
         );
     }, [currentParticipants, readPointers]);
@@ -872,10 +893,12 @@ const TripChatScreen = () => {
                             <Ionicons name="arrow-back" size={24} color="#FFF" />
                         </TouchableOpacity>
 
-                        <Image
-                            source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
-                            style={styles.headerAvatar}
-                        />
+                        {tripData.image && (
+                            <Image
+                                source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                                style={styles.headerAvatar}
+                            />
+                        )}
 
                         <View style={styles.headerInfo}>
                             <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
@@ -1050,6 +1073,80 @@ const TripChatScreen = () => {
                     </TouchableOpacity>
                 </View>
             </Modal>
+
+            {/* Image Preview Modal */}
+            <Modal
+                isVisible={!!pendingImageUri}
+                onBackButtonPress={() => setPendingImageUri(null)}
+                onBackdropPress={() => setPendingImageUri(null)}
+                style={{ margin: 0 }}
+                animationIn="zoomIn"
+                animationOut="zoomOut"
+            >
+                <View style={styles.previewContainer}>
+                    {pendingImageUri && <Image source={{ uri: pendingImageUri }} style={styles.fullPreviewImage} />}
+                    
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                        style={styles.previewInputWrapper}
+                    >
+                        <View style={styles.previewInputBar}>
+                            <TextInput
+                                style={styles.previewTextInput}
+                                placeholder="Add a caption..."
+                                placeholderTextColor="rgba(255,255,255,0.5)"
+                                value={imageCaption}
+                                onChangeText={setImageCaption}
+                                multiline
+                            />
+                            <TouchableOpacity 
+                                style={styles.previewSendBtn}
+                                onPress={() => {
+                                    uploadAndSendMedia(pendingImageUri, 'image', imageCaption);
+                                    setPendingImageUri(null);
+                                }}
+                            >
+                                <Ionicons name="send" size={24} color="#FFF" />
+                            </TouchableOpacity>
+                        </View>
+                    </KeyboardAvoidingView>
+
+                    <TouchableOpacity 
+                        style={styles.previewCloseBtn}
+                        onPress={() => setPendingImageUri(null)}
+                    >
+                        <Ionicons name="close" size={30} color="#FFF" />
+                    </TouchableOpacity>
+                </View>
+            </Modal>
+
+            {/* Image Viewer Modal */}
+            <Modal
+                isVisible={!!viewerImage}
+                onBackButtonPress={() => setViewerImage(null)}
+                onBackdropPress={() => setViewerImage(null)}
+                style={{ margin: 0 }}
+                animationIn="fadeIn"
+                animationOut="fadeOut"
+                useNativeDriver
+            >
+                <View style={styles.viewerContainer}>
+                    <TouchableOpacity 
+                        style={styles.viewerCloseBtn}
+                        onPress={() => setViewerImage(null)}
+                    >
+                        <Ionicons name="close" size={30} color="#FFF" />
+                    </TouchableOpacity>
+                    
+                    {viewerImage && (
+                        <Image 
+                            source={{ uri: viewerImage }} 
+                            style={styles.fullViewerImage} 
+                        />
+                    )}
+                </View>
+            </Modal>
+
             </View >
         </GestureHandlerRootView>
     );
@@ -1116,8 +1213,9 @@ const styles = StyleSheet.create({
     },
     messageBubble: {
         borderRadius: 16,
-        padding: 12,
-        minWidth: 100,
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        minWidth: 80,
     },
     bubbleMe: {
         backgroundColor: '#C9A443', // Gold
@@ -1128,11 +1226,10 @@ const styles = StyleSheet.create({
         borderBottomLeftRadius: 4,
     },
     senderName: {
-        color: '#8A8D91', // Purple/Pink in screenshot for Titor? "#A259FF"
         color: '#8B77FF',
-        fontSize: 13,
+        fontSize: 12,
         fontWeight: 'bold',
-        marginBottom: 4,
+        marginBottom: 2,
     },
     messageText: {
         color: '#fff',
@@ -1144,9 +1241,7 @@ const styles = StyleSheet.create({
         width: 250,
         height: 300,
         resizeMode: 'cover',
-        borderRadius: 10,
-        borderWidth: 0.5,
-        borderColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 16,
     },
     imageWrapper: {
         position: 'relative',
@@ -1394,6 +1489,84 @@ const styles = StyleSheet.create({
     },
     backgroundLogoContainer: {
         ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    // Preview Modal Styles
+    previewContainer: {
+        flex: 1,
+        backgroundColor: '#000',
+    },
+    fullPreviewImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'contain',
+    },
+    previewInputWrapper: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        padding: 15,
+        paddingBottom: Platform.OS === 'ios' ? 40 : 20,
+    },
+    previewInputBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2C2F33',
+        borderRadius: 25,
+        paddingHorizontal: 15,
+        paddingVertical: 10,
+    },
+    previewTextInput: {
+        flex: 1,
+        color: '#FFF',
+        fontSize: 16,
+        maxHeight: 100,
+        fontFamily: Typography.sans.regular,
+    },
+    previewSendBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: '#B99A4A',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 10,
+    },
+    previewCloseBtn: {
+        position: 'absolute',
+        top: 40,
+        left: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(0,0,0,0.4)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    // Viewer Modal Styles
+    viewerContainer: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    fullViewerImage: {
+        width: '100%',
+        height: '100%',
+        resizeMode: 'contain',
+    },
+    viewerCloseBtn: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 10,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.1)',
         justifyContent: 'center',
         alignItems: 'center',
     }

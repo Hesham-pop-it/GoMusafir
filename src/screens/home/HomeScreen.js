@@ -26,6 +26,7 @@ import CustomBottomTabBar from '../../components/CustomBottomTabBar';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import * as NavigationBar from 'expo-navigation-bar';
+import { useLanguage } from '../../context/LanguageContext';
 import { database, auth } from '../../config/firebase';
 import { ref, onValue, get } from 'firebase/database';
 
@@ -87,21 +88,29 @@ const sortOptions = [
     'Likes'
 ];
 
-const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
+const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, setStartDate, endDate, setEndDate, destination, setDestination, participants, setParticipants, allTrips }) => {
+    const { t, isRTL } = useLanguage();
     const [activeDateInput, setActiveDateInput] = useState(null);
 
     const [showCalendar, setShowCalendar] = useState(false);
     const [showDestinations, setShowDestinations] = useState(false);
 
-    const [destination, setDestination] = useState('Makkah');
-    const [participants, setParticipants] = useState('90');
+    // Compute dynamic destinations from allTrips
+    const destinations = Array.from(new Set(allTrips.map(trip => trip.location))).filter(Boolean);
 
     const onDateSelect = (day) => {
         if (activeDateInput === 'start') setStartDate(day.dateString);
         if (activeDateInput === 'end') setEndDate(day.dateString);
         setShowCalendar(false);
+    };
+
+    const clearFilters = () => {
+        setStartDate('');
+        setEndDate('');
+        setDestination('');
+        setParticipants('');
+        setSortOption('Newest');
+        onClose();
     };
 
 
@@ -128,10 +137,16 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                         setShowDestinations(false);
                     }}>
                         <View>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                                <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>Filters</Text>
+                                <TouchableOpacity onPress={clearFilters}>
+                                    <Text style={{ color: '#B99A4A', fontWeight: '600' }}>Clear All</Text>
+                                </TouchableOpacity>
+                            </View>
                             {/* Dates */}
                             <View style={[styles.filterRow, { zIndex: 1100 }]}>
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.filterLabel}>Start Date</Text>
+                                    <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('start_date')}</Text>
                                     <TouchableOpacity
                                         style={styles.filterInput}
                                         onPress={() => {
@@ -142,13 +157,13 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                     >
                                         <Feather name="calendar" size={18} color="#A1A1AA" />
                                         <Text style={styles.filterInputText}>
-                                            {startDate || 'Start date'}
+                                            {startDate || t('start_date')}
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
                                 <View style={{ width: 12 }} />
                                 <View style={{ flex: 1 }}>
-                                    <Text style={styles.filterLabel}>End Date</Text>
+                                    <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('end_date')}</Text>
                                     <TouchableOpacity
                                         style={styles.filterInput}
                                         onPress={() => {
@@ -159,7 +174,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                     >
                                         <Feather name="calendar" size={18} color="#A1A1AA" />
                                         <Text style={styles.filterInputText}>
-                                            {endDate || 'End date'}
+                                            {endDate || t('end_date')}
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
@@ -185,7 +200,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
 
                             {/* Destination */}
                             <View style={[styles.filterSectionContainer, { zIndex: showDestinations ? 1000 : 10, elevation: showDestinations ? 1000 : 0 }]}>
-                                <Text style={styles.filterLabel}>Destination</Text>
+                                <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('destination')}</Text>
                                 <TouchableOpacity
                                     style={styles.filterInput}
                                     onPress={() => {
@@ -194,17 +209,26 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                     }}
                                 >
                                     <Ionicons name="location-outline" size={20} color="#A1A1AA" />
-                                    <Text style={[styles.filterInputText, { color: '#fff' }]}>{destination}</Text>
+                                    <Text style={[styles.filterInputText, { color: '#fff' }]}>{destination || 'Makkah'}</Text>
                                 </TouchableOpacity>
 
                                 {showDestinations && (
                                     <View style={styles.filterDropdown}>
                                         <ScrollView
-                                            style={styles.dropdownScroll}
+                                            style={[styles.dropdownScroll, { maxHeight: 250 }]}
                                             nestedScrollEnabled={true}
                                             showsVerticalScrollIndicator={true}
                                             keyboardShouldPersistTaps="handled"
                                         >
+                                            <TouchableOpacity
+                                                style={styles.filterDropdownItem}
+                                                onPress={() => {
+                                                    setDestination('');
+                                                    setShowDestinations(false);
+                                                }}
+                                            >
+                                                <Text style={styles.filterDropdownText}>All Destinations</Text>
+                                            </TouchableOpacity>
                                             {destinations.map(item => (
                                                 <TouchableOpacity
                                                     key={item}
@@ -224,7 +248,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
 
                             {/* Participants */}
                             <View style={styles.filterSectionContainer}>
-                                <Text style={styles.filterLabel}>Total Participants</Text>
+                                <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('total_participants')}</Text>
                                 <View style={styles.filterInput}>
                                     <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                                         <Path d="M11.9831 15.1797C13.66 15.1797 15.2155 15.5431 16.1658 17.0615C16.9576 18.3191 16.7342 19.9307 16.7341 21.3467C16.7341 21.8218 15.2068 22.055 15.2068 21.7568C15.2068 20.3409 15.4673 18.7759 14.6384 17.4717C13.8093 16.1674 12.4954 15.8594 11.0701 15.8594H7.02709C6.66376 15.8594 6.28105 15.8319 5.91772 15.8691C4.94914 15.9532 4.19511 16.8194 3.83178 17.667C3.35669 18.7755 3.54269 20.145 3.54272 21.3281C3.54272 21.8033 2.0144 22.0364 2.0144 21.7383C2.01439 20.0521 1.80947 18.2444 2.94604 16.8936C4.08262 15.5428 5.81602 15.1797 7.49291 15.1797H11.9831ZM18.1599 15.1797C18.9797 15.189 19.8001 15.4219 20.4802 15.8877C21.5514 16.605 22.1657 17.8254 22.1658 19.1016V21.3379C22.1654 21.8127 20.6397 22.0455 20.6384 21.748V20.415C20.6384 19.9307 20.6665 19.4277 20.6013 18.9434C20.3684 17.2293 18.9243 15.8694 17.1824 15.8506C16.8656 15.8506 16.8562 15.6271 17.0798 15.4688C17.3872 15.2546 17.7874 15.1797 18.1599 15.1797ZM15.1033 2C16.3329 2.01863 17.5163 2.41914 18.4665 3.21094C20.0875 4.56177 20.6184 6.90945 19.78 8.83789C18.8764 10.9153 16.7154 12.0803 14.5076 12.1084C14.2375 12.1177 13.9204 11.9498 14.0876 11.6426C14.2646 11.3258 14.7591 11.2227 15.0945 11.2227C17.2557 11.1945 18.737 9.04257 18.6345 7.01172C18.5318 4.81337 16.7432 2.93144 14.5076 2.90332L14.5164 2.88477C14.2462 2.88468 13.9204 2.7263 14.0974 2.41895C14.2745 2.11177 14.7773 2.00005 15.1033 2ZM5.19994 3.99219C6.64396 2.31553 9.14046 1.57104 11.2644 2.25098C13.286 2.89378 14.7207 4.71921 14.7488 6.85254C14.7489 6.86168 14.7474 6.87088 14.7468 6.87988C14.7532 6.90619 14.7585 6.93438 14.7585 6.96484C14.7211 9.47063 12.7648 11.4827 10.3708 11.9766C8.23742 12.4144 5.86087 11.5852 4.74291 9.76855C3.62519 7.95194 3.75602 5.66901 5.19994 3.99219ZM10.0349 3.01465C8.45116 2.61408 6.96072 3.34093 6.13158 4.71973C5.22811 6.22887 5.37673 8.23163 6.46655 9.61035C7.42605 10.8307 9.12183 11.5855 10.6589 11.0547C12.2891 10.4958 13.1929 8.80019 13.2117 7.15137H13.2156C13.1429 5.26405 11.9262 3.48976 10.0349 3.01465Z" fill={"#A1A1AA"} />
@@ -235,6 +259,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                         value={participants}
                                         onChangeText={setParticipants}
                                         placeholderTextColor="#636D77"
+                                        placeholder={participants || '90'}
                                         onFocus={() => {
                                             setShowCalendar(false);
                                             setShowDestinations(false);
@@ -245,11 +270,18 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
 
                             {/* Sort */}
                             <View style={styles.filterSectionContainer}>
-                                <Text style={styles.filterLabel}>Sort by</Text>
+                                <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('sort_by')}</Text>
                                 <View style={styles.filterGrid}>
                                     {sortOptions.map(opt => {
 
                                         const isActive = sortOption === opt;
+                                        const translationMap = {
+                                            'A-Z': 'az',
+                                            'Z-A': 'za',
+                                            'Newest': 'newest',
+                                            'Oldest': 'oldest'
+                                        };
+                                        const label = translationMap[opt] ? t(translationMap[opt]) : opt;
 
                                         if (isActive) {
                                             return (
@@ -280,7 +312,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                                             fontFamily: Typography.sans.regular
                                                         }
                                                     ]}>
-                                                        {opt}
+                                                        {label}
                                                     </Text>
                                                 </GradientBorderButton>
                                             );
@@ -298,7 +330,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
                                             >
                                                 <View style={styles.filterChipInner}>
                                                     <Text style={styles.filterChipText}>
-                                                        {opt}
+                                                        {label}
                                                     </Text>
                                                 </View>
                                             </TouchableOpacity>
@@ -318,29 +350,18 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption }) => {
 
 
 const LANGUAGES = [
-    { code: 'AR', label: 'Arabic' },
-    { code: 'EN', label: 'English' },
-    { code: 'UR', label: 'Urdu' },
-    { code: 'ID', label: 'Indonesian' },
-    { code: 'TR', label: 'Turkish' },
-    { code: 'FR', label: 'French' },
-    { code: 'HI', label: 'Hindi' },
-    { code: 'BN', label: 'Bengali' },
-    { code: 'MS', label: 'Malay' },
-    { code: 'FA', label: 'Persian (Farsi)' },
-    { code: 'ES', label: 'Spanish' },
-    { code: 'PT', label: 'Portuguese' },
-    { code: 'RU', label: 'Russian' },
-    { code: 'DE', label: 'German' },
-    { code: 'NL', label: 'Dutch' },
+    { code: 'ar', label: 'Arabic' },
+    { code: 'en', label: 'English' },
+    { code: 'nl', label: 'Dutch' },
 ];
 
 const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
+    const { changeLanguage } = useLanguage();
     const renderLanguageItem = ({ item }) => (
         <TouchableOpacity
             style={styles.languageItem}
             onPress={() => {
-                onSelect(item.code);
+                changeLanguage(item.code);
                 onClose();
             }}
         >
@@ -378,11 +399,16 @@ const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
 
 const HomeScreen = ({ navigation }) => {
     const insets = useSafeAreaInsets();
+    const { t, language, changeLanguage, isRTL } = useLanguage();
     const [filterVisible, setFilterVisible] = useState(false);
     const [languageVisible, setLanguageVisible] = useState(false);
-    const [selectedLanguage, setSelectedLanguage] = useState('EN');
     const [searchQuery, setSearchQuery] = useState('');
     const [sortOption, setSortOption] = useState('Newest');
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [destination, setDestination] = useState('');
+    const [participants, setParticipants] = useState('');
+
     const [allTrips, setAllTrips] = useState([]); // Raw source of truth
     const [filteredData, setFilteredData] = useState([]); // Filtered view
     const [participantsCounts, setParticipantsCounts] = useState({});
@@ -421,12 +447,21 @@ const HomeScreen = ({ navigation }) => {
 
                     tripsSnapshot.forEach((child) => {
                         const tId = child.key;
-                        trips.push({ id: tId, orgId: orgId, ...(child.val() || {}) });
+                        const tripData = child.val() || {};
+                        trips.push({ id: tId, orgId: orgId, ...tripData });
+
+                        // Add participant count listener
+                        if (!countListeners.current[tId]) {
+                            const pRef = ref(database, `trips_participants/${tId}`);
+                            countListeners.current[tId] = onValue(pRef, (pSnap) => {
+                                const count = pSnap.exists() ? Object.keys(pSnap.val()).length : 0;
+                                setParticipantsCounts(prev => ({ ...prev, [tId]: count }));
+                            });
+                        }
                     });
 
                     setAllTrips(trips);
                     setIsLoading(false);
-
                 });
             } else {
 
@@ -446,10 +481,17 @@ const HomeScreen = ({ navigation }) => {
                     try {
                         const tripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}`));
                         if (tripSnap.exists()) {
-                            return { id: tripId, ...(tripSnap.val() || {}), orgId: orgId }; // Inject orgId so screens know where the trip lives
+                            // Add participant count listener
+                            if (!countListeners.current[tripId]) {
+                                const pRef = ref(database, `trips_participants/${tripId}`);
+                                countListeners.current[tripId] = onValue(pRef, (pSnap) => {
+                                    const count = pSnap.exists() ? Object.keys(pSnap.val()).length : 0;
+                                    setParticipantsCounts(prev => ({ ...prev, [tripId]: count }));
+                                });
+                            }
+                            return { id: tripId, ...(tripSnap.val() || {}), orgId: orgId };
                         }
                     } catch (error) {
-                        console.warn(`Failed to fetch trip ${tripId}:`, error);
                     }
                     return null;
                 })).then((tripsArray) => {
@@ -504,6 +546,27 @@ const HomeScreen = ({ navigation }) => {
             );
         }
 
+        if (destination) {
+            result = result.filter(item => item.location === destination);
+        }
+
+        if (startDate) {
+            const filterStart = new Date(startDate).getTime();
+            result = result.filter(item => (item.start_date || 0) >= filterStart);
+        }
+
+        if (endDate) {
+            const filterEnd = new Date(endDate).getTime();
+            result = result.filter(item => (item.end_date || 0) <= filterEnd);
+        }
+
+        if (participants) {
+            result = result.filter(item => {
+                const totalSeats = parseInt(item.total_seats) || 15;
+                return totalSeats >= parseInt(participants);
+            });
+        }
+
         if (sortOption === 'A-Z') {
             result.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
         } else if (sortOption === 'Z-A') {
@@ -512,16 +575,30 @@ const HomeScreen = ({ navigation }) => {
             result.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
         } else if (sortOption === 'Oldest') {
             result.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+        } else if (sortOption === 'Most participants') {
+            result.sort((a, b) => {
+                const countA = participantsCounts[a.id] !== undefined ? participantsCounts[a.id] : (a.participants || 0);
+                const countB = participantsCounts[b.id] !== undefined ? participantsCounts[b.id] : (b.participants || 0);
+                return countB - countA;
+            });
+        } else if (sortOption === 'Fewest Participants') {
+            result.sort((a, b) => {
+                const countA = participantsCounts[a.id] !== undefined ? participantsCounts[a.id] : (a.participants || 0);
+                const countB = participantsCounts[b.id] !== undefined ? participantsCounts[b.id] : (b.participants || 0);
+                return countA - countB;
+            });
+        } else if (sortOption === 'Likes') {
+            result.sort((a, b) => (b.likes || 0) - (a.likes || 0));
         }
 
         setFilteredData(result);
-    }, [searchQuery, sortOption, allTrips]);
+    }, [searchQuery, sortOption, allTrips, startDate, endDate, destination, participants]);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
-        if (hour < 12) return 'Good Morning!';
-        if (hour < 18) return 'Good Afternoon!';
-        return 'Good Evening!';
+        if (hour < 12) return t('good_morning');
+        if (hour < 18) return t('good_afternoon');
+        return t('good_evening');
     };
 
     useEffect(() => {
@@ -600,12 +677,21 @@ const HomeScreen = ({ navigation }) => {
                     onClose={() => setFilterVisible(false)}
                     sortOption={sortOption}
                     setSortOption={setSortOption}
+                    startDate={startDate}
+                    setStartDate={setStartDate}
+                    endDate={endDate}
+                    setEndDate={setEndDate}
+                    destination={destination}
+                    setDestination={setDestination}
+                    participants={participants}
+                    setParticipants={setParticipants}
+                    allTrips={allTrips}
                 />
                 <LanguageModal
                     visible={languageVisible}
                     onClose={() => setLanguageVisible(false)}
-                    onSelect={setSelectedLanguage}
-                    selectedLanguage={selectedLanguage}
+                    onSelect={changeLanguage}
+                    selectedLanguage={language}
                 />
 
                 <View style={styles.contentContainer}>
@@ -613,7 +699,7 @@ const HomeScreen = ({ navigation }) => {
                     <View style={styles.header}>
                         <View>
                             <Text style={styles.greetingText}>{getGreeting()}</Text>
-                            <Text style={styles.subtitleText}>May Allah Guide Every Step</Text>
+                            <Text style={styles.subtitleText}>{t('tagline')}</Text>
                         </View>
                         <View style={styles.headerIcons}>
                             <TouchableOpacity
@@ -655,9 +741,9 @@ const HomeScreen = ({ navigation }) => {
                                     </ClipPath>
                                 </Defs>
                             </Svg>
-                            <TextInput
+                             <TextInput
                                 style={styles.searchInput}
-                                placeholder="Search your trip"
+                                placeholder={t('search_trip')}
                                 placeholderTextColor="#A1A1AA"
                                 value={searchQuery}
                                 onChangeText={setSearchQuery}
@@ -943,7 +1029,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     dropdownScroll: {
-        maxHeight: 160,
+        maxHeight: 250,
     },
     filterDropdownItem: {
         padding: 14

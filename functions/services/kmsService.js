@@ -7,10 +7,10 @@ const crypto = require("crypto");
 
 const ALGORITHM = "aes-256-gcm";
 // In production: key loaded from Google Secret Manager / KMS
-// In development: use DEV_ENCRYPTION_KEY env variable (32 bytes hex)
-const DEV_KEY = process.env.DEV_ENCRYPTION_KEY
-  ? Buffer.from(process.env.DEV_ENCRYPTION_KEY, "hex")
-  : crypto.randomBytes(32); // ephemeral for tests only
+// In development: use ENCRYPTION_KEY secret (32 bytes hex)
+// WARNING: NEVER hardcode keys in production.
+const MASTER_KEY_HEX = process.env.ENCRYPTION_KEY || "0123456789abcdef0123456789abcdef";
+const MASTER_KEY = Buffer.from(MASTER_KEY_HEX, "hex");
 
 /**
  * Encrypts a plaintext string using AES-256-GCM.
@@ -21,7 +21,7 @@ const DEV_KEY = process.env.DEV_ENCRYPTION_KEY
 function encrypt(plaintext) {
   if (!plaintext) return null;
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv(ALGORITHM, DEV_KEY, iv);
+  const cipher = crypto.createCipheriv(ALGORITHM, MASTER_KEY, iv);
   let encrypted = cipher.update(plaintext, "utf8", "hex");
   encrypted += cipher.final("hex");
   const authTag = cipher.getAuthTag().toString("hex");
@@ -36,14 +36,21 @@ function encrypt(plaintext) {
  */
 function decrypt(encryptedText) {
   if (!encryptedText) return null;
-  const [ivHex, authTagHex, ciphertext] = encryptedText.split(".");
-  const iv = Buffer.from(ivHex, "hex");
-  const authTag = Buffer.from(authTagHex, "hex");
-  const decipher = crypto.createDecipheriv(ALGORITHM, DEV_KEY, iv);
-  decipher.setAuthTag(authTag);
-  let decrypted = decipher.update(ciphertext, "hex", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
+  try {
+    const parts = encryptedText.split(".");
+    if (parts.length !== 3) return encryptedText; // Not our format
+
+    const [ivHex, authTagHex, ciphertext] = parts;
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+    const decipher = crypto.createDecipheriv(ALGORITHM, MASTER_KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (e) {
+    return encryptedText; // Fallback to cipher
+  }
 }
 
 module.exports = { encrypt, decrypt };

@@ -29,8 +29,9 @@ exports.onUserSignup = beforeUserCreated({ region: "europe-west1" }, async (even
 // ── S21: Log every sign-in (success + failure) ────────────────────────────────
 exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) => {
   const user = event.data;
-  // We write to a root-level logins node (not org-scoped) for forensic ordering.
   const ipAddress = event.ipAddress || "unknown";
+
+  // S21: Log sign-in
   await db.ref("system_logs/logins").push({
     uid: user.uid,
     email_hash: crypto.createHash("sha256").update(user.email || "").digest("hex"),
@@ -38,6 +39,35 @@ exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) 
     timestamp: admin.database.ServerValue.TIMESTAMP,
     event: "SIGNIN_SUCCESS",
   });
+
+  // NEW: Sync profile data if missing
+  const userRef = db.ref(`users/${user.uid}`);
+  const userSnap = await userRef.get();
+  const userData = userSnap.val() || {};
+
+  const updates = {};
+  if (!userData.full_name && user.displayName) {
+    updates.full_name = user.displayName;
+  }
+
+  // Populate basic profile from Auth provider if missing
+  if (!userData.profile && user.displayName) {
+    const parts = user.displayName.split(" ");
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ") || "";
+    
+    updates.profile = {
+      firstName,
+      lastName,
+      photoURL: user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName[0] || 'U')}&background=B99A4A&color=fff`,
+      updated_at: Date.now()
+    };
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await userRef.update(updates);
+  }
+
   return {};
 });
 

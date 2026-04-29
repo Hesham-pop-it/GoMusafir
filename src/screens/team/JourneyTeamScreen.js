@@ -41,6 +41,7 @@ const JourneyTeamScreen = () => {
     const [team, setTeam] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [userRole, setUserRole] = useState('none');
 
     React.useEffect(() => {
         const currentUser = auth.currentUser;
@@ -65,6 +66,11 @@ const JourneyTeamScreen = () => {
                 }
 
                 const staffList = staffSnap.val(); // { uid: "manager", uid2: "co-host" }
+                
+                // Track current user's role
+                const myRole = staffList[currentUser.uid] || 'none';
+                setUserRole(myRole);
+
                 // 3. Fetch user details for each staff member safely
                 const promises = Object.keys(staffList).map(async (uid) => {
                     const role = staffList[uid];
@@ -151,9 +157,11 @@ const JourneyTeamScreen = () => {
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                         <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
-                    <TouchableOpacity onPress={toggleDeleteMode}>
-                        <TrashIcon color={isDeleteMode ? "#FF383C" : "#FFF"} />
-                    </TouchableOpacity>
+                    {(userRole === 'admin' || userRole === 'co-host') && (
+                        <TouchableOpacity onPress={toggleDeleteMode}>
+                            <TrashIcon color={isDeleteMode ? "#FF383C" : "#FFF"} />
+                        </TouchableOpacity>
+                    )}
                 </View>
 
                 <Text style={styles.title}>Journey Team</Text>
@@ -169,12 +177,14 @@ const JourneyTeamScreen = () => {
 
                 <View style={styles.footer}>
                     {!isDeleteMode ? (
-                        <TouchableOpacity
-                            style={styles.addButton}
-                            onPress={() => navigation.navigate('InviteMember')}
-                        >
-                            <Text style={styles.addButtonText}>Add</Text>
-                        </TouchableOpacity>
+                        (userRole === 'admin' || userRole === 'co-host') ? (
+                            <TouchableOpacity
+                                style={styles.addButton}
+                                onPress={() => navigation.navigate('InviteMember')}
+                            >
+                                <Text style={styles.addButtonText}>Add</Text>
+                            </TouchableOpacity>
+                        ) : null
                     ) : (
                         <TouchableOpacity
                             style={styles.deleteButton}

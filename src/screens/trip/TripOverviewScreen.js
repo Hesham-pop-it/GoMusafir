@@ -445,10 +445,22 @@ const TripOverviewScreen = () => {
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
         if (!isStaff || !orgId || !tripId) return;
         const nextState = !isChannelStarted;
-        setIsChannelStarted(nextState);
-        update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-            isChannelStarted: nextState
-        });
+
+        if (nextState) {
+            // If starting, navigate to Voice Chat and auto-start
+            navigation.navigate('VoiceChat', { 
+                trip: tripData, 
+                isAdmin: true, 
+                autoStart: true 
+            });
+        } else {
+            // If stopping, just update the DB
+            setIsChannelStarted(false);
+            update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                isChannelStarted: false,
+                isAllMuted: false
+            });
+        }
     };
 
     // 2. Fetch Real Notifications (Location Requests)
@@ -836,23 +848,36 @@ const TripOverviewScreen = () => {
             try {
                 let { status } = await Location.requestForegroundPermissionsAsync();
                 if (status !== 'granted') return;
-                let location = await Location.getCurrentPositionAsync({});
-                const { latitude, longitude } = location.coords;
-                const response = await fetch(
-                    `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
-                );
-                const data = await response.json();
-                if (data.code === 200) {
-                    const timings = data.data.timings;
-                    setPrayerTimes({
-                        Fajr: timings.Fajr,
-                        Dhuhr: timings.Dhuhr,
-                        Asr: timings.Asr,
-                        Maghrib: timings.Maghrib,
-                        Isha: timings.Isha,
+
+                // 1. Try to get last known position for instant loading
+                let location = await Location.getLastKnownPositionAsync();
+                
+                // 2. If no last known, or to get a fresh one, use Balanced accuracy (much faster than default High)
+                if (!location) {
+                    location = await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced,
                     });
                 }
+
+                if (location) {
+                    const { latitude, longitude } = location.coords;
+                    const response = await fetch(
+                        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
+                    );
+                    const data = await response.json();
+                    if (data.code === 200) {
+                        const timings = data.data.timings;
+                        setPrayerTimes({
+                            Fajr: timings.Fajr,
+                            Dhuhr: timings.Dhuhr,
+                            Asr: timings.Asr,
+                            Maghrib: timings.Maghrib,
+                            Isha: timings.Isha,
+                        });
+                    }
+                }
             } catch (error) {
+                console.log("Prayer fetch error:", error);
             }
         };
 
@@ -992,9 +1017,10 @@ const TripOverviewScreen = () => {
                     )}
 
 
-                    <Text style={styles.headerTitle}>Overview</Text>
+                    <Text style={[styles.headerTitle, (userRole === 'admin' || userRole === 'co-host') ? null : { marginRight: 30 }]}>Overview</Text>
 
-                    {isAdmin ? (
+                    {(userRole === 'admin' || userRole === 'co-host') ? (
+                        // {isAdmin ? (
                         <View style={{ flexDirection: 'row' }}>
                             {/* <TouchableOpacity
                                 style={styles.iconButton}
