@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import {
     View,
@@ -845,39 +846,70 @@ const TripOverviewScreen = () => {
 
     useEffect(() => {
         const getLocAndPrayers = async () => {
+            console.log("Starting prayer fetch...");
             try {
-                let { status } = await Location.requestForegroundPermissionsAsync();
-                if (status !== 'granted') return;
-
-                // 1. Try to get last known position for instant loading
-                let location = await Location.getLastKnownPositionAsync();
-                
-                // 2. If no last known, or to get a fresh one, use Balanced accuracy (much faster than default High)
-                if (!location) {
-                    location = await Location.getCurrentPositionAsync({
-                        accuracy: Location.Accuracy.Balanced,
-                    });
+                // 1. Try to load cached prayer times immediately
+                const cached = await AsyncStorage.getItem('cached_prayer_times');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    const today = new Date().toISOString().split('T')[0];
+                    if (parsed.date === today) {
+                        console.log("Using cached prayer times for today");
+                        setPrayerTimes(parsed.timings);
+                    }
                 }
 
+                let { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    console.log("Location permission denied");
+                    return;
+                }
+
+                // 2. Get location with Low accuracy (fastest)
+                console.log("Requesting location...");
+                let location = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Low,
+                }).catch(err => {
+                    console.log("getCurrentPositionAsync failed, trying last known:", err.message);
+                    return Location.getLastKnownPositionAsync();
+                });
+
+                console.log('Final Location Found:', location ? "Yes" : "No");
+                
                 if (location) {
                     const { latitude, longitude } = location.coords;
+                    console.log(`Fetching prayers for ${latitude}, ${longitude}`);
+                    
                     const response = await fetch(
                         `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
                     );
+                    
                     const data = await response.json();
                     if (data.code === 200) {
+                        console.log("Prayer API Success");
                         const timings = data.data.timings;
-                        setPrayerTimes({
+                        const newTimings = {
                             Fajr: timings.Fajr,
                             Dhuhr: timings.Dhuhr,
                             Asr: timings.Asr,
                             Maghrib: timings.Maghrib,
                             Isha: timings.Isha,
-                        });
+                        };
+                        setPrayerTimes(newTimings);
+                        
+                        // Cache for today
+                        await AsyncStorage.setItem('cached_prayer_times', JSON.stringify({
+                            date: new Date().toISOString().split('T')[0],
+                            timings: newTimings
+                        }));
+                    } else {
+                        console.log("Prayer API Error Code:", data.code);
                     }
+                } else {
+                    console.log("No location could be determined");
                 }
             } catch (error) {
-                console.log("Prayer fetch error:", error);
+                console.log("Prayer fetch catch error:", error);
             }
         };
 
