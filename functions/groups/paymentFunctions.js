@@ -179,6 +179,90 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
   return { url: session.url };
 });
 
+// ── Request Seat Top-up Link ────────────────────────────────────────────────
+exports.requestSeatTopupLink = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin", "manager", "co-host"]);
+
+  const data = request.data;
+  const { tripId, planId, seatsToIncr, countryCode } = data;
+  const { uid, token } = request.auth;
+  const orgId = token.orgId;
+  const email = token.email;
+
+  if (!tripId || !planId || !seatsToIncr || !orgId) {
+    throw new HttpsError("invalid-argument", "Missing required fields for seat top-up.");
+  }
+
+  // Fetch trip details to ensure it belongs to the org
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
+  const trip = tripSnap.val();
+
+  // Get Pricing
+  const pricingConfig = getPlanPricing(countryCode || "DEFAULT", planId);
+  const pricePerSeat = pricingConfig.price;
+  const unitAmount = Math.round(pricePerSeat * 100);
+
+  // Create Stripe Session
+  const session = await stripe.checkout.sessions.create({
+    line_items: [
+      {
+        price_data: {
+          currency: pricingConfig.currency,
+          product_data: {
+            name: `Extra Seats — ${trip.title}`,
+            description: `Adding ${seatsToIncr} seats at ${pricingConfig.symbol}${pricePerSeat}/seat`,
+          },
+          unit_amount: unitAmount,
+        },
+        quantity: parseInt(seatsToIncr),
+      },
+    ],
+    mode: "payment",
+    phone_number_collection: { enabled: true },
+    shipping_address_collection: { allowed_countries: ALLOWED_SHIPPING_COUNTRIES },
+    billing_address_collection: "required",
+    invoice_creation: { enabled: true },
+    expires_at: Math.floor(Date.now() / 1000) + (60 * 60), // Expire in 1 hour
+    metadata: {
+      orgId,
+      tripId,
+      action: "SEAT_TOPUP",
+      seatsToIncr: String(seatsToIncr),
+      journeyName: trip.title,
+      uid: uid
+    },
+    success_url: `https://go-musafir.web.app/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `https://go-musafir.web.app/payment-cancel`,
+  });
+
+  // Send Email
+  const htmlContent = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+      <h2 style="color: #B99A4A; text-align: center;">Increase Trip Capacity</h2>
+      <p>Hello,</p>
+      <p>You requested to increase the seat capacity for your trip <strong>"${trip.title}"</strong> by <strong>${seatsToIncr} seats</strong>.</p>
+      <p>Click the button below to complete the payment. Once paid, the seats will be added to your trip automatically.</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${session.url}" style="background-color: #B99A4A; color: white; padding: 15px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Pay & Increase Seats</a>
+      </div>
+      <p style="color: #999; font-size: 12px;">This link will expire in 1 hour.</p>
+    </div>
+  `;
+
+  const { sendEmail } = require("../services/emailService");
+  await sendEmail({ to: email, subject: `Seat Top-up: ${trip.title}`, html: htmlContent });
+
+  await writeAuditLog(orgId, { 
+    action: "SEAT_TOPUP_LINK_REQUESTED", 
+    byUid: uid, 
+    extra: { tripId, seatsToIncr } 
+  });
+
+  return { success: true, url: session.url };
+});
+
 // ── Stripe Webhook ────────────────────────────────────────────────────────────
 // S29: Signature verified with stripe.webhooks.constructEvent before any action.
 exports.stripeWebhookHandler = onRequest(
@@ -199,23 +283,37 @@ exports.stripeWebhookHandler = onRequest(
       const session = event.data.object;
 
       if (session.payment_status === "paid") {
-        const { orgId, journeyName, planId, seats, countryCode, pricePerSeat } = session.metadata;
+        const { orgId, journeyName, planId, seats, countryCode, pricePerSeat, action, tripId, seatsToIncr } = session.metadata;
 
         try {
-          // Record payment under org
           if (orgId) {
-            const paymentId = db.ref(`orgs/${orgId}/payments`).push().key;
+            // S30: Idempotency Check — ensure we haven't already processed this session
+            const paymentsRef = db.ref(`orgs/${orgId}/payments`);
+            const existingPaymentSnap = await paymentsRef.orderByChild('stripeSessionId').equalTo(session.id).get();
+            
+            if (existingPaymentSnap.exists()) {
+              console.log(`⚠️ Webhook already processed for session ${session.id}. Skipping.`);
+              return res.json({ received: true, already_processed: true });
+            }
+
+            const paymentId = paymentsRef.push().key;
+            
+            // Safe parsing to avoid NaN crashes
+            const seatsNum = parseInt(seats || seatsToIncr || "0");
+            const priceNum = parseFloat(pricePerSeat || "0");
+
             await db.ref(`orgs/${orgId}/payments/${paymentId}`).set({
               stripeSessionId: session.id,
               stripeCustomerId: session.customer || null,
-              planId,
-              seats: parseInt(seats),
-              pricePerSeat: parseFloat(pricePerSeat),
+              planId: planId || (action === "SEAT_TOPUP" ? "seat_topup" : "unknown"),
+              seats: isNaN(seatsNum) ? 0 : seatsNum,
+              pricePerSeat: isNaN(priceNum) ? 0 : priceNum,
               amount: session.amount_total,
               currency: session.currency,
-              journeyName,
-              countryCode,
+              journeyName: journeyName || "Untitled Journey",
+              countryCode: countryCode || "unknown",
               created_at: admin.database.ServerValue.TIMESTAMP,
+              action: action || "INITIAL_PAYMENT"
             });
 
             // If this was initiated via a link token, mark it as paid
@@ -229,6 +327,27 @@ exports.stripeWebhookHandler = onRequest(
             }
 
             console.log(`✅ Payment confirmed: Org ${orgId}, Plan ${planId}, Seats ${seats}`);
+
+            // S30: Handle Seat Top-up Automation
+            if (action === "SEAT_TOPUP") {
+              if (tripId && seatsToIncr) {
+                const seatsToIncrNum = parseInt(seatsToIncr);
+                const tripRef = db.ref(`orgs/${orgId}/trips/${tripId}`);
+                await tripRef.transaction((currentData) => {
+                  if (currentData) {
+                    currentData.total_seats = (currentData.total_seats || 0) + seatsToIncrNum;
+                  }
+                  return currentData;
+                });
+                
+                await writeAuditLog(orgId, { 
+                  action: "TRIP_CAPACITY_INCREASED", 
+                  targetId: tripId, 
+                  extra: { increment: seatsToIncr } 
+                });
+                console.log(`🚀 Automated Task: TRIP ${tripId} CAPACITY INCREASED BY ${seatsToIncr}`);
+              }
+            }
           }
         } catch (dbErr) {
           console.warn("DB update failed during webhook:", dbErr);

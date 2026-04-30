@@ -38,6 +38,7 @@ exports.setMuteAll            = tripFunctions.setMuteAll;
 exports.requestTripLink       = tripFunctions.requestTripLink;
 exports.verifyLinkToken       = tripFunctions.verifyLinkToken;
 exports.removeParticipantFromTrip = tripFunctions.removeParticipantFromTrip;
+exports.getParticipantProfile = tripFunctions.getParticipantProfile;
 
 // ── Invites ───────────────────────────────────────────────────────────────────
 exports.redeemInvitation      = inviteFunctions.redeemInvitation;
@@ -47,6 +48,7 @@ exports.getTeamInviteMetadata = inviteFunctions.getTeamInviteMetadata;
 
 // ── Payments (replaces GoMusafir-Website/server/server.js) ───────────────────
 exports.createCheckoutSession = paymentFunctions.createCheckoutSession;
+exports.requestSeatTopupLink  = paymentFunctions.requestSeatTopupLink;
 exports.stripeWebhookHandler  = paymentFunctions.stripeWebhookHandler;
 exports.verifyPayment         = paymentFunctions.verifyPayment;
 exports.getRegionalPricing    = paymentFunctions.getRegionalPricing;
@@ -54,6 +56,7 @@ exports.getRegionalPricing    = paymentFunctions.getRegionalPricing;
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
 exports.dataCleanupCron       = systemFunctions.dataCleanupCron;
+exports.secureCleanupPII      = systemFunctions.secureCleanupPII;
 
 // ── Voice Chat ────────────────────────────────────────────────────────────────
 exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;

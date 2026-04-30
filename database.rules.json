@@ -2,7 +2,7 @@
   "rules": {
     "users": {
         "$uid": {
-           ".read": "$uid === auth.uid || root.child('trips_participants').child(root.child('users').child($uid).child('current_trip').val()).child(auth.uid).exists()",
+           ".read": "$uid === auth.uid || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).exists() || root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('staff').child(auth.uid).exists() || root.child('trips_participants').child(root.child('users').child($uid).child('current_trip').val()).child(auth.uid).exists()",
            ".write": "$uid === auth.uid",
            "full_name": {
               ".read": "auth.uid !== null"
@@ -38,12 +38,16 @@
            "consents": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
               ".write": "auth.uid !== null"
+           },
+           "payments": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+              ".indexOn": ["stripeSessionId"]
            }
         }
     },
     "trips_participants": {
          "$tripId": {
-            ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).exists()",
+            ".read": "auth.uid !== null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).exists() || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).exists() || root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('staff').child(auth.uid).exists())",
            "$uid": {
               ".write": false
            }

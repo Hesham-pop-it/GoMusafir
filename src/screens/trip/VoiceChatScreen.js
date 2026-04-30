@@ -79,16 +79,6 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
         }
     }, [isMuted, room]);
 
-    // Ensure speakers are initialized
-    useEffect(() => {
-        const initAudio = async () => {
-            try {
-                await AudioSession.setDefaultRemoteAudioTrackVolume(1.0);
-            } catch (e) {
-            }
-        };
-        initAudio();
-    }, []);
 
 
     // Fetch User Profiles for participants
@@ -428,10 +418,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                             return (
                                 <View key={trackRef.participant.identity}>
                                     <View style={styles.participantRow}>
-                                        <View style={[
-                                            styles.avatarContainer,
-                                            isSpeaking && styles.speakingAvatarBorder
-                                        ]}>
+                                        <View style={styles.avatarContainer}>
                                             {isSpeaking && <SpeakerGlow />}
                                             <Image source={{ uri: pData.avatar }} style={styles.avatar} />
                                         </View>
@@ -483,6 +470,7 @@ const VoiceChatScreen = () => {
     const tripId = tripData.id || tripData.tripId;
     const invitationCode = directCode || tripData.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (passedTrip?.isAdmin !== undefined ? passedTrip.isAdmin : !invitationCode);
+    const { autoStart } = route.params || {};
 
     // LiveKit Connection States
     const [connectionDetails, setConnectionDetails] = useState(null);
@@ -500,21 +488,29 @@ const VoiceChatScreen = () => {
                 const token = await auth.currentUser.getIdTokenResult();
                 const role = token.claims.role || 'participant';
                 setUserRole(role);
-                setIsAdminState(role === 'admin' || role === 'co-host' || role === 'manager');
+                const isStaff = role === 'admin' || role === 'co-host' || role === 'manager';
+                setIsAdminState(isStaff);
+
+                // Auto-start if requested by navigation
+                if (autoStart && isStaff && !isConnected && !loading) {
+                    fetchToken();
+                }
             }
         };
         fetchRole();
-    }, []);
+    }, [autoStart]);
 
     // Listener for Global Mute & Channel Status (Consolidated)
     useEffect(() => {
-        if (!tripId || !tripData.orgId) return;
+        const orgId = tripData.orgId || tripData.org_id;
+        if (!tripId || !orgId) return;
 
-        const voiceRef = ref(database, `trips_active/${tripData.orgId}/${tripId}/voice_channel`);
+        const voiceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel`);
         const unsubscribe = onValue(voiceRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
-                setIsChannelActive(data.isChannelStarted ?? false);
+                const active = data.isChannelStarted ?? false;
+                setIsChannelActive(active);
                 setIsGlobalMuteActive(data.isAllMuted ?? false);
                 
                 if (data.isAllMuted && !isAdminState) {
@@ -522,31 +518,35 @@ const VoiceChatScreen = () => {
                 } else if (isAdminState && data.adminMuted !== undefined) {
                     setIsMuted(data.adminMuted);
                 }
+
+                // S21: Auto-leave for participants when channel is stopped
+                if (!active && isConnected && !isAdminState) {
+                    handleDisconnect();
+                }
             } else {
                 setIsChannelActive(false);
+                if (isConnected && !isAdminState) {
+                    handleDisconnect();
+                }
             }
         });
         return () => unsubscribe();
-    }, [tripId, tripData.orgId, isAdminState]);
+    }, [tripId, tripData.orgId, tripData.org_id, isAdminState, isConnected]);
 
     // Audio Session Lifecycle
     useEffect(() => {
         if (isConnected) {
             const setupAudio = async () => {
                 try {
-                    // S22: Force loudspeaker globally for a "walkie-talkie" experience
-                    await Audio.setAudioModeAsync({
-                        allowsRecordingIOS: true,
-                        playsInSilentModeIOS: true,
-                        staysActiveInBackground: true,
-                        shouldRouteThroughEarpieceAndroid: false, // Force speaker on Android
-                    });
-
                     await AudioSession.configureAudio({
-                        android: { audioTypeOptions: AndroidAudioTypePresets.communication },
+                        android: { 
+                            audioTypeOptions: AndroidAudioTypePresets.communication,
+                        },
                         ios: { defaultOutput: 'speaker' },
                     });
                     await AudioSession.startAudioSession();
+                    // Set volume high for walkie-talkie
+                    await AudioSession.setDefaultRemoteAudioTrackVolume(1.0);
                 } catch (e) {
                 }
             };
@@ -556,22 +556,6 @@ const VoiceChatScreen = () => {
             };
         }
     }, [isConnected]);
-
-    // Listener for Channel Activity
-    useEffect(() => {
-        if (!tripId) return;
-        const activeRef = ref(database, `orgs/${tripData.orgId}/trips/${tripId}/voice_state/is_active`);
-        const unsubscribe = onValue(activeRef, (snapshot) => {
-            const active = !!snapshot.val();
-            setIsChannelActive(active);
-            
-            // Auto-leave for participants when channel is stopped (S21)
-            if (!active && isConnected && !isAdminState) {
-                handleDisconnect();
-            }
-        });
-        return () => unsubscribe();
-    }, [tripId, tripData.orgId, isConnected, isAdminState]);
 
     const requestMicrophonePermission = async () => {
         if (Platform.OS === 'android') {
@@ -610,6 +594,17 @@ const VoiceChatScreen = () => {
         try {
             setLoading(true);
 
+            // S22: Prepare audio environment BEFORE connecting
+            try {
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: true,
+                    playsInSilentModeIOS: true,
+                    staysActiveInBackground: true,
+                    shouldRouteThroughEarpieceAndroid: false,
+                });
+            } catch (audioErr) {
+            }
+
             // If admin is starting, toggle status first and reset mute states
             if (isAdminState && !isChannelActive) {
                 const toggle = httpsCallable(functions, 'toggleChannelStatus');
@@ -638,7 +633,8 @@ const VoiceChatScreen = () => {
                 setIsConnected(true);
                 // Initialize local mute state based on global status
                 setIsMuted(isGlobalMuteActive);
-            } else {
+            }
+ else {
                 throw new Error("Failed to receive connection details from server.");
             }
         } catch (error) {
@@ -948,18 +944,6 @@ const styles = StyleSheet.create({
         marginRight: 12,
         justifyContent: 'center',
         alignItems: 'center',
-    },
-    speakingAvatarBorder: {
-        borderWidth: 2,
-        borderColor: '#34C759',
-        shadowColor: '#34C759',
-        shadowOffset: {
-            width: 0,
-            height: 0,
-        },
-        shadowOpacity: 1,
-        shadowRadius: 15,
-        elevation: 10,
     },
     glowCircle: {
         position: 'absolute',

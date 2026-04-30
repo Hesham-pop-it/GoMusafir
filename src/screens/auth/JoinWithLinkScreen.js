@@ -95,6 +95,28 @@ const JoinWithLinkScreen = ({ navigation }) => {
                 return;
             }
 
+            // --- End Date Check ---
+            // If the end date has passed, block everyone (even existing participants)
+            if (tripDetails.endDate) {
+                const now = Date.now();
+                const end = typeof tripDetails.endDate === 'number' 
+                    ? tripDetails.endDate 
+                    : new Date(tripDetails.endDate).getTime();
+                
+                // Add a small buffer (e.g., end of the day) if needed, 
+                // but here we follow exact timestamp comparison
+                if (now > end) {
+                    Alert.alert(
+                        "Trip Ended",
+                        "This trip has already concluded and is no longer accepting participants or logins.",
+                        [{ text: "OK" }]
+                    );
+                    setIsLoading(false);
+                    return;
+                }
+            }
+            // --- End Check ---
+
             // Navigate to Join Flow Start - Now starting with Email
             navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import {
     View,
@@ -445,10 +446,22 @@ const TripOverviewScreen = () => {
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
         if (!isStaff || !orgId || !tripId) return;
         const nextState = !isChannelStarted;
-        setIsChannelStarted(nextState);
-        update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-            isChannelStarted: nextState
-        });
+
+        if (nextState) {
+            // If starting, navigate to Voice Chat and auto-start
+            navigation.navigate('VoiceChat', { 
+                trip: tripData, 
+                isAdmin: true, 
+                autoStart: true 
+            });
+        } else {
+            // If stopping, just update the DB
+            setIsChannelStarted(false);
+            update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                isChannelStarted: false,
+                isAllMuted: false
+            });
+        }
     };
 
     // 2. Fetch Real Notifications (Location Requests)
@@ -833,26 +846,70 @@ const TripOverviewScreen = () => {
 
     useEffect(() => {
         const getLocAndPrayers = async () => {
+            console.log("Starting prayer fetch...");
             try {
+                // 1. Try to load cached prayer times immediately
+                const cached = await AsyncStorage.getItem('cached_prayer_times');
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    const today = new Date().toISOString().split('T')[0];
+                    if (parsed.date === today) {
+                        console.log("Using cached prayer times for today");
+                        setPrayerTimes(parsed.timings);
+                    }
+                }
+
                 let { status } = await Location.requestForegroundPermissionsAsync();
-                if (status !== 'granted') return;
-                let location = await Location.getCurrentPositionAsync({});
-                const { latitude, longitude } = location.coords;
-                const response = await fetch(
-                    `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
-                );
-                const data = await response.json();
-                if (data.code === 200) {
-                    const timings = data.data.timings;
-                    setPrayerTimes({
-                        Fajr: timings.Fajr,
-                        Dhuhr: timings.Dhuhr,
-                        Asr: timings.Asr,
-                        Maghrib: timings.Maghrib,
-                        Isha: timings.Isha,
-                    });
+                if (status !== 'granted') {
+                    console.log("Location permission denied");
+                    return;
+                }
+
+                // 2. Get location with Low accuracy (fastest)
+                console.log("Requesting location...");
+                let location = await Location.getCurrentPositionAsync({
+                    accuracy: Location.Accuracy.Low,
+                }).catch(err => {
+                    console.log("getCurrentPositionAsync failed, trying last known:", err.message);
+                    return Location.getLastKnownPositionAsync();
+                });
+
+                console.log('Final Location Found:', location ? "Yes" : "No");
+                
+                if (location) {
+                    const { latitude, longitude } = location.coords;
+                    console.log(`Fetching prayers for ${latitude}, ${longitude}`);
+                    
+                    const response = await fetch(
+                        `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
+                    );
+                    
+                    const data = await response.json();
+                    if (data.code === 200) {
+                        console.log("Prayer API Success");
+                        const timings = data.data.timings;
+                        const newTimings = {
+                            Fajr: timings.Fajr,
+                            Dhuhr: timings.Dhuhr,
+                            Asr: timings.Asr,
+                            Maghrib: timings.Maghrib,
+                            Isha: timings.Isha,
+                        };
+                        setPrayerTimes(newTimings);
+                        
+                        // Cache for today
+                        await AsyncStorage.setItem('cached_prayer_times', JSON.stringify({
+                            date: new Date().toISOString().split('T')[0],
+                            timings: newTimings
+                        }));
+                    } else {
+                        console.log("Prayer API Error Code:", data.code);
+                    }
+                } else {
+                    console.log("No location could be determined");
                 }
             } catch (error) {
+                console.log("Prayer fetch catch error:", error);
             }
         };
 
@@ -992,9 +1049,10 @@ const TripOverviewScreen = () => {
                     )}
 
 
-                    <Text style={styles.headerTitle}>Overview</Text>
+                    <Text style={[styles.headerTitle, (userRole === 'admin' || userRole === 'co-host') ? null : { marginRight: 30 }]}>Overview</Text>
 
-                    {isAdmin ? (
+                    {(userRole === 'admin' || userRole === 'co-host') ? (
+                        // {isAdmin ? (
                         <View style={{ flexDirection: 'row' }}>
                             {/* <TouchableOpacity
                                 style={styles.iconButton}

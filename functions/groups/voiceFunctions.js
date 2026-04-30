@@ -26,16 +26,19 @@ exports.generateLiveKitToken = onCall({ region: "europe-west1" }, async (request
     const orgId = orgSnap.val();
     if (!orgId) throw new HttpsError("not-found", "Trip organization not found.");
 
-    // 2. Authorization Check (Verify user is in the trip_participants)
-    const participantSnapshot = await db.ref(`trips_participants/${tripId}/${uid}`).once("value");
-    if (!participantSnapshot.exists()) {
-      throw new HttpsError("permission-denied", "You are not a participant of this trip.");
+    // 2. Authorization Check (Verify user is in the trip_participants OR is a staff member)
+    const isStaffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).once("value");
+    const isStaff = isStaffSnap.exists() && isStaffSnap.val() !== 'none';
+    
+    if (!isStaff) {
+      const participantSnapshot = await db.ref(`trips_participants/${tripId}/${uid}`).once("value");
+      if (!participantSnapshot.exists()) {
+        throw new HttpsError("permission-denied", "You are not a participant of this trip.");
+      }
     }
 
     // 3. Admin Check
-    const userSnap = await db.ref(`users/${uid}`).once("value");
-    const userData = userSnap.val() || {};
-    const isAdmin = userData.staff_org_id === orgId; // Business/Admin verification
+    const isAdmin = isStaff; // Any staff member can be considered 'admin' for voice channel management (start/stop)
 
     // 4. Channel Activity Check (Internal Restriction)
     if (!isAdmin) {

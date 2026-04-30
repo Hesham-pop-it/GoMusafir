@@ -10,6 +10,7 @@ import {
     StatusBar,
     PanResponder,
     Animated,
+    ActivityIndicator
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -48,6 +49,12 @@ const TripSettingsScreen = () => {
     const [resolvedTripId, setResolvedTripId] = useState(tripId);
     const [totalSeats, setTotalSeats] = useState(15); // Default fallback
     const [filledSeats, setFilledSeats] = useState(0);
+    const [seatTopupStep, setSeatTopupStep] = useState(1); // 1: Count, 2: Plan, 3: Success
+    const [selectedPlan, setSelectedPlan] = useState('seat_only');
+    const [isProcessingTopup, setIsProcessingTopup] = useState(false);
+    const [pricingPlans, setPricingPlans] = useState(null);
+    const [topupError, setTopupError] = useState(null);
+
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
         lastname: 'Show to organizer',
@@ -170,6 +177,24 @@ const TripSettingsScreen = () => {
         return () => unsubscribe();
     }, [resolvedOrgId, resolvedTripId]);
 
+    // 4. Fetch Pricing for Seat Top-up
+    useEffect(() => {
+        if (seatModalVisible && !pricingPlans) {
+            const fetchPricing = async () => {
+                try {
+                    const { functions } = require('../../config/firebase');
+                    const { httpsCallable } = require('firebase/functions');
+                    const getRegionalPricing = httpsCallable(functions, 'getRegionalPricing');
+                    const result = await getRegionalPricing({ countryCode: 'PK' }); // Default to PK or detect
+                    setPricingPlans(result.data.plans);
+                } catch (err) {
+                    console.warn("Failed to fetch pricing:", err);
+                }
+            };
+            fetchPricing();
+        }
+    }, [seatModalVisible]);
+
 
     const adminVisibilityOptions = [
         'Show to organizer',
@@ -232,9 +257,31 @@ const TripSettingsScreen = () => {
         });
     };
 
-    const handleRequestSeats = () => {
-        setSeatModalVisible(false);
-        setRequestSentVisible(true);
+    const handleRequestSeats = async () => {
+        if (!resolvedTripId || !selectedPlan || isProcessingTopup) return;
+        
+        setIsProcessingTopup(true);
+        setTopupError(null);
+
+        try {
+            const { functions } = require('../../config/firebase');
+            const { httpsCallable } = require('firebase/functions');
+            const requestSeatTopupLink = httpsCallable(functions, 'requestSeatTopupLink');
+            
+            await requestSeatTopupLink({
+                tripId: resolvedTripId,
+                planId: selectedPlan,
+                seatsToIncr: seatCount,
+                countryCode: 'PK' // Fallback or dynamic
+            });
+
+            setSeatTopupStep(3); // Success Step
+        } catch (err) {
+            console.error("Top-up request failed:", err);
+            setTopupError("Failed to request payment link. Please try again.");
+        } finally {
+            setIsProcessingTopup(false);
+        }
     };
 
     const handleLogout = async () => {
@@ -414,7 +461,7 @@ const TripSettingsScreen = () => {
                             </LinearGradient>
                         </View>
 
-                        {(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') && (
+                        {(userRole === 'admin' || userRole === 'co-host') && (
                             <TouchableOpacity
                                 style={styles.increaseBtnWrapper}
                                 onPress={() => setSeatModalVisible(true)}
@@ -453,12 +500,14 @@ const TripSettingsScreen = () => {
                         </TouchableOpacity>
 
                         {/* Action Button (Delete for Admin / Logout for Participant) */}
-                        <TouchableOpacity
-                            style={styles.deleteButton}
-                            onPress={() => (userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
-                        >
-                            <Text style={styles.deleteButtonText}>{(userRole === 'admin' || userRole === 'co-host' || userRole === 'manager') ? 'Delete Journey' : 'Log Out'}</Text>
-                        </TouchableOpacity>
+                        {userRole !== 'manager' && (
+                            <TouchableOpacity
+                                style={styles.deleteButton}
+                                onPress={() => (userRole === 'admin' || userRole === 'co-host') ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
+                            >
+                                <Text style={styles.deleteButtonText}>{(userRole === 'admin' || userRole === 'co-host') ? 'Delete Journey' : 'Log Out'}</Text>
+                            </TouchableOpacity>
+                        )}
 
                         <View style={{ height: 100 }} />
                     </View>
@@ -582,43 +631,109 @@ const TripSettingsScreen = () => {
                         {...seatSwipe.panHandlers}
                     >
                         <View style={styles.modalHandle} />
-                        <Text style={styles.seatModalTitle}>How many more seats do you need?</Text>
-
-                        <View style={styles.counterRow}>
-                            <TouchableOpacity
-                                style={styles.counterBtn}
-                                onPress={() => setSeatCount(Math.max(1, seatCount - 1))}
-                            >
-                                <Ionicons name="remove" size={20} color="#000" />
-                            </TouchableOpacity>
-
-                            <View style={styles.countCircle}>
-                                <Text style={styles.countText}>{seatCount}</Text>
-                            </View>
-
-                            <TouchableOpacity
-                                style={styles.counterBtn}
-                                onPress={() => setSeatCount(seatCount + 1)}
-                            >
-                                <Ionicons name="add" size={20} color="#000" />
-                            </TouchableOpacity>
-                        </View>
-
-                        <TouchableOpacity
-                            style={styles.requestButton}
-                            onPress={handleRequestSeats}
-                        >
-                            <LinearGradient
-                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 1, y: 0 }}
-                                style={styles.resendGradientBorder}
-                            >
-                                <View style={styles.resendButtonInner}>
-                                    <Text style={styles.requestButtonText}>Request more seats</Text>
+                        
+                        {seatTopupStep === 1 && (
+                            <>
+                                <Text style={styles.seatModalTitle}>How many more seats do you need?</Text>
+                                <View style={styles.counterRow}>
+                                    <TouchableOpacity
+                                        style={styles.counterBtn}
+                                        onPress={() => setSeatCount(Math.max(1, seatCount - 1))}
+                                    >
+                                        <Ionicons name="remove" size={20} color="#000" />
+                                    </TouchableOpacity>
+                                    <View style={styles.countCircle}>
+                                        <Text style={styles.countText}>{seatCount}</Text>
+                                    </View>
+                                    <TouchableOpacity
+                                        style={styles.counterBtn}
+                                        onPress={() => setSeatCount(seatCount + 1)}
+                                    >
+                                        <Ionicons name="add" size={20} color="#000" />
+                                    </TouchableOpacity>
                                 </View>
-                            </LinearGradient>
-                        </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={styles.modalPrimaryBtn}
+                                    onPress={() => setSeatTopupStep(2)}
+                                >
+                                    <Text style={styles.modalPrimaryBtnText}>Next: Select Plan</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
+
+                        {seatTopupStep === 2 && (
+                            <>
+                                <Text style={styles.seatModalTitle}>Select a Plan</Text>
+                                <Text style={styles.seatModalSubTitle}>Choose how you want to expand your trip</Text>
+                                
+                                <ScrollView style={{ maxHeight: 300, width: '100%', marginBottom: 20 }}>
+                                    {pricingPlans ? Object.entries(pricingPlans).map(([id, p]) => (
+                                        <TouchableOpacity 
+                                            key={id}
+                                            style={[styles.planCard, selectedPlan === id && styles.planCardSelected]}
+                                            onPress={() => setSelectedPlan(id)}
+                                        >
+                                            <View>
+                                                <Text style={styles.planName}>{id.replace('_', ' ').toUpperCase()}</Text>
+                                                <Text style={styles.planPrice}>{p.symbol}{p.price} / seat</Text>
+                                            </View>
+                                            <Ionicons 
+                                                name={selectedPlan === id ? "radio-button-on" : "radio-button-off"} 
+                                                size={24} 
+                                                color={selectedPlan === id ? "#B99A4A" : "#666"} 
+                                            />
+                                        </TouchableOpacity>
+                                    )) : (
+                                        <ActivityIndicator color="#B99A4A" size="large" />
+                                    )}
+                                </ScrollView>
+
+                                {topupError && <Text style={styles.errorText}>{topupError}</Text>}
+
+                                <View style={styles.modalBtnRow}>
+                                    <TouchableOpacity 
+                                        style={styles.modalSecondaryBtn} 
+                                        onPress={() => setSeatTopupStep(1)}
+                                        disabled={isProcessingTopup}
+                                    >
+                                        <Text style={styles.modalSecondaryBtnText}>Back</Text>
+                                    </TouchableOpacity>
+                                    
+                                    <TouchableOpacity 
+                                        style={[styles.modalPrimaryBtn, { flex: 1, marginLeft: 12 }]} 
+                                        onPress={handleRequestSeats}
+                                        disabled={isProcessingTopup}
+                                    >
+                                        {isProcessingTopup ? (
+                                            <ActivityIndicator color="#000" size="small" />
+                                        ) : (
+                                            <Text style={styles.modalPrimaryBtnText}>Pay & Increase</Text>
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
+                            </>
+                        )}
+
+                        {seatTopupStep === 3 && (
+                            <View style={{ alignItems: 'center', paddingVertical: 20 }}>
+                                <View style={styles.successIconCircle}>
+                                    <Ionicons name="mail-unread" size={40} color="#B99A4A" />
+                                </View>
+                                <Text style={styles.seatModalTitle}>Payment Link Sent!</Text>
+                                <Text style={styles.seatModalSubTitle}>
+                                    We've sent a secure Stripe checkout link to your email. Once you pay, your trip capacity will increase automatically.
+                                </Text>
+                                <TouchableOpacity
+                                    style={styles.modalPrimaryBtn}
+                                    onPress={() => {
+                                        setSeatModalVisible(false);
+                                        setTimeout(() => setSeatTopupStep(1), 500);
+                                    }}
+                                >
+                                    <Text style={styles.modalPrimaryBtnText}>Got it</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
                     </Animated.View>
                 </Modal>
 
@@ -911,10 +1026,94 @@ const styles = StyleSheet.create({
     },
     seatModalTitle: {
         color: '#FFF',
-        fontSize: responsiveFontSize(16),
+        fontSize: responsiveFontSize(20),
+        fontFamily: Typography.sans.bold,
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    seatModalSubTitle: {
+        color: '#9BA1A6',
+        fontSize: responsiveFontSize(14),
         fontFamily: Typography.sans.regular,
         textAlign: 'center',
-        marginBottom: 30,
+        marginBottom: 24,
+        lineHeight: 20,
+    },
+    modalPrimaryBtn: {
+        backgroundColor: '#B99A4A',
+        borderRadius: 12,
+        height: 56,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: '100%',
+    },
+    modalPrimaryBtnText: {
+        color: '#000',
+        fontSize: responsiveFontSize(16),
+        padding: 10,
+        fontFamily: Typography.sans.bold,
+    },
+    modalSecondaryBtn: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: '#666',
+        borderRadius: 12,
+        height: 56,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 24,
+    },
+    modalSecondaryBtnText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
+    },
+    modalBtnRow: {
+        flexDirection: 'row',
+        width: '100%',
+        marginTop: 10,
+    },
+    planCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        backgroundColor: '#23272A',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: '#323537',
+    },
+    planCardSelected: {
+        borderColor: '#B99A4A',
+        backgroundColor: '#2A2D33',
+    },
+    planName: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.bold,
+        marginBottom: 4,
+    },
+    planPrice: {
+        color: '#9BA1A6',
+        fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
+    },
+    successIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#2A2D33',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+    },
+    errorText: {
+        color: '#FF4B4B',
+        fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular,
+        marginBottom: 16,
+        textAlign: 'center',
     },
     counterRow: {
         flexDirection: 'row',

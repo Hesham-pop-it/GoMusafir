@@ -64,6 +64,57 @@ exports.dataCleanupCron = onSchedule(
       if (Object.keys(updates).length > 0) await db.ref().update(updates);
     }
 
-    console.log("✅ Cleanup cron completed.");
   }
 );
+// ── Secure Cleanup PII (Maintenance) ──────────────────────────────────────────
+// S12/S22: One-off function to encrypt all legacy plaintext PII in the database.
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { verifyAppCheck, requireRole } = require("../middleware/appCheckMiddleware");
+
+exports.secureCleanupPII = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin"]); // Only top-level admins can run this
+
+  const { encrypt } = require("../services/kmsService");
+  const usersSnap = await db.ref("users").get();
+  
+  if (!usersSnap.exists()) return { message: "No users found." };
+
+  const updates = {};
+  let count = 0;
+
+  usersSnap.forEach((child) => {
+    const uid = child.key;
+    const userData = child.val();
+    
+    // Check for plaintext profile
+    if (userData.profile && !userData.p_profile) {
+      const profile = userData.profile;
+      const profileBlob = JSON.stringify({
+        firstName: profile.firstName || "",
+        lastName: profile.lastName || "",
+        phone: profile.phone || "",
+        photoURL: profile.photoURL || "",
+        email: userData.email || ""
+      });
+      
+      updates[`users/${uid}/p_profile`] = encrypt(profileBlob);
+      updates[`users/${uid}/profile`] = null; // Delete plaintext
+      
+      // Mask full_name
+      if (userData.full_name) {
+        const parts = userData.full_name.split(" ");
+        const masked = parts.map(p => `${p.charAt(0)}***`).join(" ");
+        updates[`users/${uid}/full_name`] = masked;
+      }
+      
+      count++;
+    }
+  });
+
+  if (count > 0) {
+    await db.ref().update(updates);
+  }
+
+  return { success: true, processedCount: count };
+});
