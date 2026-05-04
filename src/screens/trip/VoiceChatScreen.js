@@ -809,7 +809,7 @@ const VoiceChatScreen = () => {
                     >
                         <View style={styles.listSection}>
                             <Text style={{ color: '#888', textAlign: 'center', marginTop: 50 }}>
-                                Press Start to view live participants
+                                Join Channel to view live participants
                             </Text>
                         </View>
                     </ScrollView>

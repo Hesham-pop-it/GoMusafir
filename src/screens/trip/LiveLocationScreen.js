@@ -244,25 +244,41 @@ const LiveLocationScreen = () => {
 
     useEffect(() => {
         let locationWatcher = null;
-        if (!resolvedOrgId || !tripId) {
-            return;
-        }
 
         const startTracking = async () => {
-            let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                return;
-            }
-
             try {
-                const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-                const userCoords = {
-                    latitude: loc.coords.latitude,
-                    longitude: loc.coords.longitude,
-                };
-                setUserLocation(userCoords);
+                // 1. Request permissions
+                let { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') {
+                    console.log("[LiveLocation] Foreground permission denied");
+                    return;
+                }
+
+                // 2. Get initial location to populate UI immediately
+                try {
+                    const loc = await Location.getCurrentPositionAsync({ 
+                        accuracy: Location.Accuracy.Balanced,
+                        timeout: 10000 
+                    });
+                    const userCoords = {
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                    };
+                    setUserLocation(userCoords);
+                    
+                    // Add "Me" to participants list locally so it shows on map even before sync
+                    if (auth.currentUser) {
+                        const uid = auth.currentUser.uid;
+                        setParticipants(prev => ({
+                            ...prev,
+                            [uid]: { lat: loc.coords.latitude, lng: loc.coords.longitude, updated_at: Date.now() }
+                        }));
+                    }
+                } catch (posErr) {
+                    console.log("[LiveLocation] Initial position error:", posErr);
+                }
                 
-                // Start continuous tracking - Reduced distanceInterval for better sensitivity
+                // 3. Start continuous tracking
                 locationWatcher = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.High,
@@ -277,47 +293,50 @@ const LiveLocationScreen = () => {
                         };
                         setUserLocation(newCoords);
 
-                        // Sync to Firebase
+                        // Sync to state immediately for responsiveness
                         if (auth.currentUser) {
                             const uid = auth.currentUser.uid;
-                            const locationRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations/${uid}`);
-                            
-                            // 1. Local Preview Update (Make it feel instant)
                             setParticipants(prev => ({
                                 ...prev,
                                 [uid]: { lat: coords.latitude, lng: coords.longitude, updated_at: Date.now() }
                             }));
 
-                            // 2. Firebase Remote Update
-                            set(locationRef, {
-                                lat: coords.latitude,
-                                lng: coords.longitude,
-                                updated_at: serverTimestamp(),
-                            }).then(() => {
-                                // Log only occasionally or on first success
-                                // console.log("[LiveLocation] Remote sync successful");
-                            }).catch(err => {
-                            });
+                            // 4. Sync to Firebase ONLY if we have IDs
+                            if (resolvedOrgId && tripId) {
+                                const locationRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations/${uid}`);
+                                set(locationRef, {
+                                    lat: coords.latitude,
+                                    lng: coords.longitude,
+                                    updated_at: serverTimestamp(),
+                                }).catch(err => {
+                                    console.log("[LiveLocation] Firebase sync error:", err);
+                                });
+                            }
                         }
                     }
                 );
             } catch (err) {
+                console.log("[LiveLocation] Tracking setup error:", err);
             }
-
         };
 
         startTracking();
 
-        if (resolvedOrgId && tripId) {
+        // Firebase Listeners (only if IDs exist)
+        let locationsRef = null;
+        let safetyRef = null;
+        let notifRef = null;
 
-            let locationsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations`);
+        if (resolvedOrgId && tripId) {
+            locationsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations`);
             onValue(locationsRef, (snapshot) => {
                 const locData = snapshot.val() || {};
-                setParticipants(locData);
+                // Merge remote data with our local participant list
+                setParticipants(prev => ({ ...prev, ...locData }));
             });
 
             // Listen for Safety Point
-            const safetyRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/safety_point`);
+            safetyRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/safety_point`);
             onValue(safetyRef, (snap) => {
                 setSafetyPoint(snap.val());
                 setIsSafetyActive(!!snap.val());
@@ -325,7 +344,7 @@ const LiveLocationScreen = () => {
 
             // Listen for Incoming Requests
             if (auth.currentUser) {
-                const notifRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/notifications/${auth.currentUser.uid}`);
+                notifRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/notifications/${auth.currentUser.uid}`);
                 onValue(notifRef, (snap) => {
                     if (snap.exists()) {
                         const notifs = snap.val();
@@ -337,15 +356,13 @@ const LiveLocationScreen = () => {
                     }
                 });
             }
-
-            return () => {
-                if (locationWatcher) locationWatcher.remove();
-                if (locationsRef) off(locationsRef);
-            };
         }
 
         return () => {
             if (locationWatcher) locationWatcher.remove();
+            if (locationsRef) off(locationsRef);
+            if (safetyRef) off(safetyRef);
+            if (notifRef) off(notifRef);
         };
     }, [resolvedOrgId, tripId]);
 
@@ -595,6 +612,8 @@ const LiveLocationScreen = () => {
                         customMapStyle={darkMapStyle}
                         onPress={() => setSelectedMarker(null)}
                         moveOnMarkerPress={false}
+                        showsUserLocation={true}
+                        showsMyLocationButton={false}
                     >
                         {/* Public Safety Point Marker */}
                         {safetyPoint && (

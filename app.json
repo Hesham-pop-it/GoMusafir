@@ -24,7 +24,8 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "NSLocationAlwaysUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "UIBackgroundModes": [
-          "remote-notification"
+          "remote-notification",
+          "location"
         ]
       }
     },
