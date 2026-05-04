@@ -281,3 +281,43 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
   return { success: true };
 });
 
+// ── Delete My Account (Bypasses recent login requirement by using Admin SDK) ───
+exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+
+  const uid = request.auth.uid;
+  const role = request.auth.token.role;
+  const orgId = request.auth.token.orgId;
+
+  // 1. If admin, mark org for deletion (soft delete)
+  if (role === 'admin' && orgId) {
+    await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+    await writeAuditLog(orgId, {
+      action: "ORG_DELETED_BY_OWNER",
+      byUid: uid,
+      targetId: orgId,
+    });
+  }
+
+  // 2. Cleanup user data
+  const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
+  const updates = {
+    [`users/${uid}`]: null,
+    [`otp_codes/${uid}`]: null,
+  };
+
+  if (joinedTripsSnap.exists()) {
+    Object.keys(joinedTripsSnap.val()).forEach(tid => {
+      updates[`trips_participants/${tid}/${uid}`] = null;
+    });
+  }
+  
+  await db.ref().update(updates);
+
+  // 3. Delete from Auth (Admin SDK)
+  await auth.deleteUser(uid);
+
+  return { success: true };
+});
+

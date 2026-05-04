@@ -56,15 +56,12 @@ const SettingsScreen = ({ navigation }) => {
     const handleDeleteAccount = async () => {
         setIsDeleting(true);
         try {
-            if (userRole === 'admin') {
-                // S3: Admin deleting organization + requires recent login
-                const deleteOrg = httpsCallable(functions, 'deleteOrganization');
-                await deleteOrg();
-            } else {
-                // Participant deleting their own account
-                await deleteUser(auth.currentUser);
-            }
+            const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
+            await deleteMyAccount();
+            
             setDeleteVisible(false);
+            // Sign out locally to clear state, though the user is already deleted in backend
+            await signOut(auth);
             // App.js onAuthStateChanged will handle navigation automatically
         } catch (error) {
             setDeleteVisible(false);

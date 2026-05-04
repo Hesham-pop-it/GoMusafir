@@ -7,17 +7,36 @@ import {
     Platform,
     Image,
     Dimensions,
-    Alert
+    Alert,
+    ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Typography } from '../../constants/Typography';
+import { functions, auth } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
+
+import { useNavigation, useIsFocused } from '@react-navigation/native';
+import Svg, { Path } from 'react-native-svg';
 
 const { width, height } = Dimensions.get('window');
 const SCAN_FRAME_SIZE = width * 0.7;
+const TOP_OFFSET = (height - SCAN_FRAME_SIZE) / 2.5; // Offset to push it slightly up from center
 
 const ScanQrScreen = ({ navigation }) => {
     const [permission, requestPermission] = useCameraPermissions();
+    const [isLoading, setIsLoading] = useState(false);
+    const [isScanned, setIsScanned] = useState(false); // Prevent multiple scans
+    const isFocused = useIsFocused();
+
+    // Reset scan state when screen is refocused (e.g. coming back from next screen)
+    useEffect(() => {
+        if (isFocused) {
+            setIsScanned(false);
+            setIsLoading(false);
+        }
+    }, [isFocused]);
 
     useEffect(() => {
         if (!permission) {
@@ -46,51 +65,120 @@ const ScanQrScreen = ({ navigation }) => {
 
     return (
         <SafeAreaView style={[styles.container]}>
-            <View style={{ flex: 1, backgroundColor: '#000' }}>
+            <View style={{ flex: 1 }}>
                 <CameraView
                     style={StyleSheet.absoluteFill}
                     facing="back"
-                    onBarcodeScanned={(result) => {
-                        // Pass the scanned QR data (e.g., Trip ID or Token) to the registration flow
-                        navigation.navigate('JoinFirstName', { invitationCode: result.data });
+                    onBarcodeScanned={isScanned || isLoading ? undefined : async (result) => {
+                        setIsScanned(true);
+                        setIsLoading(true);
+                        try {
+                            // Extract code from link if scanned data is a full URL
+                            let codeInput = result.data.trim();
+                            if (codeInput.includes('/')) {
+                                codeInput = codeInput.split('/').pop().split('?')[0];
+                            }
+
+                            // Call getInviteMetadata for validation
+                            const getMetadata = httpsCallable(functions, 'getInviteMetadata');
+                            const metadataResult = await getMetadata({ inviteCode: codeInput });
+                            const tripDetails = metadataResult.data;
+
+                            // Validation 1: Check if trip is full
+                            const user = auth.currentUser;
+                            const alreadyJoined = tripDetails.alreadyJoined;
+
+                            if (tripDetails.isFull && !alreadyJoined && user) {
+                                Alert.alert("Trip Full", `Sorry, this trip has reached its maximum capacity.`, [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                                setIsLoading(false);
+                                return;
+                            }
+
+                            // Validation 2: Check if trip has ended
+                            if (tripDetails.endDate) {
+                                const now = Date.now();
+                                const end = typeof tripDetails.endDate === 'number' 
+                                    ? tripDetails.endDate 
+                                    : new Date(tripDetails.endDate).getTime();
+                                
+                                if (now > end) {
+                                    Alert.alert("Trip Ended", "This trip has already concluded.", [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                                    setIsLoading(false);
+                                    return;
+                                }
+                            }
+
+                            // Success: Navigate to JoinEmail
+                            navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
+                        } catch (error) {
+                            console.error(error);
+                            Alert.alert("Invalid QR", "This QR code is not a valid GoMusafir invitation.", [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                        } finally {
+                            setIsLoading(false);
+                        }
                     }}
                 />
+                
+                {isLoading && (
+                    <View style={styles.loadingOverlay}>
+                        <ActivityIndicator size="large" color="#B99A4A" />
+                        <Text style={styles.loadingText}>Validating Trip...</Text>
+                    </View>
+                )}
 
-                {/* Overlay is now a sibling, not a child */}
-                <View style={{ flex: 1 }}>
-                    {/* Header with Close Button */}
+                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                    <Svg height="100%" width="100%">
+                        <Path
+                            fillRule="evenodd"
+                            d={`
+                                M 0 0
+                                H ${width}
+                                V ${height}
+                                H 0
+                                Z
+                                M ${(width - SCAN_FRAME_SIZE) / 2 + 30} ${TOP_OFFSET - 5}
+                                h ${SCAN_FRAME_SIZE - 60}
+                                a 30 30 0 0 1 30 30
+                                v ${SCAN_FRAME_SIZE - 60}
+                                a 30 30 0 0 1 -30 30
+                                h -${SCAN_FRAME_SIZE - 60}
+                                a 30 30 0 0 1 -30 -30
+                                v -${SCAN_FRAME_SIZE - 60}
+                                a 30 30 0 0 1 30 -30
+                                z
+                            `}
+                            fill="rgba(0,0,0,0.6)"
+                        />
+                    </Svg>
+                </View>
+
+                {/* Content on top of everything */}
+                <View style={StyleSheet.absoluteFill}>
                     <View style={styles.header}>
-                        <TouchableOpacity
-                            onPress={() => navigation.goBack()}
-                            style={styles.closeButton}
-                        >
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeButton}>
                             <Ionicons name="close" size={28} color="#FFF" />
                         </TouchableOpacity>
-
                     </View>
                     <Text style={styles.headerTitle}>Scan to Join</Text>
                     <Text style={styles.instructionText}>
                         Point your camera at a QR code and capture it.
                     </Text>
-                    <View style={styles.overlay} >
-                        {/* Masking Overlays */}
-                        <View style={styles.topMask} />
-                        <View style={styles.bottomMask} />
-                        <View style={styles.leftMask} />
-                        <View style={styles.rightMask} />
 
-                        {/* Scanning Frame */}
-                        <View style={styles.scanFrameContainer}>
-                            <View style={styles.frameCornerTopLeft} />
-                            <View style={styles.frameCornerTopRight} />
-                            <View style={styles.frameCornerBottomLeft} />
-                            <View style={styles.frameCornerBottomRight} />
-                            <View style={styles.frameSideTop} />
-                            <View style={styles.frameSideBottom} />
-                            <View style={styles.frameSideLeft} />
-                            <View style={styles.frameSideRight} />
-                            <View style={styles.scanArea} />
-                        </View>
+                    {/* Centered Scan Frame */}
+                    <View style={[styles.scanFrameContainer, { marginTop: TOP_OFFSET - 140 }]}>
+                        {/* Corner Pieces */}
+                        <View style={styles.frameCornerTopLeft} />
+                        <View style={styles.frameCornerTopRight} />
+                        <View style={styles.frameCornerBottomLeft} />
+                        <View style={styles.frameCornerBottomRight} />
+                        
+                        {/* Side Segments */}
+                        <View style={styles.frameSideTop} />
+                        <View style={styles.frameSideBottom} />
+                        <View style={styles.frameSideLeft} />
+                        <View style={styles.frameSideRight} />
+                        
+                        <View style={styles.scanArea} />
                     </View>
                 </View>
             </View>
@@ -103,42 +191,9 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#000',
     },
-    camera: {
-        flex: 1,
-    },
-    overlay: {
-        flex: 1,
-        alignItems: 'center',
-    },
-    topMask: {
+    mask: {
         position: 'absolute',
-        top: 0,
-        width: '100%',
-        height: 50,
-        backgroundColor: '#000',
-    },
-    bottomMask: {
-        position: 'absolute',
-        top: 50 + SCAN_FRAME_SIZE,
-        width: '100%',
-        bottom: 0,
-        backgroundColor: '#000',
-    },
-    leftMask: {
-        position: 'absolute',
-        top: 50,
-        left: 0,
-        width: (width - SCAN_FRAME_SIZE) / 2,
-        height: SCAN_FRAME_SIZE,
-        backgroundColor: '#000',
-    },
-    rightMask: {
-        position: 'absolute',
-        top: 50,
-        right: 0,
-        width: (width - SCAN_FRAME_SIZE) / 2,
-        height: SCAN_FRAME_SIZE,
-        backgroundColor: '#000',
+        backgroundColor: 'rgba(0,0,0,0.6)',
     },
     header: {
         width: '100%',
@@ -151,9 +206,9 @@ const styles = StyleSheet.create({
         width: '100%'
     },
     headerTitle: {
-        fontSize: 24,
+        fontSize: 28,
         color: '#FFF',
-        fontFamily: 'IBMPlexSans',
+        fontFamily: Typography.serif.bold,
         marginLeft: 15,
     },
     instructionText: {
@@ -162,126 +217,126 @@ const styles = StyleSheet.create({
         marginTop: 20,
         paddingHorizontal: 15,
         lineHeight: 20,
-        fontWeight: 'bold',
-        textAlign: 'center'
+        fontFamily: Typography.sans.bold,
+        // textAlign: 'center'
     },
     scanFrameContainer: {
         width: SCAN_FRAME_SIZE,
         height: SCAN_FRAME_SIZE,
-        marginTop: 50,
+        // marginTop: 50,
         position: 'relative',
         justifyContent: 'center',
         alignItems: 'center',
+        borderRadius: 20,
+        alignSelf: 'center',
     },
     scanArea: {
         width: '100%',
         height: '100%',
-        backgroundColor: 'rgba(255,255,255,0.1)', // Slight highlight for scan area
-        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 30,
     },
     frameCornerTopLeft: {
         position: 'absolute',
-        top: -2,
-        left: -2,
-        width: 40,
-        height: 40,
-        borderTopWidth: 4,
-        borderLeftWidth: 4,
+        top: 0,
+        left: 0,
+        width: 60,
+        height: 60,
+        borderTopWidth: 5,
+        borderLeftWidth: 5,
         borderColor: '#B99A4A',
-        borderTopLeftRadius: 20,
+        borderTopLeftRadius: 30,
         zIndex: 10,
     },
     frameCornerTopRight: {
         position: 'absolute',
-        top: -2,
-        right: -2,
-        width: 40,
-        height: 40,
-        borderTopWidth: 4,
-        borderRightWidth: 4,
+        top: 0,
+        right: 0,
+        width: 60,
+        height: 60,
+        borderTopWidth: 5,
+        borderRightWidth: 5,
         borderColor: '#B99A4A',
-        borderTopRightRadius: 20,
+        borderTopRightRadius: 30,
         zIndex: 10,
     },
     frameCornerBottomLeft: {
         position: 'absolute',
-        bottom: -2,
-        left: -2,
-        width: 40,
-        height: 40,
-        borderBottomWidth: 4,
-        borderLeftWidth: 4,
+        bottom: 0,
+        left: 0,
+        width: 60,
+        height: 60,
+        borderBottomWidth: 5,
+        borderLeftWidth: 5,
         borderColor: '#B99A4A',
-        borderBottomLeftRadius: 20,
+        borderBottomLeftRadius: 30,
         zIndex: 10,
     },
     frameCornerBottomRight: {
         position: 'absolute',
-        bottom: -2,
-        right: -2,
-        width: 40,
-        height: 40,
-        borderBottomWidth: 4,
-        borderRightWidth: 4,
+        bottom: 0,
+        right: 0,
+        width: 60,
+        height: 60,
+        borderBottomWidth: 5,
+        borderRightWidth: 5,
         borderColor: '#B99A4A',
-        borderBottomRightRadius: 20,
+        borderBottomRightRadius: 30,
         zIndex: 10,
-    },
-
-    permButton: {
-        marginTop: 20,
-        padding: 10,
-        backgroundColor: '#B99A4A',
-        alignSelf: 'center',
-        borderRadius: 5,
-    },
-    permButtonText: {
-        color: '#FFF',
-        fontWeight: 'bold',
     },
     frameSideTop: {
         position: 'absolute',
         top: 0,
-        left: '42%',
-        marginLeft: -30,
-        width: 100,
+        alignSelf: 'center',
+        width: 80,
         height: 5,
         backgroundColor: '#B99A4A',
-        borderRadius: 4,
+        borderRadius: 3,
         zIndex: 10,
     },
     frameSideBottom: {
         position: 'absolute',
         bottom: 0,
-        left: '42%',
-        marginLeft: -30,
-        width: 100,
+        alignSelf: 'center',
+        width: 80,
         height: 5,
         backgroundColor: '#B99A4A',
-        borderRadius: 4,
+        borderRadius: 3,
         zIndex: 10,
     },
     frameSideLeft: {
         position: 'absolute',
         left: 0,
-        top: '42%',
-        marginTop: -30,
-        height: 100,
+        top: '50%',
+        marginTop: -40,
+        height: 80,
         width: 5,
         backgroundColor: '#B99A4A',
-        borderRadius: 4,
+        borderRadius: 3,
         zIndex: 10,
     },
     frameSideRight: {
         position: 'absolute',
         right: 0,
-        top: '42%',
-        marginTop: -30,
-        height: 100,
+        top: '50%',
+        marginTop: -40,
+        height: 80,
         width: 5,
         backgroundColor: '#B99A4A',
-        borderRadius: 4,
+        borderRadius: 3,
         zIndex: 10,
+    },
+    loadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 100,
+    },
+    loadingText: {
+        color: '#FFF',
+        marginTop: 15,
+        fontFamily: Typography.sans.bold,
     }
 });
 

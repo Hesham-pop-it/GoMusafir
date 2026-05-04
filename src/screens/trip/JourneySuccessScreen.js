@@ -12,6 +12,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
+import { Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
@@ -40,7 +43,7 @@ const PresentationIcon = () => (
 const JourneySuccessScreen = ({ route }) => {
     const navigation = useNavigation();
     const { invitationCode } = route.params;
-    const invitationLink = "www.gomusafir.com/link/" + invitationCode;
+    const invitationLink = "gomusafir.app/link/" + invitationCode;
 
     const handleShare = async () => {
         try {
@@ -49,6 +52,26 @@ const JourneySuccessScreen = ({ route }) => {
             });
         } catch (error) {
             console.log(error.message);
+        }
+    };
+
+    const handleDownloadQR = async () => {
+        try {
+            const { status } = await MediaLibrary.requestPermissionsAsync();
+            if (status !== 'granted') {
+                Alert.alert("Permission Required", "Please allow GoMusafir to access your photos to save the QR code.");
+                return;
+            }
+
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=https://gomusafir.app/link/${invitationCode}`;
+            const filename = FileSystem.documentDirectory + "gomusafir_qr.png";
+            
+            const { uri } = await FileSystem.downloadAsync(qrUrl, filename);
+            await MediaLibrary.saveToLibraryAsync(uri);
+            Alert.alert("Success", "QR Code saved to your gallery!");
+        } catch (error) {
+            console.error(error);
+            Alert.alert("Error", "Failed to save QR code.");
         }
     };
 
@@ -75,7 +98,7 @@ const JourneySuccessScreen = ({ route }) => {
                         <Text style={styles.label}>QR Code</Text>
                         <View style={styles.qrCard}>
                             <Image
-                                source={{ uri: 'https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=https://gomusafir.com/link' }}
+                                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=https://gomusafir.app/link/${invitationCode}` }}
                                 style={styles.qrImage}
                             />
                         </View>
@@ -83,7 +106,7 @@ const JourneySuccessScreen = ({ route }) => {
 
                     {/* Action Buttons */}
                     <View style={styles.buttonContainer}>
-                        <TouchableOpacity style={styles.outlineButton}>
+                        <TouchableOpacity style={styles.outlineButton} onPress={handleDownloadQR}>
                             <QRDownloadIcon />
                             <Text style={styles.outlineButtonText}>Download QR</Text>
                         </TouchableOpacity>

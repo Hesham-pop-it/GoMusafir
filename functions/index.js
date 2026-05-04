@@ -21,6 +21,7 @@ exports.sendCustomEmailOTP    = authFunctions.sendCustomEmailOTP;
 exports.verifyCustomEmailOTP  = authFunctions.verifyCustomEmailOTP;
 exports.checkUserExistence    = authFunctions.checkUserExistence;
 exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
+exports.deleteMyAccount       = authFunctions.deleteMyAccount;
 
 
 // ── Organization ──────────────────────────────────────────────────────────────

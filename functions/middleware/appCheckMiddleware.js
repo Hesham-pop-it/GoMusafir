@@ -19,14 +19,16 @@ function verifyAppCheck(context) {
   }
 }
 
+const { HttpsError } = require("firebase-functions/v2/https");
+
 /**
  * Verifies that the caller is authenticated (has a valid Firebase Auth token).
  * @param {object} context - Firebase callable function context
- * @throws {functions.https.HttpsError} if not authenticated
+ * @throws {HttpsError} if not authenticated
  */
 function requireAuth(context) {
   if (!context.auth) {
-    throw new (require("firebase-functions")).https.HttpsError(
+    throw new HttpsError(
       "unauthenticated",
       "Authentication required."
     );
@@ -37,13 +39,13 @@ function requireAuth(context) {
  * Verifies that the caller has a specific role (from custom claims).
  * @param {object} context - Firebase callable function context
  * @param {string[]} allowedRoles - e.g. ["admin", "manager"]
- * @throws {functions.https.HttpsError} if role not allowed
+ * @throws {HttpsError} if role not allowed
  */
 function requireRole(context, allowedRoles) {
   requireAuth(context);
   const role = context.auth.token.role;
   if (!allowedRoles.includes(role)) {
-    throw new (require("firebase-functions")).https.HttpsError(
+    throw new HttpsError(
       "permission-denied",
       `Access denied. Required role: ${allowedRoles.join(" or ")}.`
     );

@@ -17,7 +17,8 @@
       "config": {
         "googleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
       },
-      "bundleIdentifier": "com.popit.GoMusafir"
+      "bundleIdentifier": "com.popit.GoMusafir",
+      "associatedDomains": ["applinks:gomusafir.app"]
     },
     "android": {
       "edgeToEdgeEnabled": false,
@@ -36,7 +37,26 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "package": "com.popit.GoMusafir"
+      "package": "com.popit.GoMusafir",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "www.gomusafir.app",
+              "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "gomusafir.app",
+              "pathPrefix": "/link"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "androidNavigationBar": {
       "backgroundColor": "#1A1E21",

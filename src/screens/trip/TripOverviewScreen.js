@@ -846,47 +846,40 @@ const TripOverviewScreen = () => {
 
     useEffect(() => {
         const getLocAndPrayers = async () => {
-            console.log("Starting prayer fetch...");
             try {
-                // 1. Try to load cached prayer times immediately
+                // 1. Immediate Cache Check
                 const cached = await AsyncStorage.getItem('cached_prayer_times');
                 if (cached) {
                     const parsed = JSON.parse(cached);
                     const today = new Date().toISOString().split('T')[0];
                     if (parsed.date === today) {
-                        console.log("Using cached prayer times for today");
                         setPrayerTimes(parsed.timings);
+                        // We still want to refresh in the background if it's the first time this session
                     }
                 }
 
+                // 2. Permission Check
                 let { status } = await Location.requestForegroundPermissionsAsync();
-                if (status !== 'granted') {
-                    console.log("Location permission denied");
-                    return;
+                if (status !== 'granted') return;
+
+                // 3. Fast Location (Get Last Known first)
+                let location = await Location.getLastKnownPositionAsync();
+                
+                // 4. Fallback to Current Position if last known is old or null
+                if (!location) {
+                    location = await Location.getCurrentPositionAsync({
+                        accuracy: Location.Accuracy.Balanced,
+                    });
                 }
 
-                // 2. Get location with Low accuracy (fastest)
-                console.log("Requesting location...");
-                let location = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.Low,
-                }).catch(err => {
-                    console.log("getCurrentPositionAsync failed, trying last known:", err.message);
-                    return Location.getLastKnownPositionAsync();
-                });
-
-                console.log('Final Location Found:', location ? "Yes" : "No");
-                
                 if (location) {
                     const { latitude, longitude } = location.coords;
-                    console.log(`Fetching prayers for ${latitude}, ${longitude}`);
-                    
                     const response = await fetch(
                         `https://api.aladhan.com/v1/timings?latitude=${latitude}&longitude=${longitude}&method=4`
                     );
                     
                     const data = await response.json();
                     if (data.code === 200) {
-                        console.log("Prayer API Success");
                         const timings = data.data.timings;
                         const newTimings = {
                             Fajr: timings.Fajr,
@@ -897,19 +890,16 @@ const TripOverviewScreen = () => {
                         };
                         setPrayerTimes(newTimings);
                         
-                        // Cache for today
+                        // Save to Cache
                         await AsyncStorage.setItem('cached_prayer_times', JSON.stringify({
                             date: new Date().toISOString().split('T')[0],
                             timings: newTimings
                         }));
-                    } else {
-                        console.log("Prayer API Error Code:", data.code);
                     }
-                } else {
-                    console.log("No location could be determined");
                 }
             } catch (error) {
-                console.log("Prayer fetch catch error:", error);
+                // Silent error to prevent UI disruption
+                console.log("Prayer Load Error:", error);
             }
         };
 

@@ -33,6 +33,7 @@ const createOrgSchema = z.object({
   country: z.object({ name: z.string(), code: z.string() }),
   password: z.string().min(8),
   isAuthorized: z.literal(true),
+  photoURL: z.string().url().optional().nullable(),
 });
 
 const createTripSchema = z.object({

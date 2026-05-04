@@ -9,7 +9,7 @@ const ALGORITHM = "aes-256-gcm";
 // In production: key loaded from Google Secret Manager / KMS
 // In development: use ENCRYPTION_KEY secret (32 bytes hex)
 // WARNING: NEVER hardcode keys in production.
-const MASTER_KEY_HEX = process.env.ENCRYPTION_KEY || "0123456789abcdef0123456789abcdef";
+const MASTER_KEY_HEX = process.env.ENCRYPTION_KEY || "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const MASTER_KEY = Buffer.from(MASTER_KEY_HEX, "hex");
 
 /**

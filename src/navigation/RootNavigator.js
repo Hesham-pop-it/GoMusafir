@@ -1,6 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
+import * as Linking from 'expo-linking';
 
 // Import organized screens
 import WelcomeScreen from '../screens/welcome/WelcomeScreen';
@@ -45,10 +46,22 @@ let isTrimming = false;
 export const navigationRef = createNavigationContainerRef();
 const Stack = createNativeStackNavigator();
 
+const linking = {
+    prefixes: [Linking.createURL('/'), 'https://gomusafir.app', 'https://www.gomusafir.app', 'gomusafir://'],
+    config: {
+        screens: {
+            JoinWithLink: 'link/:invitationCode',
+            Home: 'home',
+            TripOverview: 'trips',
+        },
+    },
+};
+
 export default function RootNavigator({ initialRouteName = "Welcome" }) {
     return (
         <NavigationContainer
             ref={navigationRef}
+            linking={linking}
             onStateChange={(state) => {
                 if (!state || isTrimming) return;
 

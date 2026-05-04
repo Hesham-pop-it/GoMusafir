@@ -43,6 +43,11 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
     metadata: {
       name: data.companyName,
       admin_uid: uid,
+      admin_first_name: data.firstName,
+      admin_last_name: data.lastName,
+      admin_email: data.email,
+      admin_phone: `${data.phoneCode}${data.phoneNumber}`,
+      admin_photo_url: data.photoURL || null,
       plan: "free",
       created_at: now,
       min_app_version: "1.0.0",
@@ -73,7 +78,10 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
   };
 
   const newUser = {
+    first_name: data.firstName,
+    last_name: data.lastName,
     full_name: `${data.firstName} ${data.lastName}`,
+    photo_url: data.photoURL || null,
     p_email: encryptedEmail, // S12
     p_phone: encryptedPhone, // S12
     mfa_enrolled: false,

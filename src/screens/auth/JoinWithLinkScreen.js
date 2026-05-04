@@ -23,7 +23,7 @@ import { responsiveFontSize } from '../../utils/responsive';
 import { functions, auth } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 
-const JoinWithLinkScreen = ({ navigation }) => {
+const JoinWithLinkScreen = ({ navigation, route }) => {
     const [invitationLink, setInvitationLink] = useState('');
     const [isValid, setIsValid] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
@@ -48,6 +48,48 @@ const JoinWithLinkScreen = ({ navigation }) => {
         };
     }, []);
 
+    useEffect(() => {
+        const code = route.params?.invitationCode;
+        if (code) {
+            setInvitationLink(code);
+            // We need a small delay or use a separate function to ensure state is updated
+            // But handleContinue can take the code directly if we refactor it slightly
+            autoJoin(code);
+        }
+    }, [route.params?.invitationCode]);
+
+    const autoJoin = async (code) => {
+        setIsLoading(true);
+        try {
+            const getMetadata = httpsCallable(functions, 'getInviteMetadata');
+            const result = await getMetadata({ inviteCode: code });
+            const tripDetails = result.data;
+            const user = auth.currentUser;
+            const alreadyJoined = tripDetails.alreadyJoined;
+
+            if (tripDetails.isFull && !alreadyJoined && user) {
+                Alert.alert("Trip Full", `Sorry, this trip has reached its maximum capacity.`, [{ text: "OK" }]);
+                setIsLoading(false);
+                return;
+            }
+
+            if (tripDetails.endDate) {
+                const now = Date.now();
+                const end = typeof tripDetails.endDate === 'number' ? tripDetails.endDate : new Date(tripDetails.endDate).getTime();
+                if (now > end) {
+                    Alert.alert("Trip Ended", "This trip has already concluded.", [{ text: "OK" }]);
+                    setIsLoading(false);
+                    return;
+                }
+            }
+            navigation.navigate('JoinEmail', { invitationCode: code, tripDetails });
+        } catch (error) {
+            setIsValid(false);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleLinkChange = (text) => {
         setInvitationLink(text);
         setIsValid(true); // Reset error on change
@@ -63,14 +105,20 @@ const JoinWithLinkScreen = ({ navigation }) => {
         setIsLoading(true);
 
         try {
-            // Extract code from link (e.g. gomusafir.app/join?code=XYZ or gomusafir.app/invite/XYZ or just XYZ)
+            // Extract code from link (e.g. gomusafir.app/link/XYZ)
             let codeInput = invitationLink.trim();
             
-            if (codeInput.includes('?code=')) {
-                codeInput = codeInput.split('?code=').pop().split('&')[0];
-            } else if (codeInput.includes('/')) {
-                codeInput = codeInput.split('/').pop();
-            
+            // Enforce link format if it's a URL or contains certain patterns
+            if (codeInput.includes('://') || codeInput.includes('.')) {
+                if (!codeInput.includes('gomusafir.app/link/')) {
+                    setIsValid(false);
+                    setIsLoading(false);
+                    return;
+                }
+            }
+
+            if (codeInput.includes('/')) {
+                codeInput = codeInput.split('/').pop().split('?')[0];
             }
 
             // Call getInviteMetadata
