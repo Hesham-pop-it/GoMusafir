@@ -606,9 +606,9 @@ const TripOverviewScreen = () => {
         for (const [uid, loc] of Object.entries(liveLocations ?? {})) {
             if (uid === auth.currentUser?.uid || !loc) continue;
 
-            // Check visibility
+            // Check if participant is still active and has visibility
             const pProfile = participantsList.find(p => p.id === uid);
-            if (pProfile && pProfile.canSeeLocation === false) continue;
+            if (!pProfile || pProfile.canSeeLocation === false) continue;
 
             const dist = Math.sqrt(
                 Math.pow(loc.lat - userLocation.latitude, 2) +

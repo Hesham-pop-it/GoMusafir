@@ -14,11 +14,21 @@
     },
     "ios": {
       "supportsTablet": true,
+      "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
         "googleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
       },
-      "bundleIdentifier": "com.popit.GoMusafir",
-      "associatedDomains": ["applinks:gomusafir.app"]
+"bundleIdentifier": "com.popit.GoMusafir",
+      "associatedDomains": ["applinks:gomusafir.app"],
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow GoMusafir to access your location to show nearby places and provide navigation.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
+        "NSLocationAlwaysUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
+        "UIBackgroundModes": [
+          "remote-notification",
+          "location"
+        ]
+      }
     },
     "android": {
       "edgeToEdgeEnabled": false,
@@ -73,7 +83,8 @@
             "kotlinVersion": "1.9.24"
           },
           "ios": {
-            "deploymentTarget": "15.1"
+            "deploymentTarget": "15.1",
+            "useFrameworks": "static"
           }
         }
       ],

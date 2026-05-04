@@ -319,10 +319,11 @@ exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (re
     throw new HttpsError("permission-denied", "Trip does not belong to your organization.");
   }
 
-  // Atomic update to remove from participant list and user's joined list
+  // Atomic update to remove from participant list, user's joined list, and active location data
   const updates = {
     [`trips_participants/${tripId}/${targetUid}`]: null,
     [`users/${targetUid}/joined_trips/${tripId}`]: null,
+    [`trips_active/${orgId}/${tripId}/locations/${targetUid}`]: null,
   };
 
   await db.ref().update(updates);

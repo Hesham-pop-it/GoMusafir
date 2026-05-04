@@ -264,6 +264,10 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
 
   for (const tid of Object.keys(joinedTrips)) {
     updates[`trips_participants/${tid}/${targetUid}`] = null;
+    const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
+    if (tripOrgId) {
+      updates[`trips_active/${tripOrgId}/${tid}/locations/${targetUid}`] = null;
+    }
   }
 
   // 2. Delete from Auth (Admin SDK)
@@ -308,8 +312,13 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
   };
 
   if (joinedTripsSnap.exists()) {
-    Object.keys(joinedTripsSnap.val()).forEach(tid => {
+    const joinedTrips = joinedTripsSnap.val();
+    Object.keys(joinedTrips).forEach(tid => {
       updates[`trips_participants/${tid}/${uid}`] = null;
+      const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
+      if (tripOrgId) {
+        updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
+      }
     });
   }
   
