@@ -22,6 +22,7 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { auth, database } from '../../config/firebase';
 import { signOut } from 'firebase/auth';
+import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
 import { ref, onValue, update, get } from 'firebase/database';
 
 
@@ -123,9 +124,9 @@ const TripSettingsScreen = () => {
 
         // A. Listen for Total Seats (Capacity)
         // If resolvedOrgId is available, we use the full path, otherwise fallback to finding the org
-        const tripPath = resolvedOrgId 
+        const tripPath = resolvedOrgId
             ? `orgs/${resolvedOrgId}/trips/${resolvedTripId}`
-            : null; 
+            : null;
 
         let unsubscribeTrip = null;
         if (tripPath) {
@@ -182,10 +183,23 @@ const TripSettingsScreen = () => {
         if (seatModalVisible && !pricingPlans) {
             const fetchPricing = async () => {
                 try {
-                    const { functions } = require('../../config/firebase');
+                    const { functions, database } = require('../../config/firebase');
                     const { httpsCallable } = require('firebase/functions');
+                    const { ref, get } = require('firebase/database');
+                    
+                    // 1. Detect user country for regional pricing
+                    let countryCode = 'DEFAULT';
+                    const user = auth.currentUser;
+                    if (user) {
+                        const countrySnap = await get(ref(database, `users/${user.uid}/country`));
+                        if (countrySnap.exists()) {
+                            const cData = countrySnap.val();
+                            countryCode = typeof cData === 'object' ? (cData.code || 'DEFAULT') : (cData || 'DEFAULT');
+                        }
+                    }
+
                     const getRegionalPricing = httpsCallable(functions, 'getRegionalPricing');
-                    const result = await getRegionalPricing({ countryCode: 'PK' }); // Default to PK or detect
+                    const result = await getRegionalPricing({ countryCode });
                     setPricingPlans(result.data.plans);
                 } catch (err) {
                     console.warn("Failed to fetch pricing:", err);
@@ -259,7 +273,7 @@ const TripSettingsScreen = () => {
 
     const handleRequestSeats = async () => {
         if (!resolvedTripId || !selectedPlan || isProcessingTopup) return;
-        
+
         setIsProcessingTopup(true);
         setTopupError(null);
 
@@ -267,7 +281,7 @@ const TripSettingsScreen = () => {
             const { functions } = require('../../config/firebase');
             const { httpsCallable } = require('firebase/functions');
             const requestSeatTopupLink = httpsCallable(functions, 'requestSeatTopupLink');
-            
+
             await requestSeatTopupLink({
                 tripId: resolvedTripId,
                 planId: selectedPlan,
@@ -277,7 +291,7 @@ const TripSettingsScreen = () => {
 
             setSeatTopupStep(3); // Success Step
         } catch (err) {
-            console.error("Top-up request failed:", err);
+            console.log("Top-up request failed:", err);
             setTopupError("Failed to request payment link. Please try again.");
         } finally {
             setIsProcessingTopup(false);
@@ -287,6 +301,7 @@ const TripSettingsScreen = () => {
     const handleLogout = async () => {
         setLogoutModalVisible(false);
         try {
+            await unregisterForPushNotificationsAsync();
             await signOut(auth);
             // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
         } catch (error) {
@@ -349,7 +364,7 @@ const TripSettingsScreen = () => {
 
     const VisibilityItem = ({ label, field }) => {
         const isExpanded = expandedField === field;
-        
+
         // Logic to determine what to show
         let currentValue = '';
         let isLocked = false;
@@ -490,10 +505,9 @@ const TripSettingsScreen = () => {
                             <VisibilityItem label="Location" field="location" />
                         </View>
 
-                        {/* Help & Support */}
                         <TouchableOpacity
                             style={styles.helpCard}
-                            onPress={() => navigation.navigate('HelpSupport')}
+                            onPress={() => navigation.navigate('HelpSupport', { isAdmin })}
                         >
                             <Text style={styles.helpText}>Help & Support</Text>
                             <Ionicons name="chevron-forward" size={20} color="#9BA1A6" />
@@ -631,7 +645,7 @@ const TripSettingsScreen = () => {
                         {...seatSwipe.panHandlers}
                     >
                         <View style={styles.modalHandle} />
-                        
+
                         {seatTopupStep === 1 && (
                             <>
                                 <Text style={styles.seatModalTitle}>How many more seats do you need?</Text>
@@ -665,10 +679,10 @@ const TripSettingsScreen = () => {
                             <>
                                 <Text style={styles.seatModalTitle}>Select a Plan</Text>
                                 <Text style={styles.seatModalSubTitle}>Choose how you want to expand your trip</Text>
-                                
+
                                 <ScrollView style={{ maxHeight: 300, width: '100%', marginBottom: 20 }}>
                                     {pricingPlans ? Object.entries(pricingPlans).map(([id, p]) => (
-                                        <TouchableOpacity 
+                                        <TouchableOpacity
                                             key={id}
                                             style={[styles.planCard, selectedPlan === id && styles.planCardSelected]}
                                             onPress={() => setSelectedPlan(id)}
@@ -677,10 +691,10 @@ const TripSettingsScreen = () => {
                                                 <Text style={styles.planName}>{id.replace('_', ' ').toUpperCase()}</Text>
                                                 <Text style={styles.planPrice}>{p.symbol}{p.price} / seat</Text>
                                             </View>
-                                            <Ionicons 
-                                                name={selectedPlan === id ? "radio-button-on" : "radio-button-off"} 
-                                                size={24} 
-                                                color={selectedPlan === id ? "#B99A4A" : "#666"} 
+                                            <Ionicons
+                                                name={selectedPlan === id ? "radio-button-on" : "radio-button-off"}
+                                                size={24}
+                                                color={selectedPlan === id ? "#B99A4A" : "#666"}
                                             />
                                         </TouchableOpacity>
                                     )) : (
@@ -691,16 +705,16 @@ const TripSettingsScreen = () => {
                                 {topupError && <Text style={styles.errorText}>{topupError}</Text>}
 
                                 <View style={styles.modalBtnRow}>
-                                    <TouchableOpacity 
-                                        style={styles.modalSecondaryBtn} 
+                                    <TouchableOpacity
+                                        style={styles.modalSecondaryBtn}
                                         onPress={() => setSeatTopupStep(1)}
                                         disabled={isProcessingTopup}
                                     >
                                         <Text style={styles.modalSecondaryBtnText}>Back</Text>
                                     </TouchableOpacity>
-                                    
-                                    <TouchableOpacity 
-                                        style={[styles.modalPrimaryBtn, { flex: 1, marginLeft: 12 }]} 
+
+                                    <TouchableOpacity
+                                        style={[styles.modalPrimaryBtn, { flex: 1, marginLeft: 12 }]}
                                         onPress={handleRequestSeats}
                                         disabled={isProcessingTopup}
                                     >

@@ -19,7 +19,7 @@ class ChatEncryption {
 
         try {
             let key = await SecureStore.getItemAsync(ENCRYPTION_KEY_ID);
-            
+
             if (!key) {
                 // S24: Generate a cryptographically strong 256-bit key using hardware crypto
                 const randomBytes = Crypto.getRandomBytes(32);
@@ -29,11 +29,11 @@ class ChatEncryption {
 
                 await SecureStore.setItemAsync(ENCRYPTION_KEY_ID, key);
             }
-            
+
             this.key = key;
             return key;
         } catch (error) {
-            console.error('Failed to initialize chat encryption:', error);
+            console.log('Failed to initialize chat encryption:', error);
             return null;
         }
     }

@@ -126,7 +126,7 @@ exports.verifyMFAState = onCall({ region: "europe-west1" }, async (request) => {
 });
 
 // ── Custom Email 6-Digit OTP Flow ─────────────────────────────────────────────
-exports.sendCustomEmailOTP = onCall({ region: "europe-west1" }, async (request) => {
+exports.sendCustomEmailOTP = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 

@@ -72,3 +72,18 @@ export async function registerForPushNotificationsAsync() {
         return null;
     }
 }
+
+export async function unregisterForPushNotificationsAsync() {
+    if (isExpoGo) return;
+    try {
+        const uid = auth.currentUser?.uid;
+        if (uid) {
+            // Remove token from database
+            await set(ref(database, `users/${uid}/fcmToken`), null);
+        }
+        // Delete token from Firebase Messaging
+        await messaging().deleteToken();
+    } catch (error) {
+        // console.warn("Error unregistering notifications:", error);
+    }
+}

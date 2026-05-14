@@ -130,7 +130,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                         {/* Email */}
                         <Text style={styles.label}>{t('email')}</Text>
                         <View style={styles.inputContainer}>
-                            {isDecrypting && (participant.email === 'N/A' || participant.email?.includes('.')) ? (
+                            {isDecrypting && (!participant.email || participant.email === 'N/A' || participant.email.includes('*') || !participant.email.includes('@')) ? (
                                 <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                             ) : (
                                 <Text style={styles.inputText}>{participant.email || 'N/A'}</Text>
@@ -140,7 +140,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                         {/* Phone */}
                         <Text style={styles.label}>{t('phone')}</Text>
                         <View style={styles.inputContainer}>
-                            {isDecrypting && (participant.phone === 'N/A' || participant.phone?.includes('.')) ? (
+                            {isDecrypting && (!participant.phone || participant.phone === 'N/A' || participant.phone.includes('*')) ? (
                                 <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                             ) : (
                                 <Text style={styles.inputText}>{participant.phone || 'N/A'}</Text>

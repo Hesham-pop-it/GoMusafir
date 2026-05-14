@@ -2,114 +2,84 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { AccessToken } = require("livekit-server-sdk");
 const { db } = require("../admin");
 
-/**
- * Generates a LiveKit Access Token for a specific user and trip (room).
- * Requires the user to be authenticated and part of the trip.
- * Only allows participants to join if the admin has started the channel.
- */
 exports.generateLiveKitToken = onCall({ region: "europe-west1" }, async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "The function must be called while authenticated.");
-  }
-
+  if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
   const { tripId } = request.data;
-  if (!tripId) {
-    throw new HttpsError("invalid-argument", "Missing tripId parameter.");
-  }
-
+  if (!tripId) throw new HttpsError("invalid-argument", "Missing tripId.");
   const uid = request.auth.uid;
   const username = request.auth.token.name || request.auth.token.email || uid;
 
   try {
-    // 1. Get Org ID for this trip
     const orgSnap = await db.ref(`trips_orgs/${tripId}`).once("value");
     const orgId = orgSnap.val();
-    if (!orgId) throw new HttpsError("not-found", "Trip organization not found.");
+    if (!orgId) throw new HttpsError("not-found", "Org not found.");
 
-    // 2. Authorization Check (Verify user is in the trip_participants OR is a staff member)
     const isStaffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).once("value");
     const isStaff = isStaffSnap.exists() && isStaffSnap.val() !== 'none';
-    
+
     if (!isStaff) {
-      const participantSnapshot = await db.ref(`trips_participants/${tripId}/${uid}`).once("value");
-      if (!participantSnapshot.exists()) {
-        throw new HttpsError("permission-denied", "You are not a participant of this trip.");
-      }
+      const pSnap = await db.ref(`trips_participants/${tripId}/${uid}`).once("value");
+      if (!pSnap.exists()) throw new HttpsError("permission-denied", "Not a participant.");
     }
 
-    // 3. Admin Check
-    const isAdmin = isStaff; // Any staff member can be considered 'admin' for voice channel management (start/stop)
-
-    // 4. Channel Activity Check (Internal Restriction)
-    if (!isAdmin) {
+    if (!isStaff) {
       const stateSnap = await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).once("value");
-      if (!stateSnap.val()) {
-        throw new HttpsError("failed-precondition", "The channel has not been started by the organizer yet.");
-      }
+      if (!stateSnap.val()) throw new HttpsError("failed-precondition", "Channel not started.");
     }
 
-    // 5. Generate Token
     const apiKey = process.env.LIVEKIT_API_KEY;
     const apiSecret = process.env.LIVEKIT_API_SECRET;
+    if (!apiKey || !apiSecret) throw new HttpsError("internal", "Config error.");
 
-    if (!apiKey || !apiSecret) {
-      throw new HttpsError("internal", "LiveKit server is not properly configured.");
-    }
+    const at = new AccessToken(apiKey, apiSecret, { identity: uid, name: username });
+    at.addGrant({ roomJoin: true, room: tripId, canPublish: true, canSubscribe: true });
 
-    const at = new AccessToken(apiKey, apiSecret, {
-      identity: uid,
-      name: username,
-    });
+    if (isStaff) await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(true);
 
-    at.addGrant({
-      roomJoin: true,
-      room: tripId,
-      canPublish: true,
-      canSubscribe: true,
-    });
-
-    // If admin is joining, we ensure is_active is true just in case
-    if (isAdmin) {
-      await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(true);
-    }
-
-    return {
-      token: await at.toJwt(),
-      url: process.env.LIVEKIT_URL,
-    };
+    return { token: await at.toJwt(), url: process.env.LIVEKIT_URL };
   } catch (error) {
-    console.error("Error generating LiveKit token:", error);
     if (error instanceof HttpsError) throw error;
-    throw new HttpsError("internal", "Failed to generate voice chat token.");
+    throw new HttpsError("internal", "Token generation failed.");
   }
 });
 
-/**
- * Toggles the channel active status. Admin only.
- */
 exports.toggleChannelStatus = onCall({ region: "europe-west1" }, async (request) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
-  
   const { tripId, active } = request.data;
-  if (!tripId || active === undefined) throw new HttpsError("invalid-argument", "Missing parameters.");
-
+  if (!tripId || active === undefined) throw new HttpsError("invalid-argument", "Missing params.");
   const uid = request.auth.uid;
 
   try {
     const orgSnap = await db.ref(`trips_orgs/${tripId}`).once("value");
     const orgId = orgSnap.val();
-    if (!orgId) throw new HttpsError("not-found", "Trip organization not found.");
+    if (!orgId) throw new HttpsError("not-found", "Org not found.");
 
     const userSnap = await db.ref(`users/${uid}/staff_org_id`).once("value");
-    if (userSnap.val() !== orgId) {
-      throw new HttpsError("permission-denied", "Only organizational admins can toggle channel status.");
-    }
+    if (userSnap.val() !== orgId) throw new HttpsError("permission-denied", "Admin only.");
 
     await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(active);
+
+    if (active) {
+      try {
+        const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}/title`).once("value");
+        const tripTitle = tripSnap.val() || "Your Trip";
+        const participantsSnap = await db.ref(`trips_participants/${tripId}`).once("value");
+        const participants = participantsSnap.val() || {};
+        const timestamp = Date.now();
+        const notificationPromises = Object.keys(participants).filter(pUid => pUid !== uid).map(pUid => {
+          return db.ref(`trips_active/${orgId}/${tripId}/notifications/${pUid}`).push().set({
+            type: "voice_started",
+            message: `Live voice channel started for ${tripTitle}. Tap to join!`,
+            name: "Voice Chat",
+            timestamp: timestamp,
+          });
+        });
+        await Promise.all(notificationPromises);
+      } catch (e) { console.log("Notification error:", e); }
+    }
     return { success: true };
   } catch (error) {
-    console.error("Toggle Status Error:", error);
     if (error instanceof HttpsError) throw error;
-    throw new HttpsError("internal", "Failed to update channel status.");
+    throw new HttpsError("internal", "Toggle failed.");
   }
 });

@@ -65,12 +65,12 @@ const JourneySuccessScreen = ({ route }) => {
 
             const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=https://gomusafir.app/link/${invitationCode}`;
             const filename = FileSystem.documentDirectory + "gomusafir_qr.png";
-            
+
             const { uri } = await FileSystem.downloadAsync(qrUrl, filename);
             await MediaLibrary.saveToLibraryAsync(uri);
             Alert.alert("Success", "QR Code saved to your gallery!");
         } catch (error) {
-            console.error(error);
+            console.log(error);
             Alert.alert("Error", "Failed to save QR code.");
         }
     };
@@ -116,7 +116,7 @@ const JourneySuccessScreen = ({ route }) => {
                             <Text style={styles.outlineButtonText}>Download Presentation</Text>
                         </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.solidButton} onPress={()=> navigation.goBack()}>
+                        <TouchableOpacity style={styles.solidButton} onPress={() => navigation.goBack()}>
                             <Text style={styles.solidButtonText}>Back to App</Text>
                         </TouchableOpacity>
                     </View>

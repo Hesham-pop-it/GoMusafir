@@ -13,7 +13,7 @@ const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 
 // ── Request Trip Creation Link (Step 4) ──────────────────────────────────────
-exports.requestTripLink = onCall({ region: "europe-west1" }, async (request) => {
+exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin", "manager", "co-host"]);
 

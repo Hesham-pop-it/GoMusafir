@@ -27,10 +27,11 @@ import {
     useTracks, 
     useRoomContext,
     AudioSession,
-    AndroidAudioTypePresets,
-    useIOSAudioManagement
+    AndroidAudioTypePresets
 } from '@livekit/react-native';
 import { Track, ParticipantEvent, ConnectionQuality, setLogLevel } from 'livekit-client';
+
+import { useVoice } from '../../context/VoiceContext';
 
 // Silence LiveKit and WebRTC logs for a cleaner console
 setLogLevel('error');
@@ -63,14 +64,12 @@ const MicMutedIcon = ({ color = "white", size = 20 }) => (
     </Svg>
 );
 
-const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading, isMuted, setIsMuted, isGlobalMuteActive }) => {
+const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetchToken, loading, isMuted, setIsMuted, isGlobalMuteActive, sendMuteCommand }) => {
     const room = useRoomContext();
     // Include local track so users can see their own signal bars (helps debugging)
     const tracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
     const [participantMap, setParticipantMap] = useState({});
 
-    // iOS specific audio management (v2)
-    useIOSAudioManagement(room);
 
     // Sync local mute state with hardware
     useEffect(() => {
@@ -144,17 +143,40 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
     }, [room?.localParticipant, participantMap, tripData]);
 
     const handleToggleMute = async () => {
-        const nextState = !isMuted;
-        setIsMuted(nextState);
-        
-        if (isAdmin) {
-            const orgId = tripData.orgId || tripData.org_id;
-            const tripId = tripData.id || tripData.tripId;
-            if (orgId && tripId) {
-                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                    adminMuted: nextState
-                });
+        try {
+            const nextState = !isMuted;
+            setIsMuted(nextState);
+            
+            if (isAdmin) {
+                const orgId = tripData.orgId || tripData.org_id;
+                const tripId = tripData.id || tripData.tripId;
+                if (orgId && tripId) {
+                    await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
+                        adminMuted: nextState
+                    });
+                }
             }
+        } catch (error) {
+            console.log("Toggle mute error:", error);
+            Alert.alert("Action Failed", "Could not update mute state. Please check your connection.");
+        }
+    };
+
+    const handleParticipantMicPress = async (trackRef) => {
+        try {
+            if (trackRef.participant.isLocal) {
+                await handleToggleMute();
+            } else if (isAdmin) {
+                // Admin can mute others
+                if (trackRef.participant.isMicrophoneEnabled) {
+                    await sendMuteCommand(trackRef.participant.identity);
+                } else {
+                    // Optionally: Request to unmute
+                    Alert.alert("Already Muted", "This participant is already muted.");
+                }
+            }
+        } catch (error) {
+            console.log("Participant mic press error:", error);
         }
     };
 
@@ -204,24 +226,24 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                     Animated.sequence([
                         Animated.timing(pulseAnim, {
                             toValue: 1.4,
-                            duration: 1000,
+                            duration: 400,
                             useNativeDriver: true,
                         }),
                         Animated.timing(pulseAnim, {
                             toValue: 1,
-                            duration: 1000,
+                            duration: 400,
                             useNativeDriver: true,
                         })
                     ]),
                     Animated.sequence([
                         Animated.timing(opacityAnim, {
                             toValue: 0.2,
-                            duration: 1000,
+                            duration: 400,
                             useNativeDriver: true,
                         }),
                         Animated.timing(opacityAnim, {
                             toValue: 0.6,
-                            duration: 1000,
+                            duration: 400,
                             useNativeDriver: true,
                         })
                     ])
@@ -343,7 +365,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                                         styles.controlButtonOutline,
                                         { width: '100%', borderStyle: 'solid', backgroundColor: '#942F31', borderColor: '#942F31' }
                                     ]}
-                                    onPress={onDisconnect}
+                                    onPress={onStopChannel}
                                 >
                                     <Ionicons name="stop-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
                                     <Text style={[styles.controlText, { color: '#FFF' }]}>
@@ -398,6 +420,28 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                             </View>
                             <Text style={styles.sectionTitle}>Participants</Text>
                         </View>
+
+                        <View style={styles.avatarScrollContainer}>
+                            <ScrollView 
+                                horizontal 
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.headerAvatarsContent}
+                            >
+                                {tracks.map((trackRef) => {
+                                    const pData = participantMap[trackRef.participant.identity];
+                                    if (!pData) return null;
+                                    return (
+                                        <View key={trackRef.participant.identity} style={styles.smallAvatarWrapper}>
+                                            <Image 
+                                                source={{ uri: pData.avatar }} 
+                                                style={styles.headerSmallAvatar} 
+                                            />
+                                            {trackRef.participant.isSpeaking && <View style={styles.smallSpeakingDot} />}
+                                        </View>
+                                    );
+                                })}
+                            </ScrollView>
+                        </View>
                     </View>
                 </View>
 
@@ -436,7 +480,10 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                                             <Text style={styles.statusSubText}>{isSpeaking ? 'Speaking' : (trackRef.participant.isMicrophoneEnabled ? 'Active' : 'Muted')}</Text>
                                         </View>
 
-                                        <View style={styles.rightActions}>
+                                        <TouchableOpacity 
+                                            style={styles.rightActions}
+                                            onPress={() => handleParticipantMicPress(trackRef)}
+                                        >
                                             {isSpeaking ? (
                                                 <View style={styles.micCircle}>
                                                     <MicUnmutedIcon color="#FFF" size={25} />
@@ -444,7 +491,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, fetchToken, loading
                                             ) : (
                                                 <MicMutedIcon color={trackRef.participant.isMicrophoneEnabled ? "#FFF" : "#D66A77"} size={25} />
                                             )}
-                                        </View>
+                                        </TouchableOpacity>
                                     </View>
                                     {index < tracks.length - 1 && <View style={styles.rowSeparator} />}
                                 </View>
@@ -468,228 +515,82 @@ const VoiceChatScreen = () => {
     // Core state and trip data
     const tripData = passedTrip || { image: require('../../../assets/Madinah.png') };
     const tripId = tripData.id || tripData.tripId;
+    const orgId = tripData.orgId || tripData.org_id;
     const invitationCode = directCode || tripData.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (passedTrip?.isAdmin !== undefined ? passedTrip.isAdmin : !invitationCode);
     const { autoStart } = route.params || {};
 
-    // LiveKit Connection States
-    const [connectionDetails, setConnectionDetails] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [isConnected, setIsConnected] = useState(false);
-    const [isChannelActive, setIsChannelActive] = useState(false);
-    const [isMuted, setIsMuted] = useState(false);
-    const [isGlobalMuteActive, setIsGlobalMuteActive] = useState(false);
-    const [userRole, setUserRole] = useState('participant');
+    const { 
+        isConnected, 
+        isChannelActive, 
+        isGlobalMuteActive, 
+        isMuted, 
+        setIsMuted,
+        loading,
+        connect,
+        disconnect,
+        stopChannel,
+        activeTripId,
+        setActiveTrip,
+        sendMuteCommand
+    } = useVoice();
+
+    useEffect(() => {
+        if (tripId && orgId) {
+            setActiveTrip(tripId, orgId);
+        }
+    }, [tripId, orgId]);
+
     const [isAdminState, setIsAdminState] = useState(isAdmin);
+    const hasAutoStarted = useRef(false);
 
     useEffect(() => {
         const fetchRole = async () => {
-            if (auth.currentUser) {
-                const token = await auth.currentUser.getIdTokenResult();
-                const role = token.claims.role || 'participant';
-                setUserRole(role);
-                const isStaff = role === 'admin' || role === 'co-host' || role === 'manager';
-                setIsAdminState(isStaff);
+            try {
+                if (auth.currentUser) {
+                    const token = await auth.currentUser.getIdTokenResult();
+                    const role = token.claims.role || 'participant';
+                    const isStaff = role === 'admin' || role === 'co-host' || role === 'manager';
+                    setIsAdminState(isStaff);
 
-                // Auto-start if requested by navigation
-                if (autoStart && isStaff && !isConnected && !loading) {
-                    fetchToken();
+                    // Auto-start if requested by navigation
+                    if (autoStart && isStaff && !isConnected && !loading && !hasAutoStarted.current) {
+                        hasAutoStarted.current = true;
+                        handleConnect();
+                    }
                 }
+            } catch (error) {
+                console.log("Fetch role error:", error);
             }
         };
         fetchRole();
-    }, [autoStart]);
+    }, [autoStart, isConnected, loading]);
 
-    // Listener for Global Mute & Channel Status (Consolidated)
+    // Handle auto-leave for participants
     useEffect(() => {
-        const orgId = tripData.orgId || tripData.org_id;
-        if (!tripId || !orgId) return;
-
-        const voiceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel`);
-        const unsubscribe = onValue(voiceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const data = snapshot.val();
-                const active = data.isChannelStarted ?? false;
-                setIsChannelActive(active);
-                setIsGlobalMuteActive(data.isAllMuted ?? false);
-                
-                if (data.isAllMuted && !isAdminState) {
-                    setIsMuted(true);
-                } else if (isAdminState && data.adminMuted !== undefined) {
-                    setIsMuted(data.adminMuted);
-                }
-
-                // S21: Auto-leave for participants when channel is stopped
-                if (!active && isConnected && !isAdminState) {
-                    handleDisconnect();
-                }
-            } else {
-                setIsChannelActive(false);
-                if (isConnected && !isAdminState) {
-                    handleDisconnect();
-                }
-            }
-        });
-        return () => unsubscribe();
-    }, [tripId, tripData.orgId, tripData.org_id, isAdminState, isConnected]);
-
-    // Audio Session Lifecycle
-    useEffect(() => {
-        if (isConnected) {
-            const setupAudio = async () => {
-                try {
-                    await AudioSession.configureAudio({
-                        android: { 
-                            audioTypeOptions: AndroidAudioTypePresets.communication,
-                        },
-                        ios: { defaultOutput: 'speaker' },
-                    });
-                    await AudioSession.startAudioSession();
-                    // Set volume high for walkie-talkie
-                    await AudioSession.setDefaultRemoteAudioTrackVolume(1.0);
-                } catch (e) {
-                }
-            };
-            setupAudio();
-            return () => {
-                AudioSession.stopAudioSession().catch(e => {});
-            };
+        if (!isChannelActive && isConnected && !isAdminState && activeTripId === tripId) {
+            disconnect();
         }
-    }, [isConnected]);
+    }, [isChannelActive, isConnected, isAdminState, activeTripId, tripId]);
 
-    const requestMicrophonePermission = async () => {
-        if (Platform.OS === 'android') {
-            try {
-                const granted = await PermissionsAndroid.request(
-                    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-                    {
-                        title: "Microphone Permission",
-                        message: "GoMusafir needs access to your microphone for voice chat.",
-                        buttonNeutral: "Ask Me Later",
-                        buttonNegative: "Cancel",
-                        buttonPositive: "OK"
-                    }
-                );
-                return granted === PermissionsAndroid.RESULTS.GRANTED;
-            } catch (err) {
-                return false;
-            }
-        }
-        return true; // iOS handles this within the library/Info.plist
+    const handleConnect = () => {
+        connect(tripId, orgId, isAdminState);
     };
 
-    // Fetch Token logic
-    const fetchToken = async () => {
-        if (!tripId) {
-            Alert.alert("Error", "No trip information found.");
-            return;
-        }
-
-        const hasPermission = await requestMicrophonePermission();
-        if (!hasPermission) {
-            Alert.alert("Permission Required", "Microphone access is required to use voice chat.");
-            return;
-        }
-
-        try {
-            setLoading(true);
-
-            // S22: Prepare audio environment BEFORE connecting
-            try {
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: true,
-                    playsInSilentModeIOS: true,
-                    staysActiveInBackground: true,
-                    shouldRouteThroughEarpieceAndroid: false,
-                });
-            } catch (audioErr) {
-            }
-
-            // If admin is starting, toggle status first and reset mute states
-            if (isAdminState && !isChannelActive) {
-                const toggle = httpsCallable(functions, 'toggleChannelStatus');
-                await toggle({ tripId, active: true });
-                
-                // Reset global mute state when starting fresh
-                const orgId = tripData.orgId || tripData.org_id;
-                if (orgId) {
-                    await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                        isAllMuted: false,
-                        adminMuted: false,
-                        isChannelStarted: true
-                    });
-                }
-                setIsMuted(false); // Ensure local state is also unmuted
-            }
-
-            const generateToken = httpsCallable(functions, 'generateLiveKitToken');
-            const { data } = await generateToken({ tripId });
-
-            if (data?.token && data?.url) {
-                setConnectionDetails({
-                    token: data.token,
-                    url: data.url
-                });
-                setIsConnected(true);
-                // Initialize local mute state based on global status
-                setIsMuted(isGlobalMuteActive);
-            }
- else {
-                throw new Error("Failed to receive connection details from server.");
-            }
-        } catch (error) {
-            const msg = error.code === 'failed-precondition' 
-                ? "The channel has not been started by the organizer yet."
-                : (error.message || "Failed to connect to the voice chat service.");
-            Alert.alert("Voice Chat Unavailable", msg);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleDisconnect = async () => {
-        if (isAdmin && isConnected) {
-            try {
-                if (isAdminState) {
-                    const toggle = httpsCallable(functions, 'toggleChannelStatus');
-                    await toggle({ tripId, active: false });
-                    
-                    const orgId = tripData.orgId || tripData.org_id;
-                    if (orgId) {
-                        await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                            isChannelStarted: false
-                        });
-                    }
-                }
-            } catch (e) {
-            }
-        }
-        setIsConnected(false);
-        setConnectionDetails(null);
-    };
-
-    if (isConnected && connectionDetails) {
+    if (isConnected && activeTripId === tripId) {
         return (
-            <View style={styles.container}>
-                <LiveKitRoom
-                    serverUrl={connectionDetails.url}
-                    token={connectionDetails.token}
-                    connect={true}
-                    audio={true}
-                    onDisconnected={handleDisconnect}
-                >
-                    <VoiceChatContent 
-                        tripData={tripData} 
-                        isAdmin={isAdminState} 
-                        onDisconnect={handleDisconnect}
-                        fetchToken={fetchToken}
-                        loading={loading}
-                        isMuted={isMuted}
-                        setIsMuted={setIsMuted}
-                        isGlobalMuteActive={isGlobalMuteActive}
-                    />
-                </LiveKitRoom>
-            </View>
+            <VoiceChatContent 
+                tripData={tripData} 
+                isAdmin={isAdminState} 
+                onDisconnect={disconnect}
+                onStopChannel={stopChannel}
+                fetchToken={handleConnect}
+                loading={loading}
+                isMuted={isMuted}
+                setIsMuted={setIsMuted}
+                isGlobalMuteActive={isGlobalMuteActive}
+                sendMuteCommand={sendMuteCommand}
+            />
         );
     }
 
@@ -735,21 +636,21 @@ const VoiceChatScreen = () => {
                                             styles.controlButtonOutline,
                                             { width: '100%', borderStyle: 'solid', backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
                                         ]}
-                                        onPress={fetchToken}
+                                        onPress={handleConnect}
                                         disabled={loading}
                                     >
-                                        {loading ? (
+                                        {loading || isChannelActive === null ? (
                                             <ActivityIndicator color="#FFF" size="small" />
                                         ) : (
                                             <>
                                                 <Ionicons
-                                                    name="play-circle-outline"
+                                                    name={isChannelActive ? "enter-outline" : "play-circle-outline"}
                                                     size={20}
                                                     color="#FFF"
                                                     style={{ marginRight: 8 }}
                                                 />
                                                 <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                                    Channel Start
+                                                    {isChannelActive ? 'Channel Join' : 'Channel Start'}
                                                 </Text>
                                             </>
                                         )}
@@ -763,12 +664,11 @@ const VoiceChatScreen = () => {
                                             onPress={() => !(isGlobalMuteActive || false) && setIsMuted(!(isMuted || false))}
                                             disabled={(isGlobalMuteActive || false)}
                                         >
-                                            {/* {(isMuted || isGlobalMuteActive || false) ? <MicMutedIcon color="#FFF" size={20} /> : <MicUnmutedIcon color="#FFF" size={20} />} */}
                                             <Text style={styles.controlText}> {(isGlobalMuteActive || false) ? ' Force Muted' : ((isMuted || false) ? ' Unmute' : ' Mute')}</Text>
                                         </TouchableOpacity>
                                     </View>
                                     <TouchableOpacity
-                                        onPress={fetchToken}
+                                        onPress={handleConnect}
                                         style={[
                                             styles.controlButtonOutline,
                                             {
@@ -779,11 +679,11 @@ const VoiceChatScreen = () => {
                                         ]}
                                         disabled={loading || !isChannelActive}
                                     >
-                                        {loading ? (
+                                        {loading || isChannelActive === null ? (
                                             <ActivityIndicator color="#FFF" size="small" />
                                         ) : (
                                             <Text style={[styles.controlText, { color: '#fff', opacity: isChannelActive ? 1 : 0.5 }]}>
-                                                Channel Join
+                                                {isChannelActive ? 'Channel Join' : 'Channel Stopped'}
                                             </Text>
                                         )}
                                     </TouchableOpacity>
@@ -929,7 +829,40 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(28),
         color: '#FFF',
         fontFamily: 'CormorantGaramond',
-        marginTop: 10,
+        marginTop: 5,
+    },
+    avatarScrollContainer: {
+        
+        marginLeft: 20,
+        height: 60,
+        justifyContent: 'center',
+        paddingTop: 10,
+    },
+    headerAvatarsContent: {
+        alignItems: 'center',
+        paddingRight: 20,
+    },
+    smallAvatarWrapper: {
+        marginRight: -10, // Overlapping effect
+        position: 'relative',
+    },
+    headerSmallAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        borderWidth: 2,
+        borderColor: '#1A1E21',
+    },
+    smallSpeakingDot: {
+        position: 'absolute',
+        bottom: 2,
+        right: 2,
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#34C759',
+        borderWidth: 1,
+        borderColor: '#1A1E21',
     },
     participantRow: {
         flexDirection: 'row',

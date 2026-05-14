@@ -19,23 +19,39 @@
       ]
     }
   ],
-  "hosting": {
-    "public": "GoMusafir-Website/out",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**",
-      "**/**.txt"
-    ],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ],
-    "cleanUrls": true,
-    "trailingSlash": false
-  },
+  "hosting": [
+    {
+      "target": "website",
+      "public": "GoMusafir-Website/out",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**",
+        "**/**.txt"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "cleanUrls": true,
+      "trailingSlash": false
+    },
+    {
+      "target": "api",
+      "public": "public", 
+      "rewrites": [
+        {
+          "source": "**",
+          "function": {
+            "functionId": "stripeWebhookHandler",
+            "region": "europe-west1"
+          }
+        }
+      ]
+    }
+  ],
   "emulators": {
     "auth": { "port": 9099 },
     "functions": { "port": 5001 },

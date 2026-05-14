@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -8,7 +8,9 @@ import {
     Image,
     Dimensions,
     Alert,
-    ActivityIndicator
+    ActivityIndicator,
+    Animated,
+    Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -24,44 +26,134 @@ const { width, height } = Dimensions.get('window');
 const SCAN_FRAME_SIZE = width * 0.7;
 const TOP_OFFSET = (height - SCAN_FRAME_SIZE) / 2.5; // Offset to push it slightly up from center
 
+const SVG_SIZE = Math.max(width, height) * 3;
+const SVG_OFFSET = (SVG_SIZE - SCAN_FRAME_SIZE) / 2;
+
 const ScanQrScreen = ({ navigation }) => {
     const [permission, requestPermission] = useCameraPermissions();
     const [isLoading, setIsLoading] = useState(false);
     const [isScanned, setIsScanned] = useState(false); // Prevent multiple scans
+    const [zoom, setZoom] = useState(0);
     const isFocused = useIsFocused();
+
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+    const translateXAnim = useRef(new Animated.Value(0)).current;
+    const translateYAnim = useRef(new Animated.Value(0)).current;
+
+    // Pulse animation logic
+    useEffect(() => {
+        if (isFocused && !isScanned && !isLoading) {
+            // Animate frame back to center when returning to idle state
+            Animated.parallel([
+                Animated.spring(translateXAnim, {
+                    toValue: 0,
+                    friction: 6,
+                    tension: 80,
+                    useNativeDriver: true,
+                }),
+                Animated.spring(translateYAnim, {
+                    toValue: 0,
+                    friction: 6,
+                    tension: 80,
+                    useNativeDriver: true,
+                })
+            ]).start();
+
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, {
+                        toValue: 0.75,
+                        duration: 1000,
+                        useNativeDriver: true,
+                    }),
+                    Animated.timing(pulseAnim, {
+                        toValue: 1,
+                        duration: 1000,
+                        useNativeDriver: true,
+                    }),
+                ])
+            ).start();
+        } else if (!isFocused) {
+            pulseAnim.stopAnimation();
+            translateXAnim.stopAnimation();
+            translateYAnim.stopAnimation();
+            Animated.parallel([
+                Animated.spring(pulseAnim, {
+                    toValue: 1,
+                    useNativeDriver: true,
+                }),
+                Animated.spring(translateXAnim, {
+                    toValue: 0,
+                    useNativeDriver: true,
+                }),
+                Animated.spring(translateYAnim, {
+                    toValue: 0,
+                    useNativeDriver: true,
+                })
+            ]).start();
+        }
+        // When isScanned or isLoading is true, we keep the snap animation state
+    }, [isFocused, isScanned, isLoading]);
 
     // Reset scan state when screen is refocused (e.g. coming back from next screen)
     useEffect(() => {
         if (isFocused) {
             setIsScanned(false);
             setIsLoading(false);
+            setZoom(0);
+            translateXAnim.setValue(0);
+            translateYAnim.setValue(0);
         }
     }, [isFocused]);
 
     useEffect(() => {
-        if (!permission) {
+        if (permission && permission.status === 'undetermined') {
             requestPermission();
         }
     }, [permission]);
 
     if (!permission) {
         // Camera permissions are still loading
-        return <View style={styles.container} />;
-    }
-
-    if (!permission.granted) {
-        // Camera permissions are not granted yet
         return (
-            <View style={styles.container}>
-                <Text style={{ textAlign: 'center', color: '#fff', marginTop: 100 }}>We need your permission to show the camera</Text>
-                <TouchableOpacity onPress={requestPermission} style={styles.permButton}>
-                    <Text style={styles.permButtonText}>Grant Permission</Text>
-                </TouchableOpacity>
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color="#B99A4A" />
             </View>
         );
     }
 
+    if (!permission.granted) {
+        // Camera permissions are not granted yet
+        const canAskAgain = permission.canAskAgain;
 
+        return (
+            <View style={[styles.container, { paddingHorizontal: 40, justifyContent: 'center' }]}>
+                <Ionicons name="camera-outline" size={80} color="#B99A4A" style={{ alignSelf: 'center', marginBottom: 20 }} />
+                <Text style={{ textAlign: 'center', color: '#fff', fontSize: 18, fontFamily: Typography.sans.bold, marginBottom: 10 }}>
+                    Camera Access Required
+                </Text>
+                <Text style={{ textAlign: 'center', color: '#aaa', fontSize: 14, fontFamily: Typography.sans.regular, marginBottom: 30, lineHeight: 20 }}>
+                    {canAskAgain
+                        ? "We need your permission to show the camera and scan the QR code."
+                        : "You have denied camera access. Please enable it in your system settings to scan the QR code."}
+                </Text>
+
+                <TouchableOpacity
+                    onPress={() => {
+                        if (canAskAgain) {
+                            requestPermission();
+                        } else {
+                            Linking.openSettings();
+                        }
+                    }}
+                    style={styles.permButton}
+                >
+                    <Text style={styles.permButtonText}>
+                        {canAskAgain ? "Grant Permission" : "Open Settings"}
+                    </Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
 
     return (
         <SafeAreaView style={[styles.container]}>
@@ -69,9 +161,64 @@ const ScanQrScreen = ({ navigation }) => {
                 <CameraView
                     style={StyleSheet.absoluteFill}
                     facing="back"
+                    zoom={zoom}
                     onBarcodeScanned={isScanned || isLoading ? undefined : async (result) => {
+                        const { bounds } = result;
+                        if (!bounds) return;
+
+                        // Calculate if the QR code is within the frame
+                        const { origin, size } = bounds;
+                        const centerX = origin.x + size.width / 2;
+                        const centerY = origin.y + size.height / 2;
+
+                        // ROI boundaries (matching the visual frame)
+                        const ROI_LEFT = (width - SCAN_FRAME_SIZE) / 2;
+                        const ROI_TOP = TOP_OFFSET;
+
+                        if (
+                            centerX < ROI_LEFT || 
+                            centerX > ROI_LEFT + SCAN_FRAME_SIZE || 
+                            centerY < ROI_TOP || 
+                            centerY > ROI_TOP + SCAN_FRAME_SIZE
+                        ) {
+                            return; // Outside the visible boundary
+                        }
+
                         setIsScanned(true);
                         setIsLoading(true);
+                        
+                        // Calculate target scale and translation to wrap the QR code
+                        const qrCenterX = origin.x + size.width / 2;
+                        const qrCenterY = origin.y + size.height / 2;
+                        const frameCenterX = width / 2;
+                        const frameCenterY = TOP_OFFSET + SCAN_FRAME_SIZE / 2;
+                        
+                        const targetX = qrCenterX - frameCenterX;
+                        const targetY = qrCenterY - frameCenterY;
+                        const maxQrSize = Math.max(size.width, size.height);
+                        const targetScale = (maxQrSize * 1.4) / SCAN_FRAME_SIZE; // 1.4x for a little padding
+                        
+                        Animated.parallel([
+                            Animated.spring(pulseAnim, {
+                                toValue: targetScale,
+                                friction: 6,
+                                tension: 80,
+                                useNativeDriver: true,
+                            }),
+                            Animated.spring(translateXAnim, {
+                                toValue: targetX,
+                                friction: 6,
+                                tension: 80,
+                                useNativeDriver: true,
+                            }),
+                            Animated.spring(translateYAnim, {
+                                toValue: targetY,
+                                friction: 6,
+                                tension: 80,
+                                useNativeDriver: true,
+                            }),
+                        ]).start();
+                        
                         try {
                             // Extract code from link if scanned data is a full URL
                             let codeInput = result.data.trim();
@@ -89,7 +236,10 @@ const ScanQrScreen = ({ navigation }) => {
                             const alreadyJoined = tripDetails.alreadyJoined;
 
                             if (tripDetails.isFull && !alreadyJoined && user) {
-                                Alert.alert("Trip Full", `Sorry, this trip has reached its maximum capacity.`, [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                                Alert.alert("Trip Full", `Sorry, this trip has reached its maximum capacity.`, [{ text: "OK", onPress: () => {
+                                    setIsScanned(false);
+                                    setZoom(0);
+                                } }]);
                                 setIsLoading(false);
                                 return;
                             }
@@ -102,7 +252,10 @@ const ScanQrScreen = ({ navigation }) => {
                                     : new Date(tripDetails.endDate).getTime();
                                 
                                 if (now > end) {
-                                    Alert.alert("Trip Ended", "This trip has already concluded.", [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                                    Alert.alert("Trip Ended", "This trip has already concluded.", [{ text: "OK", onPress: () => {
+                                        setIsScanned(false);
+                                        setZoom(0);
+                                    } }]);
                                     setIsLoading(false);
                                     return;
                                 }
@@ -111,8 +264,11 @@ const ScanQrScreen = ({ navigation }) => {
                             // Success: Navigate to JoinEmail
                             navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
                         } catch (error) {
-                            console.error(error);
-                            Alert.alert("Invalid QR", "This QR code is not a valid GoMusafir invitation.", [{ text: "OK", onPress: () => setIsScanned(false) }]);
+                            console.log(error);
+                            Alert.alert("Invalid QR", "This QR code is not a valid GoMusafir invitation.", [{ text: "OK", onPress: () => {
+                                setIsScanned(false);
+                                setZoom(0);
+                            } }]);
                         } finally {
                             setIsLoading(false);
                         }
@@ -126,31 +282,42 @@ const ScanQrScreen = ({ navigation }) => {
                     </View>
                 )}
 
-                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                <Animated.View style={{
+                    position: 'absolute',
+                    top: TOP_OFFSET + SCAN_FRAME_SIZE / 2 - SVG_SIZE / 2,
+                    left: width / 2 - SVG_SIZE / 2,
+                    width: SVG_SIZE,
+                    height: SVG_SIZE,
+                    transform: [
+                        { translateX: translateXAnim },
+                        { translateY: translateYAnim },
+                        { scale: pulseAnim }
+                    ]
+                }} pointerEvents="none">
                     <Svg height="100%" width="100%">
                         <Path
                             fillRule="evenodd"
                             d={`
                                 M 0 0
-                                H ${width}
-                                V ${height}
+                                H ${SVG_SIZE}
+                                V ${SVG_SIZE}
                                 H 0
                                 Z
-                                M ${(width - SCAN_FRAME_SIZE) / 2 + 30} ${TOP_OFFSET - 5}
+                                M ${SVG_OFFSET + 30} ${SVG_OFFSET}
                                 h ${SCAN_FRAME_SIZE - 60}
-                                a 30 30 0 0 1 30 30
+                                q 30 0 30 30
                                 v ${SCAN_FRAME_SIZE - 60}
-                                a 30 30 0 0 1 -30 30
+                                q 0 30 -30 30
                                 h -${SCAN_FRAME_SIZE - 60}
-                                a 30 30 0 0 1 -30 -30
+                                q -30 0 -30 -30
                                 v -${SCAN_FRAME_SIZE - 60}
-                                a 30 30 0 0 1 30 -30
+                                q 0 -30 30 -30
                                 z
                             `}
                             fill="rgba(0,0,0,0.6)"
                         />
                     </Svg>
-                </View>
+                </Animated.View>
 
                 {/* Content on top of everything */}
                 <View style={StyleSheet.absoluteFill}>
@@ -165,7 +332,19 @@ const ScanQrScreen = ({ navigation }) => {
                     </Text>
 
                     {/* Centered Scan Frame */}
-                    <View style={[styles.scanFrameContainer, { marginTop: TOP_OFFSET - 140 }]}>
+                    <Animated.View style={[
+                        styles.scanFrameContainer, 
+                        { 
+                            position: 'absolute',
+                            top: TOP_OFFSET,
+                            left: (width - SCAN_FRAME_SIZE) / 2,
+                            transform: [
+                                { translateX: translateXAnim },
+                                { translateY: translateYAnim },
+                                { scale: pulseAnim }
+                            ]
+                        }
+                    ]}>
                         {/* Corner Pieces */}
                         <View style={styles.frameCornerTopLeft} />
                         <View style={styles.frameCornerTopRight} />
@@ -179,7 +358,7 @@ const ScanQrScreen = ({ navigation }) => {
                         <View style={styles.frameSideRight} />
                         
                         <View style={styles.scanArea} />
-                    </View>
+                    </Animated.View>
                 </View>
             </View>
         </SafeAreaView>
@@ -336,6 +515,17 @@ const styles = StyleSheet.create({
     loadingText: {
         color: '#FFF',
         marginTop: 15,
+        fontFamily: Typography.sans.bold,
+    },
+    permButton: {
+        backgroundColor: '#B99A4A',
+        padding: 15,
+        borderRadius: 10,
+        alignSelf: 'center',
+        marginTop: 20,
+    },
+    permButtonText: {
+        color: '#fff',
         fontFamily: Typography.sans.bold,
     }
 });

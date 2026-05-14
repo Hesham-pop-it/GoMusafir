@@ -173,7 +173,7 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
 
 // ── Invite Team Member (Admin only) ───────────────────────────────────────────
 // S6: Admin only. S34: Rate limiting. Generates secure token for email invite.
-exports.inviteTeamMember = onCall({ region: "europe-west1" }, async (request) => {
+exports.inviteTeamMember = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin", "co-host"]);
 
@@ -226,6 +226,41 @@ exports.inviteTeamMember = onCall({ region: "europe-west1" }, async (request) =>
     action: "TEAM_INVITE_SENT",
     byUid: callerUid,
     extra: { target_email: data.email, role: data.role },
+  });
+
+  return { success: true };
+});
+
+// ── Leave Organization (Staff only, not Admin) ────────────────────────────────
+exports.leaveOrganization = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+
+  const uid = request.auth.uid;
+  const orgId = request.auth.token.orgId;
+  const role = request.auth.token.role;
+
+  if (!orgId || !role) {
+    throw new HttpsError("failed-precondition", "You are not part of an organization.");
+  }
+  
+  if (role === "admin") {
+    throw new HttpsError("failed-precondition", "Admins cannot leave. They must delete the organization instead.");
+  }
+
+  // 1. Remove from staff list
+  await db.ref(`orgs/${orgId}/staff/${uid}`).remove();
+
+  // 2. Clear staff_org_id from user
+  await db.ref(`users/${uid}/staff_org_id`).remove();
+
+  // 3. Clear custom claims
+  await auth.setCustomUserClaims(uid, { role: null, orgId: null });
+
+  await writeAuditLog(orgId, {
+    action: "STAFF_LEFT",
+    byUid: uid,
+    targetId: uid,
   });
 
   return { success: true };

@@ -26,6 +26,7 @@ import { auth, database, functions } from '../../config/firebase';
 import { ref, onValue, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { useLanguage } from '../../context/LanguageContext';
+import ChatEncryption from '../../utils/chatEncryption';
 
 const { width } = Dimensions.get('window');
 
@@ -269,6 +270,7 @@ const ParticipantsScreen = ({ navigation }) => {
         setIsDetailsVisible(true);
         
         try {
+            await ChatEncryption.initialize();
             const getProfile = httpsCallable(functions, 'getParticipantProfile');
             const result = await getProfile({
                 targetUid: participant.id,
@@ -279,22 +281,27 @@ const ParticipantsScreen = ({ navigation }) => {
                 setSelectedParticipant(prev => {
                     const newData = { ...prev };
                     
-                    // Only update if the decrypted result is actually plaintext (no dots)
-                    // and not the same as what we already have
-                    if (result.data.email && !result.data.email.includes('.')) {
-                        newData.email = result.data.email;
+                    // Decrypt fields if they are encrypted
+                    const decryptedEmail = ChatEncryption.decrypt(result.data.email);
+                    const decryptedPhone = ChatEncryption.decrypt(result.data.phone);
+                    const decryptedName = ChatEncryption.decrypt(result.data.fullName);
+
+                    // Update if we got valid plaintext results
+                    if (decryptedEmail && decryptedEmail.includes('@')) {
+                        newData.email = decryptedEmail;
                     }
-                    if (result.data.phone && !result.data.phone.includes('.')) {
-                        newData.phone = result.data.phone;
+                    if (decryptedPhone && decryptedPhone.length > 5) {
+                        newData.phone = decryptedPhone;
                     }
-                    if (result.data.fullName && !result.data.fullName.includes('*')) {
-                        newData.name = result.data.fullName;
+                    if (decryptedName && !decryptedName.includes('*')) {
+                        newData.name = decryptedName;
                     }
                     
                     return newData;
                 });
             }
         } catch (error) {
+            console.log("[Participants] Decryption error:", error);
             // Fallback to already loaded (possibly hashed) data is already handled by state
         } finally {
             setIsDecrypting(false);
@@ -324,6 +331,11 @@ const ParticipantsScreen = ({ navigation }) => {
                     return;
                 }
 
+                // Get Staff list to filter them out later
+                // Admin account should not be shown in participants
+                const staffSnap = await get(ref(database, `orgs/${orgId}/staff`));
+                const staffList = staffSnap.exists() ? staffSnap.val() : {};
+
                 // Listen to Org's Trips
                 const tripsRef = ref(database, `orgs/${orgId}/trips`);
                 const unsubscribeTrips = onValue(tripsRef, async (snapshot) => {
@@ -342,13 +354,19 @@ const ParticipantsScreen = ({ navigation }) => {
                                 if (pSnap.exists()) {
                                     const pIds = Object.keys(pSnap.val());
                                     for (const pUid of pIds) {
+                                        // Skip if user is a staff member (Admin, Co-host, Manager)
+                                        if (staffList[pUid]) continue;
+
                                         // Fetch Profile
                                         try {
                                             const uSnap = await get(ref(database, `users/${pUid}`));
                                             if (uSnap.exists()) {
                                                 const profileData = uSnap.val();
+
+                                                // Secondary check: Skip if user has staff_org_id set
+                                                if (profileData.staff_org_id === orgId) continue;
+
                                                 const profile = profileData.profile || {};
-                                                
                                                 
                                                 const profileImage = profileData.photo || profileData.profile_photo || profile.photo || profile.photoURL || profileData.image;
                                                 

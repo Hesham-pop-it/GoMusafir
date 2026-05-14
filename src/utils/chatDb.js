@@ -13,10 +13,10 @@ class ChatDatabase {
      */
     static async init() {
         if (this.db) return;
-        
+
         try {
             this.db = await SQLite.openDatabaseAsync('gomusafir_chat.db');
-            
+
             // Initialize the encryption system
             await ChatEncryption.initialize();
 
@@ -37,10 +37,10 @@ class ChatDatabase {
                 CREATE INDEX IF NOT EXISTS idx_messages_trip_id ON messages (trip_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);
             `);
-            
+
             // console.log('Chat Database initialized successfully');
         } catch (error) {
-            console.error('SQLite Initialization Error:', error);
+            console.log('SQLite Initialization Error:', error);
         }
     }
 
@@ -74,7 +74,7 @@ class ChatDatabase {
                 ]
             );
         } catch (error) {
-            console.error('Error saving message to SQLite:', error);
+            console.log('Error saving message to SQLite:', error);
         }
     }
 
@@ -111,7 +111,7 @@ class ChatDatabase {
                 return msg;
             });
         } catch (error) {
-            console.error('Error loading messages from SQLite:', error);
+            console.log('Error loading messages from SQLite:', error);
             return [];
         }
     }
@@ -124,7 +124,7 @@ class ChatDatabase {
         try {
             await this.db.runAsync('DELETE FROM messages WHERE trip_id = ?', [tripId]);
         } catch (error) {
-            console.error('Error clearing chat from SQLite:', error);
+            console.log('Error clearing chat from SQLite:', error);
         }
     }
 }

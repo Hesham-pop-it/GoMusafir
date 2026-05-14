@@ -25,17 +25,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
-    
+
     // Support being an initial route by falling back to auth.currentUser
     const userEmail = route?.params?.email || auth.currentUser?.email;
     const userUid = route?.params?.uid || auth.currentUser?.uid;
 
     const {
-        title = "Security Verification",
-        description = `A 6-digit code has been sent to ${userEmail}. Please enter it to verify your login.`,
+        title = "Check Your Email",
+        description = `We’ve sent a secure code to your email. Please check your inbox.`,
         targetScreen = "Home",
         buttonText = "Continue",
-        resendText = "Resend Code"
+        resendText = "Resend"
     } = route?.params || {};
 
     const [otp, setOtp] = useState('');
@@ -59,7 +59,7 @@ const BusinessVerificationScreen = ({ route }) => {
                         setRecoveredParams(snap.val());
                     }
                 } catch (e) {
-                    console.error("[Verification] Recovery failed:", e);
+                    console.log("[Verification] Recovery failed:", e);
                 }
             }
         };
@@ -104,9 +104,9 @@ const BusinessVerificationScreen = ({ route }) => {
             setIsError(false);
             try {
                 const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
-                await verifyOTP({ 
+                await verifyOTP({
                     uid: userUid,
-                    otp 
+                    otp
                 });
 
                 // Use merged params (route or recovered)
@@ -121,7 +121,7 @@ const BusinessVerificationScreen = ({ route }) => {
                         voiceConsent: true, // Returning users assumed to have active consent or re-grant
                         locationConsent: true,
                     });
-                    
+
                     const resData = result.data || {};
                     const newTripId = resData.tripId;
                     const newOrgId = resData.orgId;
@@ -141,14 +141,14 @@ const BusinessVerificationScreen = ({ route }) => {
                     // S22: Anchor this as the current trip and navigate
                     navigation.reset({
                         index: 0,
-                        routes: [{ 
-                            name: 'TripOverview', 
-                            params: { 
+                        routes: [{
+                            name: 'TripOverview',
+                            params: {
                                 ...activeParams,
                                 tripId: newTripId,
                                 orgId: newOrgId,
                                 isAdmin: false
-                            } 
+                            }
                         }],
                     });
                 } else {
@@ -168,7 +168,7 @@ const BusinessVerificationScreen = ({ route }) => {
 
             } catch (error) {
                 console.warn("Verification/Join Error:", error);
-                
+
                 // If it's a join error (e.g. Trip Full), redirect to Welcome
                 if (error.message && (error.message.includes("full") || error.message.includes("capacity"))) {
                     Alert.alert(
@@ -191,10 +191,10 @@ const BusinessVerificationScreen = ({ route }) => {
         setResendLoading(true);
         try {
             const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
-            await sendOTP({ 
-                email: userEmail, 
+            await sendOTP({
+                email: userEmail,
                 uid: userUid,
-                isMobile: true 
+                isMobile: true
             });
             // Show toast or alert that it was sent
         } catch (error) {
@@ -351,14 +351,16 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         paddingHorizontal: 54,
         height: 80,
+        borderWidth: 1,
+        borderColor: 'transparent',
     },
     codeBoxNormal: {
-        // borderColor: '#3A3A3A',
+        borderColor: 'transparent',
         backgroundColor: 'rgba(253, 253, 253, 0.10)',
     },
     codeBoxError: {
         borderColor: '#D66A77',
-        backgroundColor: 'transparent',
+        backgroundColor: 'rgba(253, 253, 253, 0.10)',
     },
     codeBoxEmpty: {
         borderColor: 'transparent',
@@ -373,7 +375,7 @@ const styles = StyleSheet.create({
     codeDigit: {
         fontSize: responsiveFontSize(32),
         color: '#FFF',
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
         textAlign: 'center',
     },
     dash: {

@@ -43,8 +43,8 @@ const SpeakerPulse = ({ isSpeaking }) => {
     if (isSpeaking) {
       scale.value = withRepeat(
         withSequence(
-          withTiming(1.2, { duration: 500 }),
-          withTiming(1, { duration: 500 })
+          withTiming(1.2, { duration: 300 }),
+          withTiming(1, { duration: 300 })
         ),
         -1,
         true
@@ -151,8 +151,8 @@ const VoiceRoomContent = ({ onDisconnect }) => {
 
       <ScrollView contentContainerStyle={styles.grid}>
         {tracks.map((trackRef) => (
-          <ParticipantContext.Provider 
-            value={trackRef.participant} 
+          <ParticipantContext.Provider
+            value={trackRef.participant}
             key={trackRef.participant.identity}
           >
             <ParticipantTile />
@@ -170,12 +170,11 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
   useEffect(() => {
     const setupAudio = async () => {
       try {
-        // S22: Force loudspeaker globally
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: true,
           playsInSilentModeIOS: true,
           staysActiveInBackground: true,
-          shouldRouteThroughEarpieceAndroid: false, // Force speaker on Android
+          shouldRouteThroughEarpieceAndroid: false,
         });
 
         await AudioSession.configureAudio({
@@ -184,11 +183,14 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
           },
           ios: {
             defaultOutput: 'speaker',
+            category: 'playAndRecord',
+            mode: 'voiceChat',
+            categoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP']
           },
         });
         await AudioSession.startAudioSession();
       } catch (e) {
-        console.error('AudioSession setup error:', e);
+        console.log('AudioSession setup error:', e);
       }
     };
 
@@ -216,7 +218,7 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
       video={false}
       onDisconnected={onDisconnect}
       onError={(err) => {
-        console.error('LiveKit Error:', err);
+        console.log('LiveKit Error:', err);
         Alert.alert('Connection Error', 'Failed to connect to voice room.');
       }}
     >

@@ -222,9 +222,15 @@ const LiveLocationScreen = () => {
         const configRef = ref(database, `orgs/${resolvedOrgId}/trips/${tripId}/visibility_config`);
         const unsubscribe = onValue(configRef, (snapshot) => {
             if (snapshot.exists()) {
-                setGlobalVisibilityConfig(snapshot.val());
+                const newConfig = snapshot.val();
+                setGlobalVisibilityConfig(newConfig);
+                // S22: Clear cache so participants are re-processed with new visibility rules
+                profileCache.current = {};
+                setParticipantsList([]);
             } else {
                 setGlobalVisibilityConfig({});
+                profileCache.current = {};
+                setParticipantsList([]);
             }
         });
         return () => unsubscribe();
@@ -706,15 +712,23 @@ const LiveLocationScreen = () => {
                                             style={[
                                                 styles.participantMarker,
                                                 isSelected && styles.selectedMarkerGlow,
-                                                isMe && { borderColor: '#FFF' } // Optional: White border for "Me"
+                                                isMe && { borderColor: '#FFF' }
                                             ]}
                                         >
                                             <View style={styles.markerCircle}>
-                                                <Image
-                                                    source={{ uri: avatarUri }}
-                                                    style={styles.markerAvatar}
-                                                    resizeMode="cover"
-                                                />
+                                                {p?.image && !p.image.includes('ui-avatars.com') ? (
+                                                    <Image
+                                                        source={{ uri: p.image }}
+                                                        style={styles.markerAvatar}
+                                                        resizeMode="cover"
+                                                    />
+                                                ) : (
+                                                    <View style={styles.markerInitialsContainer}>
+                                                        <Text style={styles.markerInitialsText}>
+                                                            {p?.name?.[0]?.toUpperCase() || userName?.[0]?.toUpperCase() || 'U'}
+                                                        </Text>
+                                                    </View>
+                                                )}
                                             </View>
                                         </View>
 
@@ -1150,9 +1164,21 @@ const styles = StyleSheet.create({
         borderStyle: 'solid',
     },
     markerAvatar: {
-        width: 54, // slightly smaller to avoid border overlap issues
-        height: 54,
-        borderRadius: 27,
+        width: '100%',
+        height: '100%',
+        borderRadius: 30,
+    },
+    markerInitialsContainer: {
+        width: '100%',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#B99A4A',
+    },
+    markerInitialsText: {
+        color: '#FFF',
+        fontSize: 24,
+        fontFamily: Typography.sans.bold,
     },
     controlButtons: {
         position: 'absolute',

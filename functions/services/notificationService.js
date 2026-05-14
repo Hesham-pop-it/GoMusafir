@@ -61,7 +61,7 @@ async function sendPushNotification(uid, title, body, data = {}) {
             // console.log(`[NotificationService] Stale token for user ${uid}. Removing from DB.`);
             await db.ref(`users/${uid}/fcmToken`).remove();
         } else {
-            // console.error(`[NotificationService] Error sending push notification to user ${uid}:`, error);
+            // console.log(`[NotificationService] Error sending push notification to user ${uid}:`, error);
         }
         throw error;
     }

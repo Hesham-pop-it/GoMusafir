@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "go-musafir"
-  }
+  },
+  "targets": {
+    "go-musafir": {
+      "hosting": {
+        "api": [
+          "api-gomusafir"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

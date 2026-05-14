@@ -65,4 +65,4 @@ exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
-
+exports.onChatCreated         = notificationFunctions.onChatCreated;

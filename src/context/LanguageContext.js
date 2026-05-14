@@ -21,7 +21,7 @@ export const LanguageProvider = ({ children }) => {
         setIsRTL(savedLanguage === 'ar');
       }
     } catch (error) {
-      console.error('Failed to load language', error);
+      console.log('Failed to load language', error);
     }
   };
 
@@ -29,7 +29,7 @@ export const LanguageProvider = ({ children }) => {
     try {
       await AsyncStorage.setItem('user_language', newLang);
       setLanguage(newLang);
-      
+
       const shouldBeRTL = newLang === 'ar';
       if (shouldBeRTL !== I18nManager.isRTL) {
         I18nManager.forceRTL(shouldBeRTL);
@@ -42,10 +42,10 @@ export const LanguageProvider = ({ children }) => {
           // The user will need to manually restart
         }
       }
-      
+
       setIsRTL(shouldBeRTL);
     } catch (error) {
-      console.error('Failed to change language', error);
+      console.log('Failed to change language', error);
     }
   };
 

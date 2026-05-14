@@ -8,7 +8,7 @@
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/logo.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#1A1E21"
     },
@@ -18,15 +18,20 @@
       "config": {
         "googleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
       },
-"bundleIdentifier": "com.popit.GoMusafir",
-      "associatedDomains": ["applinks:gomusafir.app"],
+      "bundleIdentifier": "com.popit.GoMusafir",
+      "associatedDomains": [
+        "applinks:gomusafir.app"
+      ],
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow GoMusafir to access your location to show nearby places and provide navigation.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "NSLocationAlwaysUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
+        "NSMicrophoneUsageDescription": "Allow GoMusafir to access your microphone for voice chat.",
         "UIBackgroundModes": [
           "remote-notification",
-          "location"
+          "location",
+          "audio",
+          "voip"
         ]
       }
     },
@@ -64,7 +69,10 @@
               "pathPrefix": "/link"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -97,9 +105,17 @@
       ],
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
-      "@livekit/react-native-expo-plugin",
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "ios": {
+            "microphonePermission": "Allow GoMusafir to access your microphone for voice chat."
+          }
+        }
+      ],
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-audio"
     ],
     "extra": {
       "eas": {

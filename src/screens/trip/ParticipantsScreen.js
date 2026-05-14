@@ -109,11 +109,6 @@ const ParticipantsScreen = () => {
                 uids = Object.keys(val);
             }
 
-            // Ensure organizer is in the UIDs list
-            if (organizerId && !uids.includes(organizerId)) {
-                uids.push(organizerId);
-            }
-
             if (uids.length === 0) {
                 setParticipants([]);
                 setParticipantsCount(0);
@@ -121,8 +116,21 @@ const ParticipantsScreen = () => {
                 return;
             }
 
-            uids.forEach((uid) => {
-                const profileRef = ref(database, `users/${uid}/profile`);
+            // Get staff list for filtering
+            const staffRef = ref(database, `orgs/${orgId}/staff`);
+            get(staffRef).then(staffSnap => {
+                const staffList = staffSnap.val() || {};
+                const nonStaffUids = uids.filter(uid => !staffList[uid]);
+
+                if (nonStaffUids.length === 0) {
+                    setParticipants([]);
+                    setParticipantsCount(0);
+                    setIsLoading(false);
+                    return;
+                }
+
+                nonStaffUids.forEach((uid) => {
+                    const profileRef = ref(database, `users/${uid}/profile`);
                 const nameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
@@ -135,15 +143,15 @@ const ParticipantsScreen = () => {
 
                     const canSeePII = (field) => {
                         if (isCurrentUser) return true;
-                        
+
                         // 1. Check Global Admin Config
                         const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
-                        
+
                         // Rule: 'Do not show' hides from EVERYONE including admin
                         if (globalSetting === 'Do not show') return false;
                         if (globalSetting === 'Show to organizer') return amIAdmin;
                         if (globalSetting === 'Show to everyone') return true;
-                        
+
                         // 2. If 'Custom choice', check personal choice
                         if (globalSetting === 'Custom choice') {
                             const personalSetting = visibility[field] || 'Show to organizer';
@@ -151,7 +159,7 @@ const ParticipantsScreen = () => {
                             if (personalSetting === 'Show to organizer') return amIAdmin;
                             if (personalSetting === 'Show to everyone') return true;
                         }
-                        
+
                         return false;
                     };
 
@@ -168,8 +176,8 @@ const ParticipantsScreen = () => {
                         displayName = 'You';
                     }
 
-                    const displayImage = canSeePII('photo') && profile.photoURL 
-                        ? profile.photoURL 
+                    const displayImage = canSeePII('photo') && profile.photoURL
+                        ? profile.photoURL
                         : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
 
                     const pData = {
@@ -193,6 +201,7 @@ const ParticipantsScreen = () => {
                 });
             });
         });
+    });
 
         return () => unsubscribe();
     }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
@@ -257,24 +266,24 @@ const ParticipantsScreen = () => {
 
     const confirmDelete = async () => {
         if (!selectedParticipant) return;
-        
+
         setDeleteConfirmVisible(false);
         setIsLoading(true);
-        
+
         try {
             if (deleteType === 'all') {
                 const deleteGlobally = httpsCallable(functions, 'deleteUserGlobally');
                 await deleteGlobally({ targetUid: selectedParticipant.id });
             } else {
                 const removeParticipant = httpsCallable(functions, 'removeParticipantFromTrip');
-                await removeParticipant({ 
-                    tripId: tripId, 
-                    targetUid: selectedParticipant.id 
+                await removeParticipant({
+                    tripId: tripId,
+                    targetUid: selectedParticipant.id
                 });
             }
             Alert.alert("Success", `Participant has been removed ${deleteType === 'all' ? 'globally' : 'from this trip'}.`);
         } catch (error) {
-            console.error("Delete Error:", error);
+            console.log("Delete Error:", error);
             Alert.alert("Error", "Failed to delete participant. " + error.message);
         } finally {
             setIsLoading(false);

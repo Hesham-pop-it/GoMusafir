@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -221,10 +222,29 @@ const FlyingGreetings = () => {
 
 const WelcomeScreen = ({ navigation }) => {
     const player = useVideoPlayer(require('../../../assets/Login Animation - 1080p.mp4'), (player) => {
-        player.loop = true;
         player.muted = true;
+        player.loop = true;
+        player.audioMixingMode = 'mixWithOthers';
         player.play();
     });
+
+    React.useEffect(() => {
+        // Configure audio mode to mix with other apps so background music doesn't stop
+        const configureAudio = async () => {
+            try {
+                await setAudioModeAsync({
+                    playsInSilentMode: true,
+                    interruptionMode: 'mixWithOthers',
+                    shouldPlayInBackground: false,
+                    allowsRecording: false,
+                });
+
+            } catch (error) {
+                console.log("Error configuring audio mode:", error);
+            }
+        };
+        configureAudio();
+    }, []);
 
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
@@ -250,11 +270,12 @@ const WelcomeScreen = ({ navigation }) => {
     return (
         <View style={styles.container}>
             <VideoView
+                style={StyleSheet.absoluteFillObject}
                 player={player}
-                style={styles.backgroundVideo}
-                // resizeMode="cover"
-                contentFit="fill"
                 nativeControls={false}
+                contentFit="fill"
+                allowsPictureInPicture={false}
+                allowsFullscreen={false}
             />
             <View style={styles.overlay}>
                 {/* <FlyingGreetings /> */}

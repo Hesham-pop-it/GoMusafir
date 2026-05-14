@@ -60,6 +60,7 @@ const COUNTRY_TO_CURRENCY = {
   IN: "INR",
   ID: "IDR",
   PK: "PKR",
+  AF: "USD",
 };
 
 function getPlanPricing(countryCode, planId) {
@@ -159,6 +160,7 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
       phone_number_collection: { enabled: true },
       shipping_address_collection: { allowed_countries: ALLOWED_SHIPPING_COUNTRIES },
       billing_address_collection: "required",
+      allow_promotion_codes: true,
       invoice_creation: { enabled: true },
       metadata: {
         orgId,
@@ -180,7 +182,7 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
 });
 
 // ── Request Seat Top-up Link ────────────────────────────────────────────────
-exports.requestSeatTopupLink = onCall({ region: "europe-west1" }, async (request) => {
+exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin", "manager", "co-host"]);
 
@@ -223,6 +225,7 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1" }, async (request
     phone_number_collection: { enabled: true },
     shipping_address_collection: { allowed_countries: ALLOWED_SHIPPING_COUNTRIES },
     billing_address_collection: "required",
+    allow_promotion_codes: true,
     invoice_creation: { enabled: true },
     expires_at: Math.floor(Date.now() / 1000) + (60 * 60), // Expire in 1 hour
     metadata: {

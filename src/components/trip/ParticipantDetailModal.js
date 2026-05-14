@@ -20,6 +20,7 @@ const ParticipantDetailModal = ({
     if (!participant) return null;
 
     const participantLocation = liveLocations[participant.id];
+
     const latitude = participantLocation?.lat || 21.4225;
     const longitude = participantLocation?.lng || 39.8262;
 

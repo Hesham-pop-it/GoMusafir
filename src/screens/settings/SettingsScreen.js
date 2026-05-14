@@ -20,6 +20,7 @@ import { signOut, deleteUser } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { ref, onValue } from 'firebase/database';
 import { Alert } from 'react-native';
+import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
@@ -53,26 +54,31 @@ const SettingsScreen = ({ navigation }) => {
         return () => unsubscribe();
     }, []);
 
-    const handleDeleteAccount = async () => {
+    const handleAction = async () => {
+        const isStaff = userRole === 'co-host' || userRole === 'manager';
         setIsDeleting(true);
         try {
-            const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
-            await deleteMyAccount();
-            
-            setDeleteVisible(false);
-            // Sign out locally to clear state, though the user is already deleted in backend
-            await signOut(auth);
-            // App.js onAuthStateChanged will handle navigation automatically
+            if (isStaff) {
+                const leaveOrg = httpsCallable(functions, 'leaveOrganization');
+                await leaveOrg();
+                setDeleteVisible(false);
+                await signOut(auth);
+            } else {
+                const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
+                await deleteMyAccount();
+                setDeleteVisible(false);
+                await signOut(auth);
+            }
         } catch (error) {
             setDeleteVisible(false);
             if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
                 Alert.alert(
                     "Security Verification",
-                    "For your security, please log out and log back in to verify your identity before deleting your account.",
+                    "For your security, please log out and log back in to verify your identity before proceeding.",
                     [{ text: "OK" }]
                 );
             } else {
-                Alert.alert("Error", error.message || "Failed to delete account");
+                Alert.alert("Error", error.message || (isStaff ? "Failed to leave team" : "Failed to delete account"));
             }
         } finally {
             setIsDeleting(false);
@@ -128,7 +134,7 @@ const SettingsScreen = ({ navigation }) => {
                     {/* App Settings */}
                     <SectionHeader title="App Settings" />
                     <View style={styles.sectionContainer}>
-                        <LinkItem label="Get audio kits for travellers" />
+                        <LinkItem label="Get audio kits for travellers" onPress={() => navigation.navigate('AudioKits')} />
                         <View style={styles.separator} />
                         <View style={styles.switchItem}>
                             <Text style={styles.linkText}>Enable lockscreen widget</Text>
@@ -145,7 +151,7 @@ const SettingsScreen = ({ navigation }) => {
                     <View style={styles.sectionContainer}>
                         <LinkItem
                             label="Help & Support"
-                            onPress={() => navigation.navigate('HelpSupport')}
+                            onPress={() => navigation.navigate('HelpSupport', { isAdmin })}
                         />
                         <View style={styles.separator} />
                         <LinkItem
@@ -174,7 +180,11 @@ const SettingsScreen = ({ navigation }) => {
                             style={styles.deleteButton}
                             onPress={() => setDeleteVisible(true)}
                         >
-                            <Text style={styles.deleteButtonText}>{userRole === 'admin' ? "Delete Company" : "Delete Account"}</Text>
+                            <Text style={styles.deleteButtonText}>
+                                {userRole === 'admin' ? "Delete Company" : 
+                                 (userRole === 'co-host' || userRole === 'manager') ? "Leave team" : 
+                                 "Delete Account"}
+                            </Text>
                         </TouchableOpacity>
                     </View>
 
@@ -200,6 +210,10 @@ const SettingsScreen = ({ navigation }) => {
                         onPress={async () => {
                             setIsLoggingOut(true);
                             try {
+                                // 1. Unregister notifications before signing out
+                                await unregisterForPushNotificationsAsync();
+                                
+                                // 2. Sign out
                                 await signOut(auth);
                                 // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
                             } catch (error) {
@@ -232,15 +246,21 @@ const SettingsScreen = ({ navigation }) => {
             >
                 <View style={styles.modalContent}>
                     <Text style={styles.modalMessageLarge}>
-                        Are you sure you want to delete the {userRole === 'admin' ? "company" : ""} account? Your data cannot be recovered after deletion.
+                        {userRole === 'co-host' || userRole === 'manager' 
+                            ? "Are you sure you want to leave the team?" 
+                            : `Are you sure you want to delete the ${userRole === 'admin' ? "company" : ""} account? Your data cannot be recovered after deletion.`}
                     </Text>
 
                     <TouchableOpacity
                         style={[styles.modalConfirmButton, isDeleting && { opacity: 0.5 }]}
-                        onPress={handleDeleteAccount}
+                        onPress={handleAction}
                         disabled={isDeleting}
                     >
-                        <Text style={styles.modalConfirmText}>{isDeleting ? "Deleting..." : "Delete"}</Text>
+                        <Text style={styles.modalConfirmText}>
+                            {isDeleting 
+                                ? (userRole === 'co-host' || userRole === 'manager' ? "Leaving..." : "Deleting...") 
+                                : (userRole === 'co-host' || userRole === 'manager' ? "Leave Team" : "Delete")}
+                        </Text>
                     </TouchableOpacity>
 
                     <GradientBorderButton

@@ -97,8 +97,8 @@ const BusinessLoginScreen = () => {
                 await sendOTP({ email: email.trim(), uid: user.uid, isMobile: true });
 
                 navigation.navigate('BusinessVerification', {
-                    title: "Security Verification",
-                    description: `A 6-digit code has been sent to ${email.trim()}. Please enter it to verify your login.`,
+                    title: "Check your business email",
+                    description: `We’ve sent a secure code to your email. Please check your inbox.`,
                     targetScreen: 'Home',
                     email: email.trim(),
                     uid: user.uid,
