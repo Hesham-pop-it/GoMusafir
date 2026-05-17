@@ -1799,13 +1799,25 @@ const TripOverviewScreen = () => {
                         <TouchableOpacity
                             style={styles.confirmDeleteBtn}
                             onPress={async () => {
-                                const tripId = trip?.id;
-                                const orgId = trip?.orgId;
-                                if (tripId && orgId) {
-                                    await remove(ref(database, `orgs/${orgId}/trips/${tripId}`));
-                                    // Also remove from user_trips if necessary (already handled in functions usually)
-                                    setDeleteModalVisible(false);
-                                    navigation.navigate('Home');
+                                setDeleteModalVisible(false);
+                                try {
+                                    const { functions } = require('../../config/firebase');
+                                    const { httpsCallable } = require('firebase/functions');
+                                    const deleteTrip = httpsCallable(functions, 'deleteTrip');
+
+                                    await deleteTrip({ tripId });
+
+                                    Alert.alert("Success", "Journey has been successfully deleted.", [
+                                        {
+                                            text: "OK",
+                                            onPress: () => {
+                                                navigation.navigate('Home');
+                                            }
+                                        }
+                                    ]);
+                                } catch (error) {
+                                    console.error("Delete Trip Error:", error);
+                                    Alert.alert("Error", "Failed to delete the journey. " + error.message);
                                 }
                             }}
                         >

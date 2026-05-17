@@ -32,6 +32,7 @@ exports.inviteTeamMember      = orgFunctions.inviteTeamMember;
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
 exports.createTrip            = tripFunctions.createTrip;
+exports.deleteTrip            = tripFunctions.deleteTrip;
 exports.updateLiveLocation    = tripFunctions.updateLiveLocation;
 exports.closeTrip             = tripFunctions.closeTrip;
 exports.rotateInviteCode      = tripFunctions.rotateInviteCode;

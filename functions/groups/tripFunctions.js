@@ -391,3 +391,66 @@ exports.getParticipantProfile = onCall({ region: "europe-west1" }, async (reques
     profile: profile
   };
 });
+
+// ── Delete Trip ───────────────────────────────────────────────────────────────
+exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
+  console.log("[deleteTrip] Request Auth:", request.auth ? { uid: request.auth.uid, role: request.auth.token?.role } : "undefined");
+  verifyAppCheck(request);
+  requireRole(request, ["admin", "co-host"]);
+
+  const { tripId } = request.data;
+  if (!tripId) throw new HttpsError("invalid-argument", "tripId is required.");
+
+  const orgId = request.auth.token.orgId;
+  const uid = request.auth.uid;
+
+  // 1. Get the trip to verify it exists and get its invitation code
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
+
+  const trip = tripSnap.val();
+  const inviteCode = trip.invitation_code;
+
+  // 2. Find all participants to remove the trip from their joined_trips list
+  const participantsSnap = await db.ref(`trips_participants/${tripId}`).get();
+  const participantIds = [];
+  if (participantsSnap.exists()) {
+    const val = participantsSnap.val();
+    if (typeof val === "object" && val !== null) {
+      Object.keys(val).forEach(pid => {
+        if (val[pid]) participantIds.push(pid);
+      });
+    }
+  }
+
+  // 3. Construct atomic update
+  const updates = {};
+  
+  // Remove trip metadata and active status
+  updates[`orgs/${orgId}/trips/${tripId}`] = null;
+  updates[`trips_orgs/${tripId}`] = null;
+  updates[`trips_participants/${tripId}`] = null;
+  updates[`trips_active/${orgId}/${tripId}`] = null;
+
+  // Invalidate invitation code if it exists
+  if (inviteCode) {
+    updates[`invites/${inviteCode}`] = null;
+  }
+
+  // Remove from joined_trips for all participants
+  participantIds.forEach(pid => {
+    updates[`users/${pid}/joined_trips/${tripId}`] = null;
+  });
+
+  await db.ref().update(updates);
+
+  // Write audit log
+  await writeAuditLog(orgId, {
+    action: "TRIP_DELETED",
+    byUid: uid,
+    targetId: tripId,
+  });
+
+  return { success: true };
+});
+

@@ -10,7 +10,8 @@ import {
     StatusBar,
     PanResponder,
     Animated,
-    ActivityIndicator
+    ActivityIndicator,
+    Alert
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -262,13 +263,30 @@ const TripSettingsScreen = () => {
     };
 
 
-    const handleDeleteTrip = () => {
+    const handleDeleteTrip = async () => {
         setDeleteModalVisible(false);
-        // Handle deletion logic
-        navigation.reset({
-            index: 0,
-            routes: [{ name: 'Home' }],
-        });
+        try {
+            const { functions } = require('../../config/firebase');
+            const { httpsCallable } = require('firebase/functions');
+            const deleteTrip = httpsCallable(functions, 'deleteTrip');
+
+            await deleteTrip({ tripId: resolvedTripId });
+
+            Alert.alert("Success", "Journey has been successfully deleted.", [
+                {
+                    text: "OK",
+                    onPress: () => {
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Home' }],
+                        });
+                    }
+                }
+            ]);
+        } catch (error) {
+            console.error("Delete Trip Error:", error);
+            Alert.alert("Error", "Failed to delete the journey. " + error.message);
+        }
     };
 
     const handleRequestSeats = async () => {
