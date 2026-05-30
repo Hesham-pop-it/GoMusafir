@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator } from 'react-native';
 import Modal from 'react-native-modal';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
+import { useLanguage } from '../../context/LanguageContext';
 
 const { width } = Dimensions.get('window');
 
@@ -15,14 +16,33 @@ const ParticipantDetailModal = ({
     liveLocations = {},
     isAdmin,
     onDelete,
-    mapDarkStyle
+    mapDarkStyle,
+    isDecrypting
 }) => {
     if (!participant) return null;
 
+    const [scrollOffset, setScrollOffset] = useState(0);
+    const scrollViewRef = useRef(null);
+
+    const handleOnScroll = (event) => {
+        setScrollOffset(event.nativeEvent.contentOffset.y);
+    };
+
+    const handleScrollTo = (p) => {
+        if (scrollViewRef.current) {
+            scrollViewRef.current.scrollTo(p);
+        }
+    };
+
+    const { t } = useLanguage();
     const participantLocation = liveLocations[participant.id];
 
     const latitude = participantLocation?.lat || 21.4225;
     const longitude = participantLocation?.lng || 39.8262;
+
+    const nameParts = participant.name ? participant.name.trim().split(/\s+/) : ['Guest'];
+    const firstName = participant.firstName || nameParts[0] || 'Guest';
+    const lastName = participant.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
 
     return (
         <Modal
@@ -33,6 +53,9 @@ const ParticipantDetailModal = ({
             swipeDirection="down"
             swipeThreshold={100}
             propagateSwipe={true}
+            scrollTo={handleScrollTo}
+            scrollOffset={scrollOffset}
+            scrollOffsetMax={300}
             useNativeDriver={false}
             useNativeDriverForBackdrop={true}
             animationIn="bounceInUp"
@@ -43,58 +66,104 @@ const ParticipantDetailModal = ({
                 <View style={styles.handle} />
                 <Text style={styles.sheetTitle}>Participant Detail</Text>
                 <View style={styles.divider} />
-                <View style={styles.detailHeader}>
-                    <Image source={{ uri: participant.image }} style={styles.detailAvatar} />
-                    <Text style={styles.detailName}>{participant.name}</Text>
-                </View>
+                
+                <ScrollView 
+                    ref={scrollViewRef}
+                    onScroll={handleOnScroll}
+                    scrollEventThrottle={16}
+                    style={{ flexShrink: 1 }} 
+                    contentContainerStyle={{ paddingBottom: 20 }} 
+                    showsVerticalScrollIndicator={false}
+                >
+                    <View style={styles.detailHeader}>
+                        <Image source={{ uri: participant.image }} style={styles.detailAvatar} />
+                        <Text style={styles.detailName}>{participant.name}</Text>
+                    </View>
 
-                {/* Real Map View */}
-                <View style={styles.mapPlaceholder}>
-                    <MapView
-                        style={StyleSheet.absoluteFill}
-                        initialRegion={{
-                            latitude,
-                            longitude,
-                            latitudeDelta: 0.01,
-                            longitudeDelta: 0.01,
-                        }}
-                        region={{
-                            latitude,
-                            longitude,
-                            latitudeDelta: 0.01,
-                            longitudeDelta: 0.01,
-                        }}
-                        customMapStyle={mapDarkStyle}
-                    >
-                        <Marker
-                            coordinate={{ latitude, longitude }}
-                        >
-                            <View style={styles.mapPinContainer}>
-                                <Image source={{ uri: participant.image }} style={styles.mapPinAvatar} />
+                    {/* Name Fields */}
+                    <View style={styles.row}>
+                        <View style={styles.halfWidth}>
+                            <Text style={styles.label}>{t('first_name')}</Text>
+                            <View style={styles.inputContainer}>
+                                <Text style={styles.inputText}>{firstName}</Text>
                             </View>
-                        </Marker>
-                    </MapView>
-                </View>
+                        </View>
+                        <View style={styles.halfWidth}>
+                            <Text style={styles.label}>{t('last_name')}</Text>
+                            <View style={styles.inputContainer}>
+                                <Text style={styles.inputText}>{lastName}</Text>
+                            </View>
+                        </View>
+                    </View>
 
-                {isAdmin && (
-                    <>
-                        <TouchableOpacity
-                            style={styles.deleteButtonPill}
-                            onPress={() => onDelete('this')}
-                        >
-                            <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                            <Text style={{ color: '#fff' }}>Delete for this trip</Text>
-                        </TouchableOpacity>
+                    {/* Email */}
+                    <Text style={styles.label}>{t('email')}</Text>
+                    <View style={styles.inputContainer}>
+                        {isDecrypting && (!participant.email || participant.email === 'N/A' || participant.email.includes('*') || !participant.email.includes('@')) ? (
+                            <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
+                        ) : (
+                            <Text style={styles.inputText}>{participant.email || 'N/A'}</Text>
+                        )}
+                    </View>
 
-                        <TouchableOpacity
-                            style={styles.deleteButtonPill}
-                            onPress={() => onDelete('all')}
+                    {/* Phone */}
+                    <Text style={styles.label}>{t('phone')}</Text>
+                    <View style={styles.inputContainer}>
+                        {isDecrypting && (!participant.phone || participant.phone === 'N/A' || participant.phone.includes('*')) ? (
+                            <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
+                        ) : (
+                            <Text style={styles.inputText}>{participant.phone || 'N/A'}</Text>
+                        )}
+                    </View>
+
+                    {/* Real Map View */}
+                    <View style={styles.mapPlaceholder}>
+                        <MapView
+                            style={StyleSheet.absoluteFill}
+                            initialRegion={{
+                                latitude,
+                                longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                            region={{
+                                latitude,
+                                longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                            customMapStyle={mapDarkStyle}
                         >
-                            <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                            <Text style={{ color: '#fff' }}>Delete for all trip</Text>
-                        </TouchableOpacity>
-                    </>
-                )}
+                            <Marker
+                                coordinate={{ latitude, longitude }}
+                            >
+                                <View style={styles.mapPinContainer}>
+                                    <Image source={{ uri: participant.image }} style={styles.mapPinAvatar} />
+                                </View>
+                            </Marker>
+                        </MapView>
+                    </View>
+
+                    {isAdmin && (
+                        <>
+                            <TouchableOpacity
+                                style={styles.deleteButtonPill}
+                                onPress={() => onDelete('this')}
+                            >
+                                <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
+                                <Text style={{ color: '#fff' }}>Delete for this trip</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.deleteButtonPill}
+                                onPress={() => onDelete('all')}
+                            >
+                                <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
+                                <Text style={{ color: '#fff' }}>Delete for all trip</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
+                </ScrollView>
             </View>
         </Modal>
     );
@@ -110,6 +179,33 @@ const styles = StyleSheet.create({
         paddingTop: 12,
         width: '100%',
         marginTop: 'auto',
+        maxHeight: Dimensions.get('window').height * 0.9,
+    },
+    row: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 16,
+    },
+    halfWidth: {
+        flex: 1,
+    },
+    label: {
+        fontSize: 14,
+        color: '#fff',
+        fontFamily: Typography.sans.regular,
+        marginBottom: 8,
+    },
+    inputContainer: {
+        backgroundColor: '#23272A',
+        borderRadius: 12,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        marginBottom: 16,
+    },
+    inputText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontFamily: Typography.sans.bold,
     },
     handle: {
         width: 60,

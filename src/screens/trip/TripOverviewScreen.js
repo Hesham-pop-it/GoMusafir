@@ -24,6 +24,7 @@ import { ref, onValue, get, update, remove, query, limitToLast, set, push, serve
 import { database, auth, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import ChatEncryption from '../../utils/chatEncryption';
 
 import Svg, { Path, G, Defs, ClipPath, Rect, Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -35,20 +36,15 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
 import { useVoice } from '../../context/VoiceContext';
+import { useTracks } from '@livekit/react-native';
+import { Track } from 'livekit-client';
 
 
 const { width, height } = Dimensions.get('window');
 
 const MicUnmutedIcon = ({ color = "white", size = 20 }) => (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <G clipPath="url(#clip0_mic_unmuted)">
-            <Path fillRule="evenodd" clipRule="evenodd" d="M12 16.5C14.4842 16.4974 16.4974 14.4842 16.5 12V6C16.5 3.51472 14.4853 1.5 12 1.5C9.51472 1.5 7.5 3.51472 7.5 6V12C7.50258 14.4842 9.51579 16.4974 12 16.5ZM9 6C9 4.34315 10.3431 3 12 3C13.6569 3 15 4.34315 15 6V12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12V6ZM12.75 19.4625V21.75C12.75 22.1642 12.4142 22.5 12 22.5C11.5858 22.5 11.25 22.1642 11.25 21.75V19.4625C7.41988 19.0728 4.50473 15.8499 4.5 12C4.5 11.5858 4.83579 11.25 5.25 11.25C5.66421 11.25 6 11.5858 6 12C6 15.3137 8.68629 18 12 18C15.3137 18 18 15.3137 18 12C18 11.5858 18.3358 11.25 18.75 11.25C19.1642 11.25 19.5 11.5858 19.5 12C19.4953 15.8499 16.5801 19.0728 12.75 19.4625Z" fill={color} />
-        </G>
-        <Defs>
-            <ClipPath id="clip0_mic_unmuted">
-                <Rect width="24" height="24" fill="white" />
-            </ClipPath>
-        </Defs>
+        <Path fillRule="evenodd" clipRule="evenodd" d="M12 16.5C14.4842 16.4974 16.4974 14.4842 16.5 12V6C16.5 3.51472 14.4853 1.5 12 1.5C9.51472 1.5 7.5 3.51472 7.5 6V12C7.50258 14.4842 9.51579 16.4974 12 16.5ZM9 6C9 4.34315 10.3431 3 12 3C13.6569 3 15 4.34315 15 6V12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12V6ZM12.75 19.4625V21.75C12.75 22.1642 12.4142 22.5 12 22.5C11.5858 22.5 11.25 22.1642 11.25 21.75V19.4625C7.41988 19.0728 4.50473 15.8499 4.5 12C4.5 11.5858 4.83579 11.25 5.25 11.25C5.66421 11.25 6 11.5858 6 12C6 15.3137 8.68629 18 12 18C15.3137 18 18 15.3137 18 12C18 11.5858 18.3358 11.25 18.75 11.25C19.1642 11.25 19.5 11.5858 19.5 12C19.4953 15.8499 16.5801 19.0728 12.75 19.4625Z" fill={color} />
     </Svg>
 );
 
@@ -105,7 +101,7 @@ const MaghribIcon = ({ color = "white", size = 24 }) => (
 
 const IshaIcon = ({ color = "white", size = 24 }) => (
     <Svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <Path d="M10.8574 2.02694C5.41742 3.14694 1.55742 8.69694 3.51742 14.1469C5.38742 19.3369 11.4874 22.0169 16.4574 19.3469C19.1974 17.8669 21.0674 15.1769 21.6274 12.1369C21.7574 11.4069 20.5674 11.6569 20.2574 11.8469C17.6574 13.4969 14.2074 12.8869 12.2474 10.5369C10.2874 8.18694 10.2674 5.11694 11.7774 2.65694C12.2374 1.89694 10.5774 1.89694 10.2174 2.48694C8.37741 5.49694 8.77741 9.50694 11.4074 11.9369C14.0374 14.3669 18.2774 14.5169 21.3474 12.5569L19.9774 12.2669C19.1274 16.8669 14.7174 20.5769 9.99741 18.7569C5.8074 17.1469 3.50741 11.9769 5.28741 7.82694C6.34741 5.34694 8.52741 3.64694 11.1574 3.10694C12.1874 2.89694 11.8874 1.81694 10.8674 2.02694H10.8574Z" fill="#A1A1AA"/>
+        <Path d="M10.8574 2.02694C5.41742 3.14694 1.55742 8.69694 3.51742 14.1469C5.38742 19.3369 11.4874 22.0169 16.4574 19.3469C19.1974 17.8669 21.0674 15.1769 21.6274 12.1369C21.7574 11.4069 20.5674 11.6569 20.2574 11.8469C17.6574 13.4969 14.2074 12.8869 12.2474 10.5369C10.2874 8.18694 10.2674 5.11694 11.7774 2.65694C12.2374 1.89694 10.5774 1.89694 10.2174 2.48694C8.37741 5.49694 8.77741 9.50694 11.4074 11.9369C14.0374 14.3669 18.2774 14.5169 21.3474 12.5569L19.9774 12.2669C19.1274 16.8669 14.7174 20.5769 9.99741 18.7569C5.8074 17.1469 3.50741 11.9769 5.28741 7.82694C6.34741 5.34694 8.52741 3.64694 11.1574 3.10694C12.1874 2.89694 11.8874 1.81694 10.8674 2.02694H10.8574Z" fill={color}/>
     </Svg>
 
 );
@@ -156,6 +152,7 @@ const TripOverviewScreen = () => {
     const [detailVisible, setDetailVisible] = useState(false);
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
     const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
+    const [isDecrypting, setIsDecrypting] = useState(false);
     const [quickAlertVisible, setQuickAlertVisible] = useState(false);
     const [alertMessage, setAlertMessage] = useState('');
 
@@ -372,16 +369,26 @@ const TripOverviewScreen = () => {
             const staffRef = ref(database, `orgs/${orgId}/staff`);
             get(staffRef).then(staffSnap => {
                 const staffList = staffSnap.val() || {};
-                const nonStaffUids = uids.filter(uid => !staffList[uid]);
+                const filteredUids = uids.filter(uid => {
+                    const role = staffList[uid];
+                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
+                });
 
-                setParticipantsCount(nonStaffUids.length);
+                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                    const role = staffList[uid];
+                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                });
 
-                if (nonStaffUids.length === 0) {
+                const combinedUids = Array.from(new Set([...filteredUids, ...teamMemberUids]));
+
+                setParticipantsCount(combinedUids.length);
+
+                if (combinedUids.length === 0) {
                     setParticipantsList([]);
                     return;
                 }
 
-                nonStaffUids.forEach((uid) => {
+                combinedUids.forEach((uid) => {
                     const profileRef = ref(database, `users/${uid}/profile`);
                 const nameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
@@ -435,11 +442,21 @@ const TripOverviewScreen = () => {
                         ? profile.photoURL
                         : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
 
+                    const role = staffList[uid];
+                    let status = uid === organizerId ? 'Organizer' : 'Joined';
+                    if (role === 'admin') {
+                        status = 'Admin';
+                    } else if (role === 'co-host') {
+                        status = 'Co-Host';
+                    } else if (role === 'manager') {
+                        status = 'Manager';
+                    }
+
                     const pData = {
                         id: uid,
                         name: displayName,
                         image: displayImage,
-                        status: uid === organizerId ? 'Organizer' : 'Joined',
+                        status: status,
                         isSpeaking: false,
                         isOrganizer: uid === organizerId,
                         canSeeLocation: canSeePII('location')
@@ -482,7 +499,6 @@ const TripOverviewScreen = () => {
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
         if (!isStaff || !orgId || !tripId) return;
         const nextState = !isAllMuted;
-        setIsAllMuted(nextState);
         update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
             isAllMuted: nextState
         });
@@ -754,9 +770,63 @@ const TripOverviewScreen = () => {
         }
     };
 
-    const handleParticipantPress = (participant) => {
+    const handleParticipantPress = async (participant) => {
+        setIsDecrypting(true);
         setSelectedParticipant(participant);
         setDetailVisible(true);
+        
+        try {
+            await ChatEncryption.initialize();
+            const getProfile = httpsCallable(functions, 'getParticipantProfile');
+            const result = await getProfile({
+                targetUid: participant.id,
+                tripId: tripId
+            });
+            
+            if (result && result.data) {
+                setSelectedParticipant(prev => {
+                    if (!prev || prev.id !== participant.id) return prev;
+                    const newData = { ...prev };
+                    
+                    // Decrypt fields if they are encrypted
+                    const decryptedEmail = ChatEncryption.decrypt(result.data.email);
+                    const decryptedPhone = ChatEncryption.decrypt(result.data.phone);
+                    const decryptedName = ChatEncryption.decrypt(result.data.fullName);
+
+                    // Update if we got valid plaintext results
+                    if (decryptedEmail && decryptedEmail.includes('@')) {
+                        newData.email = decryptedEmail;
+                    } else {
+                        newData.email = result.data.email || 'N/A';
+                    }
+                    if (decryptedPhone && decryptedPhone.length > 5) {
+                        newData.phone = decryptedPhone;
+                    } else {
+                        newData.phone = result.data.phone || 'N/A';
+                    }
+                    if (decryptedName && !decryptedName.includes('*')) {
+                        newData.name = decryptedName;
+                    } else {
+                        newData.name = result.data.fullName || prev.name;
+                    }
+
+                    if (result.data.profile) {
+                        newData.firstName = result.data.profile.firstName || '';
+                        newData.lastName = result.data.profile.lastName || '';
+                    } else {
+                        const parts = (result.data.fullName || '').split(' ');
+                        newData.firstName = parts[0] || '';
+                        newData.lastName = parts.slice(1).join(' ') || '';
+                    }
+                    
+                    return newData;
+                });
+            }
+        } catch (error) {
+            console.log("[TripOverview] Decryption error:", error);
+        } finally {
+            setIsDecrypting(false);
+        }
     };
 
     const handleDeletePress = (type = 'this') => {
@@ -799,7 +869,22 @@ const TripOverviewScreen = () => {
         return a.name.localeCompare(b.name);
     });
 
-    const participants = sortedParticipants;
+    const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+
+    const participants = sortedParticipants.map(p => {
+        const track = voiceTracks.find(t => t.participant.identity === p.id);
+        if (track) {
+            const isSpeaking = track.participant.isSpeaking;
+            const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
+            return {
+                ...p,
+                isSpeaking,
+                isMicrophoneEnabled,
+                voiceStatus: isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted')
+            };
+        }
+        return p;
+    });
 
 
     const QUICK_MESSAGES = [
@@ -1106,7 +1191,7 @@ const TripOverviewScreen = () => {
 
             <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
                 {/* Fixed Background Header Layer (Z-Index: 0) - Title stays fixed */}
-                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0 }]}>
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5 }]}>
 
                     {isAdmin ? (
                         <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.iconButton}>
@@ -1148,10 +1233,11 @@ const TripOverviewScreen = () => {
 
                 {/* Scrollable Layer (Z-Index: 10) */}
                 <ScrollView
-                    style={{ flex: 1, zIndex: 10, marginTop: 70 }}
+                    style={{ flex: 1, zIndex: 10, marginTop: 0 }}
                     contentContainerStyle={{ flexGrow: 1 }}
                     showsVerticalScrollIndicator={false}
                 >
+                    <View style={{ height: 75 }} pointerEvents="none" />
                     {/* 1. Transparent Gap with Interactive Buttons (Mirror) */}
 
 
@@ -1262,7 +1348,9 @@ const TripOverviewScreen = () => {
                                             disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
-                                                !isMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
+                                                isMuted
+                                                    ? { backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
+                                                    : { backgroundColor: '#23272A', borderColor: '#B99A4A' },
                                                 !isChannelStarted && { opacity: 0.5 }
                                             ]}
                                         >
@@ -1270,10 +1358,10 @@ const TripOverviewScreen = () => {
                                                 {isMuted ? (
                                                     <MicMutedIcon color="#FFF" size={20} />
                                                 ) : (
-                                                    <MicUnmutedIcon color="#D66A77" size={20} />
+                                                    <MicUnmutedIcon color="rgba(255, 255, 255, 0.5)" size={20} />
                                                 )}
                                             </View>
-                                            <Text style={[styles.controlText, !isMuted && { color: '#D66A77', fontWeight: 'bold' }]}>
+                                            <Text style={[styles.controlText, isMuted ? { color: '#FFF', fontWeight: 'bold' } : { color: 'rgba(255, 255, 255, 0.6)' }]}>
                                                 {isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                             </Text>
                                         </TouchableOpacity>
@@ -1282,7 +1370,9 @@ const TripOverviewScreen = () => {
                                             disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
-                                                !isAllMuted && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
+                                                isAllMuted
+                                                    ? { backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
+                                                    : { backgroundColor: '#23272A', borderColor: '#B99A4A' },
                                                 !isChannelStarted && { opacity: 0.5 }
                                             ]}
                                         >
@@ -1290,17 +1380,17 @@ const TripOverviewScreen = () => {
                                                 {isAllMuted ? (
                                                     <MicMutedIcon color="#FFF" size={20} />
                                                 ) : (
-                                                    <MicUnmutedIcon color="#D66A77" size={20} />
+                                                    <MicUnmutedIcon color="rgba(255, 255, 255, 0.5)" size={20} />
                                                 )}
                                             </View>
-                                            <Text style={[styles.controlText, !isAllMuted && { color: '#D66A77' }]}>
+                                            <Text style={[styles.controlText, isAllMuted ? { color: '#FFF', fontWeight: 'bold' } : { color: 'rgba(255, 255, 255, 0.6)' }]}>
                                                 {isAllMuted ? 'Unmute All' : 'Mute All'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
                                             style={[
                                                 styles.controlButtonOutline,
-                                                { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#D66A77' : '#34C759', borderColor: isChannelStarted ? '#D66A77' : '#34C759' }
+                                                { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#942F31' : '#B99A4A', borderColor: isChannelStarted ? '#942F31' : '#B99A4A' }
                                             ]}
                                             onPress={handleToggleChannel}
                                         >
@@ -1311,7 +1401,7 @@ const TripOverviewScreen = () => {
                                                 style={{ marginRight: 8 }}
                                             />
                                             <Text style={[styles.controlText, { color: "#FFF" }]}>
-                                                {isChannelStarted ? 'Stop Channel' : 'Start Channel'}
+                                                {isChannelStarted ? 'Channel Stop' : 'Start Channel'}
                                             </Text>
                                         </TouchableOpacity>
 
@@ -1347,9 +1437,9 @@ const TripOverviewScreen = () => {
                         {/* Map and Chat Row */}
                         <View style={styles.rowContainer}>
                             <TouchableOpacity
-                                style={[styles.sectionCard, styles.halfCard, { padding: 0, overflow: 'hidden', width: '50%' }]}
+                                style={[styles.sectionCard, styles.halfCard, { overflow: 'hidden' }]}
                                 onPress={() => navigation.navigate('LiveLocation', { trip: tripData })}
-                                activeOpacity={0.8}
+                               
                             >
                                 {userLocation ? (
                                     <MapView
@@ -1447,7 +1537,7 @@ const TripOverviewScreen = () => {
 
 
                             <TouchableOpacity
-                                style={[styles.sectionCard, styles.halfCard, { backgroundColor: '#23272A', width: '50%' }]}
+                                style={[styles.sectionCard, styles.halfCard, { backgroundColor: '#23272A', }]}
                                 onPress={() => navigation.navigate('TripChat', { trip: tripData })}
                             >
                                 <View style={styles.chatIconWrapper}>
@@ -1557,8 +1647,13 @@ const TripOverviewScreen = () => {
                                                     <Text style={styles.participantName}>
                                                         {p.name} {p.id === auth.currentUser?.uid ? '(You)' : ''}
                                                     </Text>
-                                                    <Text style={p.isSpeaking ? styles.participantStatus : styles.participantStatusMuted}>
-                                                        {p.status}
+                                                    <Text style={[
+                                                        styles.participantStatus,
+                                                        p.voiceStatus === 'Speaking' && styles.statusSpeaking,
+                                                        p.voiceStatus === 'Active' && styles.statusActive,
+                                                        p.voiceStatus === 'Muted' && styles.statusMuted,
+                                                    ]}>
+                                                        {p.voiceStatus ? p.voiceStatus : p.status}
                                                     </Text>
                                                 </View>
                                             </TouchableOpacity>
@@ -1680,6 +1775,7 @@ const TripOverviewScreen = () => {
                 isAdmin={isAdmin}
                 onDelete={handleDeletePress}
                 mapDarkStyle={mapDarkStyle}
+                isDecrypting={isDecrypting}
             />
 
             {/* Delete Confirmation Modal */}
@@ -2019,7 +2115,7 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     notificationListContainer: {
-        height: 160,
+        maxHeight: 280,
     },
     notificationItem: {
         flexDirection: 'row',
@@ -2125,7 +2221,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 12,
+        paddingVertical: 14,
         borderRadius: 30, // Pill shape
         borderWidth: 1,
         borderColor: '#B99A4A',
@@ -2171,24 +2267,25 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     participantsScrollContainer: {
-        height: 180, // Height for roughly 3 items (60px each)
+        maxHeight: 210,
     },
     participantAvatarContainer: {
         marginRight: 12,
         borderRadius: 24,
-        padding: 2, // For border space
+         // For border space
     },
     speakingAvatarBorder: {
         borderWidth: 2,
         borderColor: '#34C759',
-        shadowColor: '#34C759',
-        shadowOpacity: 0.5,
+        // shadowColor: '#34C759',
+        // shadowOpacity: 0.5,
+        borderRadius: 50,
         shadowRadius: 5,
     },
     participantAvatar: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        width: 56,
+        height: 56,
+        borderRadius: 28,
         backgroundColor: '#ccc',
     },
     participantInfo: {
@@ -2198,6 +2295,7 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(16),
         color: '#FFF',
         fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
     },
     participantStatus: {
         fontSize: responsiveFontSize(13),
@@ -2209,10 +2307,20 @@ const styles = StyleSheet.create({
         color: '#A1A1AA',
         fontFamily: Typography.sans.regular,
     },
+    statusSpeaking: {
+        color: '#34C759',
+        fontWeight: 'bold',
+    },
+    statusActive: {
+        color: '#B99A4A',
+    },
+    statusMuted: {
+        color: '#D66A77',
+    },
     quickMsgCard: {
         backgroundColor: '#2D3134',
         padding: 10,
-        height: 160, // Fixed height to match chat card
+         // Fixed height to match chat card
     },
     quickMsgItem: {
         backgroundColor: '#23272A',

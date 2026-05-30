@@ -223,16 +223,40 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
   };
 
   // S35: Ensure basic profile exists so they don't show as "Unknown User"
+  // Fetch existing user record in Realtime Database to prevent overwriting their real name
+  const userDbSnap = await db.ref(`users/${uid}`).get();
+  const existingUser = userDbSnap.exists() ? userDbSnap.val() : null;
+
+  console.log("User record:", userRecord);
+  console.log("Existing user:", existingUser);
+  
   if (userRecord.displayName) {
     updates[`users/${uid}/full_name`] = userRecord.displayName;
-    const parts = userRecord.displayName.split(" ");
-    updates[`users/${uid}/profile`] = {
-        firstName: parts[0] || "",
-        lastName: parts.slice(1).join(" ") || "",
-        photoURL: userRecord.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userRecord.displayName[0] || 'U')}&background=B99A4A&color=fff`,
-        updated_at: Date.now()
-    };
+    
+    // Only create/update profile if they don't already have one
+    if (!existingUser || !existingUser.profile) {
+      const parts = userRecord.displayName.split(" ");
+      updates[`users/${uid}/profile`] = {
+          firstName: parts[0] || "",
+          lastName: parts.slice(1).join(" ") || "",
+          photoURL: userRecord.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userRecord.displayName[0] || 'U')}&background=B99A4A&color=fff`,
+          updated_at: Date.now()
+      };
+    }
+  } else if (existingUser && existingUser.full_name) {
+    // If there is no displayName in Auth, but they already have a record in the database,
+    // we keep their existing database name and only create a basic profile structure if missing.
+    if (!existingUser.profile) {
+      const parts = existingUser.full_name.split(" ");
+      updates[`users/${uid}/profile`] = {
+          firstName: parts[0] || "",
+          lastName: parts.slice(1).join(" ") || "",
+          photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(existingUser.full_name[0] || 'U')}&background=B99A4A&color=fff`,
+          updated_at: Date.now()
+      };
+    }
   } else {
+    // Fall back to "Team Member" ONLY if they have no name in Auth AND no record in the database
     updates[`users/${uid}/full_name`] = "Team Member";
   }
 
@@ -247,6 +271,7 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
 
   return { success: true, orgId, role };
 });
+
 
 // ── Get Invite Metadata (public — no auth needed) ─────────────────────────────
 // Returns safe trip preview for the invite landing page.

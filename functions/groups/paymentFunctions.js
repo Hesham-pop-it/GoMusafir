@@ -324,8 +324,8 @@ exports.stripeWebhookHandler = onRequest(
               await db.ref(`temp_links/${session.metadata.linkToken}`).update({
                 paid: true,
                 stripeSessionId: session.id,
-                planId: planId,
-                seats: parseInt(seats)
+                planId: planId || "seat_topup",
+                seats: isNaN(seatsNum) ? 0 : seatsNum
               });
             }
 
@@ -376,4 +376,208 @@ exports.verifyPayment = onCall({ region: "europe-west1" }, async (request) => {
     status: session.status,
     payment: session.payment_status,
   };
+});
+
+// ── Generate Seat Top-up Token ───────────────────────────────────────────────
+exports.generateSeatTopupToken = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin", "manager", "co-host"]);
+
+  const data = request.data;
+  const { tripId, seatsToIncr } = data;
+  const { uid, token } = request.auth;
+  const orgId = token.orgId;
+  const email = token.email;
+
+  if (!tripId || !seatsToIncr || !orgId) {
+    throw new HttpsError("invalid-argument", "Missing required fields for seat top-up.");
+  }
+
+  // Fetch trip details to ensure it belongs to the org
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
+  const trip = tripSnap.val();
+
+  // Generate a unique, short-lived secure token for this link
+  const crypto = require("crypto");
+  const linkToken = crypto.randomBytes(32).toString("hex");
+  const expiry = Date.now() + 15 * 60 * 1000; // 15 minutes expiry
+
+  await db.ref(`temp_links/${linkToken}`).set({
+    orgId: orgId,
+    uid: uid,
+    email: email,
+    expiresAt: expiry,
+    used: false,
+    action: "SEAT_TOPUP",
+    tripId: tripId,
+    seats: parseInt(seatsToIncr),
+  });
+
+  const webLink = `https://gomusafir.app/increase-seats?token=${linkToken}`;
+  const htmlContent = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+      <h2 style="color: #B99A4A; text-align: center;">Increase Trip Seats</h2>
+      <p>Hello,</p>
+      <p>Click the button below to purchase ${seatsToIncr} additional seats for your trip "${trip.title}" on the GoMusafir web application. This secure link is valid for 15 minutes.</p>
+      <div style="text-align: center; margin: 30px 0;">
+        <a href="${webLink}" style="background-color: #B99A4A; color: white; padding: 15px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Complete Seat Increase</a>
+      </div>
+      <p style="word-break: break-all; color: #666; font-size: 11px;">Verification Link: ${webLink}</p>
+    </div>
+  `;
+
+  try {
+    const { sendEmail } = require("../services/emailService");
+    await sendEmail({ to: email, subject: "Complete Your GoMusafir Seat Increase", html: htmlContent });
+  } catch (emailErr) {
+    console.warn("Failed to send email link:", emailErr);
+  }
+
+  return { token: linkToken };
+});
+
+// ── Preview Seat Top-up (validate token, return pricing, do NOT consume) ──────
+exports.previewSeatTopup = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+
+  const { token } = request.data;
+  if (!token) throw new HttpsError("invalid-argument", "Token is required.");
+
+  const tokenRef = db.ref(`temp_links/${token}`);
+  const snapshot = await tokenRef.get();
+
+  if (!snapshot.exists()) {
+    throw new HttpsError("not-found", "Invalid or expired link. Please request a new one from the app.");
+  }
+
+  const tokenData = snapshot.val();
+  if (tokenData.used) {
+    throw new HttpsError("permission-denied", "This link has already been used.");
+  }
+  if (Date.now() > tokenData.expiresAt) {
+    throw new HttpsError("deadline-exceeded", "This link has expired. Please request a new one from the app.");
+  }
+  if (tokenData.action !== "SEAT_TOPUP") {
+    throw new HttpsError("invalid-argument", "Invalid action for this link.");
+  }
+
+  const { tripId, seats, orgId, uid } = tokenData;
+
+  // Resolve country code
+  let countryCode = null;
+  if (uid) {
+    const countrySnap = await db.ref(`users/${uid}/country`).get();
+    if (countrySnap.exists()) {
+      const country = countrySnap.val();
+      countryCode = typeof country === "object" ? country.code : country;
+    }
+  }
+  if (!countryCode) countryCode = "DEFAULT";
+
+  // Return all plans with their pricing for the user's region
+  const currencyCode = COUNTRY_TO_CURRENCY[countryCode?.toUpperCase()] || "EUR";
+  const plans = {};
+  for (const planId in PRICING_PLANS) {
+    const p = PRICING_PLANS[planId][currencyCode] || PRICING_PLANS[planId]["EUR"];
+    plans[planId] = p;
+  }
+
+  // Return trip info and pricing (token is NOT consumed here)
+  return { seats: parseInt(seats), plans };
+});
+
+// ── Verify & Pay Seat Top-up ──────────────────────────────────────────────────
+exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+
+  const { token, planId: chosenPlan } = request.data;
+  if (!token) throw new HttpsError("invalid-argument", "Token is required.");
+
+  const planToUse = chosenPlan || "seat_only";
+
+  const tokenRef = db.ref(`temp_links/${token}`);
+  const snapshot = await tokenRef.get();
+
+  if (!snapshot.exists()) {
+    throw new HttpsError("not-found", "Invalid or expired link. Please request a new one from the app.");
+  }
+
+  const tokenData = snapshot.val();
+  if (tokenData.used) {
+    throw new HttpsError("permission-denied", "This link has already been used.");
+  }
+  if (Date.now() > tokenData.expiresAt) {
+    throw new HttpsError("deadline-exceeded", "This link has expired. Please request a new one from the app.");
+  }
+  if (tokenData.action !== "SEAT_TOPUP") {
+    throw new HttpsError("invalid-argument", "Invalid action for this link.");
+  }
+
+  // Mark token as used immediately to prevent replay attacks (one-time link)
+  await tokenRef.update({ used: true });
+
+  const { tripId, seats, orgId, uid } = tokenData;
+
+  // Fetch trip details to get title
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
+  const trip = tripSnap.val();
+
+  // Resolve country code from database
+  let countryCode = null;
+  if (uid) {
+    const countrySnap = await db.ref(`users/${uid}/country`).get();
+    if (countrySnap.exists()) {
+      const country = countrySnap.val();
+      countryCode = typeof country === "object" ? country.code : country;
+    }
+  }
+  if (!countryCode) countryCode = "DEFAULT";
+
+  // Enforce pricing configuration using the chosen plan
+  const pricingConfig = getPlanPricing(countryCode, planToUse);
+  const pricePerSeat = pricingConfig.price;
+  const unitAmount = Math.round(pricePerSeat * 100);
+
+  const websiteUrl = process.env.FUNCTIONS_EMULATOR === "true"
+    ? "http://192.168.18.25:3000"
+    : "https://gomusafir.app";
+
+  // Create Stripe Checkout Session
+  const session = await stripe.checkout.sessions.create({
+    line_items: [
+      {
+        price_data: {
+          currency: pricingConfig.currency,
+          product_data: {
+            name: `Extra Seats — ${trip.title}`,
+            description: `Adding ${seats} seats at ${pricingConfig.symbol}${pricePerSeat}/seat`,
+          },
+          unit_amount: unitAmount,
+        },
+        quantity: parseInt(seats),
+      },
+    ],
+    mode: "payment",
+    phone_number_collection: { enabled: true },
+    shipping_address_collection: { allowed_countries: ALLOWED_SHIPPING_COUNTRIES },
+    billing_address_collection: "required",
+    allow_promotion_codes: true,
+    invoice_creation: { enabled: true },
+    expires_at: Math.floor(Date.now() / 1000) + (60 * 60), // Expire in 1 hour
+    metadata: {
+      orgId,
+      tripId,
+      action: "SEAT_TOPUP",
+      seatsToIncr: String(seats),
+      journeyName: trip.title,
+      uid: uid || "unknown",
+      linkToken: token
+    },
+    success_url: `${websiteUrl}/increase-seats?status=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${websiteUrl}/increase-seats?status=cancel`,
+  });
+
+  return { url: session.url };
 });

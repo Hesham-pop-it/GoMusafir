@@ -326,7 +326,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                         style={[
                                             styles.controlButtonOutline,
                                             { flex: 1 },
-                                            !(isMuted || false) && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                            !(isMuted || false) && { backgroundColor: '#23272A', borderColor: '#B99A4A' }
                                         ]}
                                     >
                                         <View style={{ marginRight: 8 }}>
@@ -336,7 +336,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                                 <MicUnmutedIcon color="#D66A77" size={20} />
                                             )} */}
                                         </View>
-                                        <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
+                                        <Text style={[styles.controlText, !isMuted && { color: '#FFFFFF' }]}>
                                             {isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                         </Text>
                                     </TouchableOpacity>
@@ -484,12 +484,12 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                             style={styles.rightActions}
                                             onPress={() => handleParticipantMicPress(trackRef)}
                                         >
-                                            {isSpeaking ? (
+                                            {trackRef.participant.isMicrophoneEnabled ? (
                                                 <View style={styles.micCircle}>
-                                                    <MicUnmutedIcon color="#FFF" size={25} />
+                                                    <MicUnmutedIcon color="#FFF" size={20} />
                                                 </View>
                                             ) : (
-                                                <MicMutedIcon color={trackRef.participant.isMicrophoneEnabled ? "#FFF" : "#D66A77"} size={25} />
+                                                <MicMutedIcon color="#D66A77" size={25} />
                                             )}
                                         </TouchableOpacity>
                                     </View>

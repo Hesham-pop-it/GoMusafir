@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
     View,
     Text,
@@ -18,6 +18,7 @@ import { Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
+import QRCode from 'react-native-qrcode-svg';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Colors } from '../../constants/Colors';
 
@@ -43,7 +44,8 @@ const PresentationIcon = () => (
 const JourneySuccessScreen = ({ route }) => {
     const navigation = useNavigation();
     const { invitationCode } = route.params;
-    const invitationLink = "gomusafir.app/link/" + invitationCode;
+    const invitationLink = "https://gomusafir.app/link/" + invitationCode;
+    const svgRef = useRef(null);
 
     const handleShare = async () => {
         try {
@@ -63,12 +65,23 @@ const JourneySuccessScreen = ({ route }) => {
                 return;
             }
 
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=https://gomusafir.app/link/${invitationCode}`;
-            const filename = FileSystem.documentDirectory + "gomusafir_qr.png";
-
-            const { uri } = await FileSystem.downloadAsync(qrUrl, filename);
-            await MediaLibrary.saveToLibraryAsync(uri);
-            Alert.alert("Success", "QR Code saved to your gallery!");
+            if (svgRef.current) {
+                svgRef.current.toDataURL(async (dataURL) => {
+                    try {
+                        const filename = FileSystem.documentDirectory + "gomusafir_qr.png";
+                        await FileSystem.writeAsStringAsync(filename, dataURL, {
+                            encoding: FileSystem.EncodingType.Base64,
+                        });
+                        await MediaLibrary.saveToLibraryAsync(filename);
+                        Alert.alert("Success", "QR Code saved to your gallery!");
+                    } catch (err) {
+                        console.log("Error saving QR SVG:", err);
+                        Alert.alert("Error", "Failed to save QR code.");
+                    }
+                });
+            } else {
+                Alert.alert("Error", "QR code is not ready yet.");
+            }
         } catch (error) {
             console.log(error);
             Alert.alert("Error", "Failed to save QR code.");
@@ -97,10 +110,16 @@ const JourneySuccessScreen = ({ route }) => {
                     <View style={styles.section}>
                         <Text style={styles.label}>QR Code</Text>
                         <View style={styles.qrCard}>
-                            <Image
-                                source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=https://gomusafir.app/link/${invitationCode}` }}
-                                style={styles.qrImage}
-                            />
+                            <View style={styles.qrWrapper}>
+                                <QRCode
+                                    value={`https://gomusafir.app/link/${invitationCode}`}
+                                    size={width * 0.5}
+                                    getRef={svgRef}
+                                    color="#000000"
+                                    backgroundColor="#FFFFFF"
+                                    quietZone={5}
+                                />
+                            </View>
                         </View>
                     </View>
 
@@ -173,12 +192,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    qrImage: {
-        width: width * 0.6,
-        height: width * 0.6,
-        borderRadius: 8,
-        backgroundColor: '#fff',
-        padding: 16
+    qrWrapper: {
+        backgroundColor: '#FFFFFF',
+        padding: 16,
+        borderRadius: 12,
     },
     buttonContainer: {
         marginTop: 20,

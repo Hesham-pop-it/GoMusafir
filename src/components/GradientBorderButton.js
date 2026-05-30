@@ -10,7 +10,7 @@ import Svg, { Rect, Defs, LinearGradient as SvgGradient, Stop } from 'react-nati
 
 import { Typography } from '../constants/Typography';
 
-const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', children, innerStyle, disabled, borderRadius = 30, colors = ['#B99A4A', 'rgba(50, 53, 55, 0.6)'] }) => {
+const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', children, innerStyle, disabled, borderRadius = 30, colors = ['#B99A4A', 'rgba(185, 154, 74, 0.44)'] }) => {
     const [isActive, setIsActive] = useState(false);
     const [layout, setLayout] = useState({ width: 0, height: 0 });
     const gradId = React.useMemo(() => `grad-${Math.random().toString(36).substr(2, 9)}`, []);
@@ -108,7 +108,8 @@ const styles = StyleSheet.create({
     gradientButtonText: {
         color: '#FFF',
         fontSize: 16,
-        fontFamily: Typography.sans.bold,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.semiBold,
     },
 });
 

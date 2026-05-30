@@ -13,6 +13,7 @@ import {
     TextInput,
     Alert,
     ActivityIndicator,
+    Share,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -90,16 +91,12 @@ const LiveLocationScreen = () => {
     const [userLocation, setUserLocation] = useState(null);
     const [participants, setParticipants] = useState({});
     const [selectedMarker, setSelectedMarker] = useState(null);
+    const [droppedPin, setDroppedPin] = useState(null);
     const [isSafetyActive, setIsSafetyActive] = useState(false);
     const [safetyPoint, setSafetyPoint] = useState(null);
     const [incomingRequest, setIncomingRequest] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [mapRegion, setMapRegion] = useState({
-        latitude: 37.78825,
-        longitude: -122.4324,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-    });
+    const [mapRegion, setMapRegion] = useState(null);
 
     const [showParticipantsList, setShowParticipantsList] = useState(false);
     const [locationRequestModal, setLocationRequestModal] = useState(false);
@@ -249,6 +246,30 @@ const LiveLocationScreen = () => {
         }
     }, [userLocation, hasAutoCentered]);
 
+    // Fetch approximate location via IP when GPS permission is unavailable
+    const fetchIpBasedRegion = async () => {
+        try {
+            const response = await fetch('https://ipapi.co/json/');
+            const data = await response.json();
+            if (data && data.latitude && data.longitude) {
+                setMapRegion({
+                    latitude: parseFloat(data.latitude),
+                    longitude: parseFloat(data.longitude),
+                    latitudeDelta: 5,
+                    longitudeDelta: 5,
+                });
+            }
+        } catch (err) {
+            // Final fallback to a neutral world center if IP lookup also fails
+            setMapRegion({
+                latitude: 30,
+                longitude: 30,
+                latitudeDelta: 60,
+                longitudeDelta: 60,
+            });
+        }
+    };
+
     useEffect(() => {
         let locationWatcher = null;
 
@@ -258,6 +279,8 @@ const LiveLocationScreen = () => {
                 let { status } = await Location.requestForegroundPermissionsAsync();
                 if (status !== 'granted') {
                     console.log("[LiveLocation] Foreground permission denied");
+                    // Use IP-based location as fallback so map shows correct country
+                    fetchIpBasedRegion();
                     return;
                 }
 
@@ -272,6 +295,12 @@ const LiveLocationScreen = () => {
                         longitude: loc.coords.longitude,
                     };
                     setUserLocation(userCoords);
+                    setMapRegion({
+                        latitude: loc.coords.latitude,
+                        longitude: loc.coords.longitude,
+                        latitudeDelta: 0.01,
+                        longitudeDelta: 0.01,
+                    });
                     
                     // Add "Me" to participants list locally so it shows on map even before sync
                     if (auth.currentUser) {
@@ -283,6 +312,8 @@ const LiveLocationScreen = () => {
                     }
                 } catch (posErr) {
                     console.log("[LiveLocation] Initial position error:", posErr);
+                    // GPS timed out — still show map using IP location
+                    fetchIpBasedRegion();
                 }
                 
                 // 3. Start continuous tracking
@@ -366,15 +397,29 @@ const LiveLocationScreen = () => {
 
             // Listen for Official Participants List (to filter out deleted users)
             const officialParticipantsRef = ref(database, `trips_participants/${tripId}`);
+            const staffRef = resolvedOrgId ? ref(database, `orgs/${resolvedOrgId}/staff`) : null;
             onValue(officialParticipantsRef, (snap) => {
                 const val = snap.val() || {};
-                let uids = [];
-                if (Array.isArray(val)) {
-                    uids = val.filter(v => v !== null);
+                const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
+                if (staffRef) {
+                    get(staffRef).then(staffSnap => {
+                        const staffList = staffSnap.val() || {};
+                        const filtered = uids.filter(uid => {
+                            const role = staffList[uid];
+                            return !role || role === 'co-host' || role === 'manager';
+                        });
+                        const teamMemberUids = Object.keys(staffList).filter(uid => {
+                            const role = staffList[uid];
+                            return role === 'co-host' || role === 'manager';
+                        });
+                        const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
+                        setActiveParticipantUids(combined);
+                    }).catch(() => {
+                        setActiveParticipantUids(uids);
+                    });
                 } else {
-                    uids = Object.keys(val);
+                    setActiveParticipantUids(uids);
                 }
-                setActiveParticipantUids(uids);
             });
         }
 
@@ -581,6 +626,53 @@ const LiveLocationScreen = () => {
         }
     };
 
+    const handleMapPress = async (e) => {
+        const coordinate = e.nativeEvent.coordinate;
+        if (!coordinate) return;
+
+        setDroppedPin({
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            title: 'Dropped Pin',
+            address: 'Loading address...'
+        });
+        setSelectedMarker(null);
+
+        try {
+            const [addressResult] = await Location.reverseGeocodeAsync({
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude
+            });
+            if (addressResult) {
+                const name = addressResult.name || addressResult.street || 'Dropped Pin';
+                const addressParts = [addressResult.street, addressResult.district, addressResult.city, addressResult.country].filter(Boolean);
+                const formattedAddress = addressParts.join(', ') || 'Unknown Address';
+                setDroppedPin(prev => prev ? { 
+                    ...prev, 
+                    title: name,
+                    address: formattedAddress 
+                } : null);
+            } else {
+                setDroppedPin(prev => prev ? { ...prev, title: 'Dropped Pin', address: 'Address not found' } : null);
+            }
+        } catch (error) {
+            console.log("[LiveLocation] Reverse geocoding failed:", error);
+            setDroppedPin(prev => prev ? { ...prev, title: 'Dropped Pin', address: 'Address service unavailable' } : null);
+        }
+    };
+
+    const shareLocation = async () => {
+        if (!droppedPin) return;
+        try {
+            const url = `https://www.google.com/maps/search/?api=1&query=${droppedPin.latitude},${droppedPin.longitude}`;
+            await Share.share({
+                message: `Check out this location on GoMusafir: ${droppedPin.address}\n${url}`,
+            });
+        } catch (error) {
+            console.log("Error sharing location:", error);
+        }
+    };
+
     const handleLocationPress = async (participant, forceBypass = false) => {
         let hasPerm = forceBypass;
         if (!hasPerm) {
@@ -607,42 +699,80 @@ const LiveLocationScreen = () => {
         }
     };
 
+    const isStaff = isAdmin || userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+    const globalLocationSetting = globalVisibilityConfig?.location || 'Show to everyone';
+    const isLocationHiddenGlobally = 
+        globalLocationSetting === 'Do not show' ||
+        (globalLocationSetting === 'Show to organizer' && !isStaff);
+
     return (
         <View style={styles.container}>
             {/* Header */}
-            <SafeAreaView edges={['top']} style={{ flex: 1, marginTop: 20 }}>
-                {/* Fixed Background Header (Z-Index: 10) - Box-none allows touching through to Map */}
-                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }]} pointerEvents="box-none">
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                        <Ionicons name="arrow-back" size={24} color="#FFF" />
-                    </TouchableOpacity>
+            {/* Header */}
+            <LinearGradient
+                colors={['#1A1E21', '#332F2B']}
+                start={{ x: 0.5, y: 1 }}
+                end={{ x: 0.5, y: 0 }}
+                style={{ zIndex: 10 }}
+            >
+                <SafeAreaView edges={['top']}>
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="arrow-back" size={24} color="#FFF" />
+                        </TouchableOpacity>
 
-                    <Text style={styles.headerTitle}>Live Location</Text>
+                        <Text style={styles.headerTitle}>Live Location</Text>
 
-                    <View style={{ width: 40 }} />
-                </View>
+                        <View style={{ width: 40 }} />
+                    </View>
+                </SafeAreaView>
+            </LinearGradient>
 
-                {/* Content Layer (Z-Index: 0) */}
-                <View style={{ flex: 1, zIndex: 0 }}>
+            {/* Content Layer (Z-Index: 0) */}
+            <View style={{ flex: 1, zIndex: 0 }}>
 
-                    {/* Map */}
-                    <MapView
-                        ref={mapRef}
-                        provider={PROVIDER_GOOGLE}
-                        style={[styles.map, { marginTop: 55 }]}
-                        initialRegion={mapRegion}
-                        customMapStyle={darkMapStyle}
-                        onPress={() => setSelectedMarker(null)}
+                {/* Map */}
+                {!mapRegion ? (
+                    <View style={[styles.map, { alignItems: 'center', justifyContent: 'center', backgroundColor: '#1a1a2e' }]}>
+                        <ActivityIndicator color="#B99A4A" size="large" />
+                        <Text style={{ color: '#B99A4A', marginTop: 12, fontFamily: Typography.fontFamily }}>Locating...</Text>
+                    </View>
+                ) : (
+                <MapView
+                    ref={mapRef}
+                    provider={PROVIDER_GOOGLE}
+                    style={styles.map}
+                    initialRegion={mapRegion}
+                    customMapStyle={darkMapStyle}
+                        onPress={handleMapPress}
+                        onLongPress={handleMapPress}
                         moveOnMarkerPress={false}
-                        showsUserLocation={true}
+                        showsUserLocation={!isLocationHiddenGlobally}
                         showsMyLocationButton={false}
                     >
+                        {/* Dropped Pin Marker */}
+                        {droppedPin && (
+                            <Marker
+                                coordinate={{ latitude: droppedPin.latitude, longitude: droppedPin.longitude }}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                onPress={(e) => {
+                                    e.stopPropagation();
+                                }}
+                            >
+                                <View style={styles.droppedPinMarkerContainer}>
+                                    <View style={styles.droppedPinCircle}>
+                                        <Ionicons name="pin" size={22} color="#EF4444" />
+                                    </View>
+                                </View>
+                            </Marker>
+                        )}
+
                         {/* Public Safety Point Marker */}
                         {safetyPoint && (
                             <Marker
                                 coordinate={{ latitude: safetyPoint.lat, longitude: safetyPoint.lng }}
                                 title="Safe Point"
-                                onPress={() => handleLocationPress({ latitude: safetyPoint.lat, longitude: safetyPoint.lng, name: 'Safe Point' })}
+                                onPress={() => handleLocationPress({ latitude: safetyPoint.lat, longitude: safetyPoint.lng, name: 'Safe Point' }, true)}
                                 tracksViewChanges={false}
                             >
                                 <View style={[styles.participantMarker, { backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }]}>
@@ -658,9 +788,13 @@ const LiveLocationScreen = () => {
                         {Object.entries(participants)
                             .filter(([uid, loc]) => {
                                 if (!loc.lat || !loc.lng) return false;
+                                if (isLocationHiddenGlobally) {
+                                    return false;
+                                }
                                 
-                                // NEW: Filter by active participant list
                                 const isMe = uid === auth.currentUser?.uid;
+
+                                // NEW: Filter by active participant list
                                 if (!isMe && activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
                                     return false;
                                 }
@@ -697,8 +831,8 @@ const LiveLocationScreen = () => {
                                         anchor={{ x: 0.5, y: 0.5 }}
                                         tracksViewChanges={false}
                                         onSelect={() => {
-
                                             setSelectedMarker({ id: uid, latitude: loc.lat, longitude: loc.lng });
+                                            setDroppedPin(null);
                                         }}
                                         onDeselect={() => {
                                             setSelectedMarker(null);
@@ -751,6 +885,7 @@ const LiveLocationScreen = () => {
                                 );
                         })}
                     </MapView>
+                    )}
 
 
                     {/* Control Buttons */}
@@ -769,21 +904,118 @@ const LiveLocationScreen = () => {
                     </View>
 
 
+                    {/* Dropped Pin Info Card */}
+                    {droppedPin && (
+                        <View style={styles.droppedPinCard}>
+                            <View style={styles.cardHandle} />
+                            
+                            <View style={styles.droppedPinCardHeader}>
+                                <View style={{ flex: 1, marginRight: 12 }}>
+                                    <Text style={styles.droppedPinCardTitle} numberOfLines={1}>
+                                        {droppedPin.title}
+                                    </Text>
+                                    <Text style={styles.droppedPinMeta}>
+                                        5.0 <Text style={{ color: '#F59E0B' }}>★★★★★</Text> (1) · Live Location Pin
+                                    </Text>
+                                </View>
+                                <View style={styles.headerActions}>
+                                    <TouchableOpacity 
+                                        style={styles.actionCircleBtn}
+                                        onPress={openGoogleMaps}
+                                    >
+                                        <Ionicons name="bookmark-outline" size={20} color="#FFF" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={styles.actionCircleBtn}
+                                        onPress={shareLocation}
+                                    >
+                                        <Ionicons name="share-social-outline" size={20} color="#FFF" />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity 
+                                        style={styles.actionCircleBtn} 
+                                        onPress={() => setDroppedPin(null)}
+                                    >
+                                        <Ionicons name="close" size={20} color="#FFF" />
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+
+                            <Text style={styles.droppedPinAddress} numberOfLines={2}>
+                                {droppedPin.address}
+                            </Text>
+
+                            {/* Action Buttons Row */}
+                            <ScrollView 
+                                horizontal 
+                                showsHorizontalScrollIndicator={false} 
+                                style={styles.pillsRow}
+                                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                            >
+                                <TouchableOpacity 
+                                    style={styles.directionsPill}
+                                    onPress={openGoogleMaps}
+                                >
+                                    <Ionicons name="arrow-redo" size={18} color="#1A1E21" />
+                                    <Text style={styles.directionsPillText}>Directions</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity 
+                                    style={styles.startPill}
+                                    onPress={openGoogleMaps}
+                                >
+                                    <Ionicons name="navigate" size={18} color="#FFF" />
+                                    <Text style={styles.startPillText}>Start</Text>
+                                </TouchableOpacity>
+
+                                <TouchableOpacity 
+                                    style={styles.callPill}
+                                    onPress={shareLocation}
+                                >
+                                    <Ionicons name="share-social-outline" size={18} color="#FFF" />
+                                    <Text style={styles.callPillText}>Share</Text>
+                                </TouchableOpacity>
+                            </ScrollView>
+
+                            {/* Images Row */}
+                            <ScrollView 
+                                horizontal 
+                                showsHorizontalScrollIndicator={false} 
+                                style={styles.imagesRow}
+                                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                            >
+                                <Image 
+                                    source={{ uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=300&auto=format&fit=crop&q=60' }} 
+                                    style={styles.locationMockImage} 
+                                />
+                                <Image 
+                                    source={{ uri: 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=300&auto=format&fit=crop&q=60' }} 
+                                    style={styles.locationMockImage} 
+                                />
+                                <Image 
+                                    source={{ uri: 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=300&auto=format&fit=crop&q=60' }} 
+                                    style={styles.locationMockImage} 
+                                />
+                            </ScrollView>
+                        </View>
+                    )}
+
                     {/* List Participant Button */}
-                    <TouchableOpacity
-                        style={[styles.listButton, !userLocation && { opacity: 0.8 }]}
-                        onPress={() => userLocation && setShowParticipantsList(true)}
-                        disabled={!userLocation}
-                    >
-                        {!userLocation ? (
-                            <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} />
-                        ) : (
-                            <PeopleIcon color="#FFF" size={22} />
-                        )}
-                        <Text style={styles.listButtonText}>
-                            {!userLocation ? 'Loading location...' : 'List Participant'}
-                        </Text>
-                    </TouchableOpacity>
+                    {!droppedPin && (
+                        <TouchableOpacity
+                            style={[styles.listButton, !userLocation && { opacity: 0.8 }]}
+                            onPress={() => userLocation && setShowParticipantsList(true)}
+                            disabled={!userLocation}
+                        >
+                            {!userLocation ? (
+                                <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} />
+                            ) : (
+                                <PeopleIcon color="#FFF" size={26} />
+                            )}
+                            <Text style={styles.listButtonText}>
+                                {!userLocation ? 'Loading location...' : 'List Participant'}
+                            </Text>
+                        </TouchableOpacity>
+                    )}
 
                     {/* Participants List Modal */}
                     {/* Participants List Modal */}
@@ -821,9 +1053,13 @@ const LiveLocationScreen = () => {
 
                             <ScrollView style={styles.participantsList}>
                                 {Object.entries(participants)
-                                    .filter(([uid]) => {
+                                    .filter(([uid, loc]) => {
                                         const isMe = uid === auth.currentUser?.uid;
                                         if (isMe) return false;
+                                        if (isLocationHiddenGlobally) {
+                                            return false;
+                                        }
+                                        if (!loc || !loc.lat || !loc.lng) return false;
                                         // Filter list by active participant list
                                         if (activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
                                             return false;
@@ -1008,97 +1244,30 @@ const LiveLocationScreen = () => {
 
                     <TripBottomTabBar activeRoute="LiveLocation" tripData={trip} />
                 </View >
-            </SafeAreaView >
         </View >
     );
 };
 
 // Dark map style for Google Maps
 const darkMapStyle = [
-    { elementType: 'geometry', stylers: [{ color: '#212121' }] },
-    { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#757575' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#212121' }] },
-    {
-        featureType: 'administrative',
-        elementType: 'geometry',
-        stylers: [{ color: '#757575' }],
-    },
-    {
-        featureType: 'administrative.country',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#9e9e9e' }],
-    },
-    {
-        featureType: 'administrative.locality',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#bdbdbd' }],
-    },
-    {
-        featureType: 'poi',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#757575' }],
-    },
-    {
-        featureType: 'poi.park',
-        elementType: 'geometry',
-        stylers: [{ color: '#181818' }],
-    },
-    {
-        featureType: 'poi.park',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#616161' }],
-    },
-    {
-        featureType: 'poi.park',
-        elementType: 'labels.text.stroke',
-        stylers: [{ color: '#1b1b1b' }],
-    },
-    {
-        featureType: 'road',
-        elementType: 'geometry.fill',
-        stylers: [{ color: '#2c2c2c' }],
-    },
-    {
-        featureType: 'road',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#8a8a8a' }],
-    },
-    {
-        featureType: 'road.arterial',
-        elementType: 'geometry',
-        stylers: [{ color: '#373737' }],
-    },
-    {
-        featureType: 'road.highway',
-        elementType: 'geometry',
-        stylers: [{ color: '#3c3c3c' }],
-    },
-    {
-        featureType: 'road.highway.controlled_access',
-        elementType: 'geometry',
-        stylers: [{ color: '#4e4e4e' }],
-    },
-    {
-        featureType: 'road.local',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#616161' }],
-    },
-    {
-        featureType: 'transit',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#757575' }],
-    },
-    {
-        featureType: 'water',
-        elementType: 'geometry',
-        stylers: [{ color: '#000000' }],
-    },
-    {
-        featureType: 'water',
-        elementType: 'labels.text.fill',
-        stylers: [{ color: '#3d3d3d' }],
-    },
+    { "elementType": "geometry", "stylers": [{ "color": "#242f3e" }] },
+    { "elementType": "labels.text.fill", "stylers": [{ "color": "#746855" }] },
+    { "elementType": "labels.text.stroke", "stylers": [{ "color": "#242f3e" }] },
+    { "featureType": "administrative.locality", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+    { "featureType": "poi", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+    { "featureType": "poi.park", "elementType": "geometry", "stylers": [{ "color": "#263c3f" }] },
+    { "featureType": "poi.park", "elementType": "labels.text.fill", "stylers": [{ "color": "#6b9a76" }] },
+    { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#38414e" }] },
+    { "featureType": "road", "elementType": "geometry.stroke", "stylers": [{ "color": "#212a37" }] },
+    { "featureType": "road", "elementType": "labels.text.fill", "stylers": [{ "color": "#9ca5b3" }] },
+    { "featureType": "road.highway", "elementType": "geometry", "stylers": [{ "color": "#746855" }] },
+    { "featureType": "road.highway", "elementType": "geometry.stroke", "stylers": [{ "color": "#1f2835" }] },
+    { "featureType": "road.highway", "elementType": "labels.text.fill", "stylers": [{ "color": "#f3d19c" }] },
+    { "featureType": "transit", "elementType": "geometry", "stylers": [{ "color": "#2f3948" }] },
+    { "featureType": "transit.station", "elementType": "labels.text.fill", "stylers": [{ "color": "#d59563" }] },
+    { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#17263c" }] },
+    { "featureType": "water", "elementType": "labels.text.fill", "stylers": [{ "color": "#515c6d" }] },
+    { "featureType": "water", "elementType": "labels.text.stroke", "stylers": [{ "color": "#17263c" }] }
 ];
 
 const styles = StyleSheet.create({
@@ -1111,10 +1280,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingTop: 50,
-        backgroundColor: '#1A1E21',
+        paddingVertical: 15,
         zIndex: 10,
-        paddingBottom: 15
     },
     backButton: {
         padding: 5,
@@ -1449,6 +1616,154 @@ const styles = StyleSheet.create({
         borderLeftColor: 'transparent',
         borderRightColor: 'transparent',
         borderTopColor: '#B99A4A',
+    },
+    droppedPinMarkerContainer: {
+        width: 46,
+        height: 46,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    droppedPinCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        borderWidth: 2,
+        borderColor: '#EF4444',
+        backgroundColor: '#1E2124',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#EF4444',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 8,
+        elevation: 10,
+    },
+    droppedPinCard: {
+        position: 'absolute',
+        bottom: 95,
+        left: 0,
+        right: 0,
+        backgroundColor: '#1C1F22',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: '#2D3135',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 10,
+    },
+    cardHandle: {
+        width: 40,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: '#4A4D51',
+        alignSelf: 'center',
+        marginBottom: 16,
+    },
+    droppedPinCardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: 4,
+    },
+    droppedPinCardTitle: {
+        color: '#FFF',
+        fontSize: 22,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
+        marginBottom: 2,
+    },
+    droppedPinMeta: {
+        color: '#9CA3AF',
+        fontSize: 14,
+        fontFamily: Typography.sans.medium,
+        marginBottom: 6,
+    },
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    actionCircleBtn: {
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        backgroundColor: '#2D3135',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    droppedPinAddress: {
+        color: '#9CA3AF',
+        fontSize: 14,
+        fontFamily: Typography.sans.regular,
+        lineHeight: 20,
+        marginBottom: 16,
+    },
+    pillsRow: {
+        flexDirection: 'row',
+        marginBottom: 12,
+    },
+    directionsPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#59D5E0',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 24,
+        gap: 6,
+    },
+    directionsPillText: {
+        color: '#1A1E21',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
+    },
+    startPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2D3135',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 24,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#4A4D51',
+    },
+    startPillText: {
+        color: '#FFF',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
+    },
+    callPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2D3135',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 24,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#4A4D51',
+    },
+    callPillText: {
+        color: '#FFF',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
+    },
+    imagesRow: {
+        flexDirection: 'row',
+        marginTop: 4,
+    },
+    locationMockImage: {
+        width: 120,
+        height: 80,
+        borderRadius: 8,
+        backgroundColor: '#2D3135',
     },
 });
 

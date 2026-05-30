@@ -11,7 +11,8 @@ import {
     PanResponder,
     Animated,
     ActivityIndicator,
-    Alert
+    Alert,
+    Linking
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -56,6 +57,7 @@ const TripSettingsScreen = () => {
     const [isProcessingTopup, setIsProcessingTopup] = useState(false);
     const [pricingPlans, setPricingPlans] = useState(null);
     const [topupError, setTopupError] = useState(null);
+    const [topupToken, setTopupToken] = useState(null);
 
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
@@ -144,20 +146,51 @@ const TripSettingsScreen = () => {
 
         // B. Listen for Filled Seats (Participant Count)
         const participantsRef = ref(database, `trips_participants/${resolvedTripId}`);
-        const unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
-            if (snapshot.exists()) {
-                const val = snapshot.val() || {};
-                let count = 0;
-                if (Array.isArray(val)) {
-                    count = val.filter(v => v !== null).length;
+        const staffRef = resolvedOrgId ? ref(database, `orgs/${resolvedOrgId}/staff`) : null;
+        let unsubscribeParticipants;
+        if (staffRef) {
+            unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
+                get(staffRef).then(staffSnap => {
+                    const staffList = staffSnap.val() || {};
+                    const uids = snapshot.exists()
+                        ? (Array.isArray(snapshot.val()) ? snapshot.val().filter(v => v !== null) : Object.keys(snapshot.val()))
+                        : [];
+                    const filtered = uids.filter(uid => {
+                        const role = staffList[uid];
+                        return !role || role === 'co-host' || role === 'manager';
+                    });
+                    const teamMemberUids = Object.keys(staffList).filter(uid => {
+                        const role = staffList[uid];
+                        return role === 'co-host' || role === 'manager';
+                    });
+                    const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
+                    setFilledSeats(combined.length);
+                }).catch(() => {
+                    if (snapshot.exists()) {
+                        const val = snapshot.val() || {};
+                        const count = Array.isArray(val) ? val.filter(v => v !== null).length : Object.keys(val).length;
+                        setFilledSeats(count);
+                    } else {
+                        setFilledSeats(0);
+                    }
+                });
+            });
+        } else {
+            unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const val = snapshot.val() || {};
+                    let count = 0;
+                    if (Array.isArray(val)) {
+                        count = val.filter(v => v !== null).length;
+                    } else {
+                        count = Object.keys(val).length;
+                    }
+                    setFilledSeats(count);
                 } else {
-                    count = Object.keys(val).length;
+                    setFilledSeats(0);
                 }
-                setFilledSeats(count);
-            } else {
-                setFilledSeats(0);
-            }
-        });
+            });
+        }
 
         return () => {
             if (unsubscribeTrip) unsubscribeTrip();
@@ -289,8 +322,8 @@ const TripSettingsScreen = () => {
         }
     };
 
-    const handleRequestSeats = async () => {
-        if (!resolvedTripId || !selectedPlan || isProcessingTopup) return;
+    const handleRequestSeatToken = async () => {
+        if (!resolvedTripId || isProcessingTopup) return;
 
         setIsProcessingTopup(true);
         setTopupError(null);
@@ -298,23 +331,26 @@ const TripSettingsScreen = () => {
         try {
             const { functions } = require('../../config/firebase');
             const { httpsCallable } = require('firebase/functions');
-            const requestSeatTopupLink = httpsCallable(functions, 'requestSeatTopupLink');
+            const generateSeatTopupToken = httpsCallable(functions, 'generateSeatTopupToken');
 
-            await requestSeatTopupLink({
+            const result = await generateSeatTopupToken({
                 tripId: resolvedTripId,
-                planId: selectedPlan,
-                seatsToIncr: seatCount,
-                countryCode: 'PK' // Fallback or dynamic
+                seatsToIncr: seatCount
             });
 
-            setSeatTopupStep(3); // Success Step
+            setTopupToken(result.data.token);
+            setSeatModalVisible(false);
+            setTimeout(() => {
+                setRequestSentVisible(true);
+            }, 600);
         } catch (err) {
-            console.log("Top-up request failed:", err);
-            setTopupError("Failed to request payment link. Please try again.");
+            console.log("Token generation failed:", err);
+            setTopupError("Failed to generate payment link. Please try again.");
         } finally {
             setIsProcessingTopup(false);
         }
     };
+
 
     const handleLogout = async () => {
         setLogoutModalVisible(false);
@@ -500,7 +536,8 @@ const TripSettingsScreen = () => {
                                 onPress={() => setSeatModalVisible(true)}
                             >
                                 <LinearGradient
-                                    colors={['#D4AF37', '#73571F', '#1C1E21']}
+                                    colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                    locations={[0, 0.76]}
                                     start={{ x: 0, y: 0 }}
                                     end={{ x: 1, y: 0 }}
                                     style={styles.increaseGradientBorder}
@@ -523,13 +560,16 @@ const TripSettingsScreen = () => {
                             <VisibilityItem label="Location" field="location" />
                         </View>
 
-                        <TouchableOpacity
-                            style={styles.helpCard}
-                            onPress={() => navigation.navigate('HelpSupport', { isAdmin })}
-                        >
-                            <Text style={styles.helpText}>Help & Support</Text>
-                            <Ionicons name="chevron-forward" size={20} color="#9BA1A6" />
-                        </TouchableOpacity>
+                        {userRole === 'admin' ? null : (
+                            <TouchableOpacity
+                                style={styles.helpCard}
+                                onPress={() => navigation.navigate('HelpSupport', { isAdmin })}
+                            >
+                                <Text style={styles.helpText}>Help & Support</Text>
+                                <Ionicons name="chevron-forward" size={20} color="#9BA1A6" />
+                            </TouchableOpacity>
+                        )}
+                        
 
                         {/* Action Button (Delete for Admin / Logout for Participant) */}
                         {userRole !== 'manager' && (
@@ -583,7 +623,7 @@ const TripSettingsScreen = () => {
                             onPress={() => setDeleteModalVisible(false)}
                         >
                             <LinearGradient
-                                colors={['#D4AF37', '#B8860B', '#8B6914']}
+                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                                 style={styles.cancelGradientBorder}
@@ -672,7 +712,7 @@ const TripSettingsScreen = () => {
                                         style={styles.counterBtn}
                                         onPress={() => setSeatCount(Math.max(1, seatCount - 1))}
                                     >
-                                        <Ionicons name="remove" size={20} color="#000" />
+                                        <Ionicons name="remove" size={14} color="#fff" />
                                     </TouchableOpacity>
                                     <View style={styles.countCircle}>
                                         <Text style={styles.countText}>{seatCount}</Text>
@@ -681,90 +721,34 @@ const TripSettingsScreen = () => {
                                         style={styles.counterBtn}
                                         onPress={() => setSeatCount(seatCount + 1)}
                                     >
-                                        <Ionicons name="add" size={20} color="#000" />
+                                        <Ionicons name="add" size={14} color="#fff" />
                                     </TouchableOpacity>
                                 </View>
+
+                                {topupError && <Text style={{ color: '#F43F5E', textAlign: 'center', marginTop: 10, marginBottom: 5 }}>{topupError}</Text>}
+
                                 <TouchableOpacity
-                                    style={styles.modalPrimaryBtn}
-                                    onPress={() => setSeatTopupStep(2)}
+                                    style={styles.modalPrimaryBtnWrapper}
+                                    onPress={handleRequestSeatToken}
+                                    disabled={isProcessingTopup}
                                 >
-                                    <Text style={styles.modalPrimaryBtnText}>Next: Select Plan</Text>
+                                    <LinearGradient
+                                        colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                        locations={[0, 0.76]}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={styles.modalPrimaryBtnGradient}
+                                    >
+                                        <View style={styles.modalPrimaryBtnInner}>
+                                            {isProcessingTopup ? (
+                                                <ActivityIndicator color="#fff" size="small" />
+                                            ) : (
+                                                <Text style={styles.modalPrimaryBtnText}>Request More Seats</Text>
+                                            )}
+                                        </View>
+                                    </LinearGradient>
                                 </TouchableOpacity>
                             </>
-                        )}
-
-                        {seatTopupStep === 2 && (
-                            <>
-                                <Text style={styles.seatModalTitle}>Select a Plan</Text>
-                                <Text style={styles.seatModalSubTitle}>Choose how you want to expand your trip</Text>
-
-                                <ScrollView style={{ maxHeight: 300, width: '100%', marginBottom: 20 }}>
-                                    {pricingPlans ? Object.entries(pricingPlans).map(([id, p]) => (
-                                        <TouchableOpacity
-                                            key={id}
-                                            style={[styles.planCard, selectedPlan === id && styles.planCardSelected]}
-                                            onPress={() => setSelectedPlan(id)}
-                                        >
-                                            <View>
-                                                <Text style={styles.planName}>{id.replace('_', ' ').toUpperCase()}</Text>
-                                                <Text style={styles.planPrice}>{p.symbol}{p.price} / seat</Text>
-                                            </View>
-                                            <Ionicons
-                                                name={selectedPlan === id ? "radio-button-on" : "radio-button-off"}
-                                                size={24}
-                                                color={selectedPlan === id ? "#B99A4A" : "#666"}
-                                            />
-                                        </TouchableOpacity>
-                                    )) : (
-                                        <ActivityIndicator color="#B99A4A" size="large" />
-                                    )}
-                                </ScrollView>
-
-                                {topupError && <Text style={styles.errorText}>{topupError}</Text>}
-
-                                <View style={styles.modalBtnRow}>
-                                    <TouchableOpacity
-                                        style={styles.modalSecondaryBtn}
-                                        onPress={() => setSeatTopupStep(1)}
-                                        disabled={isProcessingTopup}
-                                    >
-                                        <Text style={styles.modalSecondaryBtnText}>Back</Text>
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity
-                                        style={[styles.modalPrimaryBtn, { flex: 1, marginLeft: 12 }]}
-                                        onPress={handleRequestSeats}
-                                        disabled={isProcessingTopup}
-                                    >
-                                        {isProcessingTopup ? (
-                                            <ActivityIndicator color="#000" size="small" />
-                                        ) : (
-                                            <Text style={styles.modalPrimaryBtnText}>Pay & Increase</Text>
-                                        )}
-                                    </TouchableOpacity>
-                                </View>
-                            </>
-                        )}
-
-                        {seatTopupStep === 3 && (
-                            <View style={{ alignItems: 'center', paddingVertical: 20 }}>
-                                <View style={styles.successIconCircle}>
-                                    <Ionicons name="mail-unread" size={40} color="#B99A4A" />
-                                </View>
-                                <Text style={styles.seatModalTitle}>Payment Link Sent!</Text>
-                                <Text style={styles.seatModalSubTitle}>
-                                    We've sent a secure Stripe checkout link to your email. Once you pay, your trip capacity will increase automatically.
-                                </Text>
-                                <TouchableOpacity
-                                    style={styles.modalPrimaryBtn}
-                                    onPress={() => {
-                                        setSeatModalVisible(false);
-                                        setTimeout(() => setSeatTopupStep(1), 500);
-                                    }}
-                                >
-                                    <Text style={styles.modalPrimaryBtnText}>Got it</Text>
-                                </TouchableOpacity>
-                            </View>
                         )}
                     </Animated.View>
                 </Modal>
@@ -846,7 +830,8 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(20),
         color: '#FFF',
         marginBottom: 15,
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
         marginTop: 10,
     },
     statsSectionTitle: {
@@ -929,7 +914,8 @@ const styles = StyleSheet.create({
     visibilityLabel: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
         marginTop: 2, // Minor adjustment to align with right side text
     },
     rightColumn: {
@@ -946,6 +932,7 @@ const styles = StyleSheet.create({
         color: '#B99A4A',
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
     },
     deleteButton: {
         backgroundColor: '#2D2528',
@@ -973,7 +960,8 @@ const styles = StyleSheet.create({
     optionText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
         textAlign: 'left',
     },
     modalOverlay: {
@@ -992,23 +980,27 @@ const styles = StyleSheet.create({
     deleteModalContent: {
         backgroundColor: '#23272A',
         borderRadius: 20,
-        padding: 32,
+        paddingHorizontal: 50,
+        paddingVertical: 32,
         width: '100%',
         alignItems: 'center',
     },
     deleteWarningText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(13),
+        fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.regular,
         textAlign: 'center',
         lineHeight: 20,
+        letterSpacing: 0.2,
         marginBottom: 16,
+        
     },
     deleteQuestionText: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
         textAlign: 'center',
+        letterSpacing: 0.2,
         marginBottom: 24,
     },
     deleteConfirmButton: {
@@ -1040,7 +1032,8 @@ const styles = StyleSheet.create({
     cancelButtonText: {
         color: '#FFF',
         fontSize: responsiveFontSize(14),
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
     },
     modalOverlayFull: {
         flex: 1,
@@ -1058,8 +1051,9 @@ const styles = StyleSheet.create({
     },
     seatModalTitle: {
         color: '#FFF',
-        fontSize: responsiveFontSize(20),
-        fontFamily: Typography.sans.bold,
+        fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular,
+        letterSpacing: 0.2,
         textAlign: 'center',
         marginBottom: 8,
     },
@@ -1071,19 +1065,26 @@ const styles = StyleSheet.create({
         marginBottom: 24,
         lineHeight: 20,
     },
-    modalPrimaryBtn: {
-        backgroundColor: '#B99A4A',
-        borderRadius: 12,
-        height: 56,
-        justifyContent: 'center',
-        alignItems: 'center',
+    modalPrimaryBtnWrapper: {
         width: '100%',
     },
+    modalPrimaryBtnGradient: {
+        borderRadius: 50,
+        padding: 1.5,
+    },
+    modalPrimaryBtnInner: {
+        backgroundColor: '#1E2124',
+        borderRadius: 49,
+        height: 54,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     modalPrimaryBtnText: {
-        color: '#000',
-        fontSize: responsiveFontSize(16),
+        color: '#fff',
+        fontSize: responsiveFontSize(14),
         padding: 10,
-        fontFamily: Typography.sans.bold,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.semiBold,
     },
     modalSecondaryBtn: {
         backgroundColor: 'transparent',
@@ -1151,20 +1152,21 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 20,
-        marginBottom: 40,
+
+        marginVertical: 40,
     },
     counterBtn: {
         backgroundColor: '#B99A4A',
-        width: 30,
-        height: 30,
+        width: 22,
+        height: 22,
         borderRadius: 6,
         justifyContent: 'center',
         alignItems: 'center',
     },
     countCircle: {
-        width: 80,
-        height: 80,
-        borderRadius: 40,
+        width: 65,
+        height: 50,
+        borderRadius: 35,
         borderWidth: 1,
         borderColor: '#B99A4A',
         justifyContent: 'center',
@@ -1172,8 +1174,8 @@ const styles = StyleSheet.create({
     },
     countText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(24),
-        fontFamily: Typography.sans.bold,
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.semiBold,
     },
     requestButton: {
         width: '100%',

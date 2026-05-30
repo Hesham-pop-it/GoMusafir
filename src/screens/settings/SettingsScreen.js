@@ -289,12 +289,12 @@ const styles = StyleSheet.create({
         marginTop: 15,
     },
     headerTitle: {
-        fontSize: 28,
+        fontSize: 30,
         color: '#FFF',
         fontFamily: Typography.serif.regular,
     },
     headerSubtitle: {
-        fontSize: 13,
+        fontSize: 15,
         fontFamily: Typography.sans.regular,
         color: '#A1A1AA',
         marginTop: 4,
@@ -309,10 +309,11 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
     },
     sectionHeader: {
-        fontSize: 16,
-        fontFamily: Typography.sans.bold,
+        fontSize: 18,
+        fontFamily: Typography.sans.semiBold,
         color: '#FFF',
         marginTop: 24,
+        letterSpacing: 0.2,
         marginBottom: 12,
     },
     addButton: {
@@ -325,7 +326,8 @@ const styles = StyleSheet.create({
     },
     addButtonText: {
         color: '#fff',
-        fontSize: 13,
+        fontSize: 15,
+        letterSpacing: 0.2,
         fontFamily: Typography.sans.regular,
     },
     sectionContainer: {
@@ -341,8 +343,9 @@ const styles = StyleSheet.create({
     },
     linkText: {
         color: '#F4F4F5',
-        fontSize: 13,
+        fontSize: 16,
         fontFamily: Typography.sans.regular,
+        letterSpacing: 0.2,
     },
     switchItem: {
         flexDirection: 'row',
@@ -362,29 +365,31 @@ const styles = StyleSheet.create({
     signOutButton: {
         height: 56,
         borderRadius: 28,
-        borderWidth: 1.5,
+        borderWidth: 1,
         borderColor: '#B99A4A',
         justifyContent: 'center',
         alignItems: 'center',
     },
     signOutButtonText: {
         color: '#FFF',
-        fontSize: 18,
-        fontFamily: Typography.sans.bold,
+        fontSize: 14,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.semiBold,
     },
     deleteButton: {
 
         height: 56,
         borderRadius: 28,
-        borderWidth: 1.5,
+        borderWidth: 1,
         borderColor: '#FF383C',
         justifyContent: 'center',
         alignItems: 'center',
     },
     deleteButtonText: {
         color: '#FF383C',
-        fontSize: 18,
-        fontFamily: Typography.sans.bold,
+        fontSize: 14,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.semiBold,
     },
     // Modal Styles
     modalOverlay: {

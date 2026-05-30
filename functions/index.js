@@ -54,6 +54,9 @@ exports.requestSeatTopupLink  = paymentFunctions.requestSeatTopupLink;
 exports.stripeWebhookHandler  = paymentFunctions.stripeWebhookHandler;
 exports.verifyPayment         = paymentFunctions.verifyPayment;
 exports.getRegionalPricing    = paymentFunctions.getRegionalPricing;
+exports.generateSeatTopupToken = paymentFunctions.generateSeatTopupToken;
+exports.previewSeatTopup      = paymentFunctions.previewSeatTopup;
+exports.verifyAndPaySeatTopup = paymentFunctions.verifyAndPaySeatTopup;
 
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;

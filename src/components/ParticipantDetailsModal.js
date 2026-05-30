@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     View,
     Text,
@@ -24,6 +24,19 @@ const { height } = Dimensions.get('window');
 
 const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDecrypting }) => {
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [scrollOffset, setScrollOffset] = useState(0);
+    const scrollViewRef = useRef(null);
+
+    const handleOnScroll = (event) => {
+        setScrollOffset(event.nativeEvent.contentOffset.y);
+    };
+
+    const handleScrollTo = (p) => {
+        if (scrollViewRef.current) {
+            scrollViewRef.current.scrollTo(p);
+        }
+    };
+
     const { t } = useLanguage();
 
     if (!participant) return null;
@@ -75,7 +88,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
 
     return (
         <>
-            <Modal
+             <Modal
                 isVisible={visible}
                 onBackdropPress={onClose}
                 onBackButtonPress={onClose}
@@ -83,6 +96,9 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                 swipeDirection="down"
                 swipeThreshold={100}
                 propagateSwipe={true}
+                scrollTo={handleScrollTo}
+                scrollOffset={scrollOffset}
+                scrollOffsetMax={300}
                 useNativeDriver={false}
                 useNativeDriverForBackdrop={true}
                 animationIn="bounceInUp"
@@ -102,7 +118,14 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                 >
                     <View style={styles.dragIndicator} />
 
-                    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+                    <ScrollView 
+                        ref={scrollViewRef}
+                        onScroll={handleOnScroll}
+                        scrollEventThrottle={16}
+                        style={{ flexShrink: 1 }} 
+                        contentContainerStyle={styles.scrollContent} 
+                        showsVerticalScrollIndicator={false}
+                    >
                         {/* Avatar */}
                         <View style={styles.avatarContainer}>
                             <Image

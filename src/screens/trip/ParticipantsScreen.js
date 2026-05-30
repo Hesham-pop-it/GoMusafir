@@ -22,9 +22,12 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
+import { useTracks } from '@livekit/react-native';
+import { Track } from 'livekit-client';
 import { database, auth, functions } from '../../config/firebase';
 import { ref, onValue, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width, height } = Dimensions.get('window');
 
@@ -120,16 +123,26 @@ const ParticipantsScreen = () => {
             const staffRef = ref(database, `orgs/${orgId}/staff`);
             get(staffRef).then(staffSnap => {
                 const staffList = staffSnap.val() || {};
-                const nonStaffUids = uids.filter(uid => !staffList[uid]);
+                const filteredUids = uids.filter(uid => {
+                    const role = staffList[uid];
+                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
+                });
 
-                if (nonStaffUids.length === 0) {
+                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                    const role = staffList[uid];
+                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                });
+
+                const combinedUids = Array.from(new Set([...filteredUids, ...teamMemberUids]));
+
+                if (combinedUids.length === 0) {
                     setParticipants([]);
                     setParticipantsCount(0);
                     setIsLoading(false);
                     return;
                 }
 
-                nonStaffUids.forEach((uid) => {
+                combinedUids.forEach((uid) => {
                     const profileRef = ref(database, `users/${uid}/profile`);
                 const nameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
@@ -180,11 +193,21 @@ const ParticipantsScreen = () => {
                         ? profile.photoURL
                         : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
 
+                    const role = staffList[uid];
+                    let status = uid === organizerId ? 'Organizer' : 'Joined';
+                    if (role === 'admin') {
+                        status = 'Admin';
+                    } else if (role === 'co-host') {
+                        status = 'Co-Host';
+                    } else if (role === 'manager') {
+                        status = 'Manager';
+                    }
+
                     const pData = {
                         id: uid,
                         name: displayName,
                         image: displayImage,
-                        status: uid === organizerId ? 'Organizer' : 'Joined',
+                        status: status,
                         isSpeaking: false,
                         isOrganizer: uid === organizerId,
                     };
@@ -215,6 +238,23 @@ const ParticipantsScreen = () => {
         return a.name.localeCompare(b.name);
     });
 
+    const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+
+    const mappedParticipants = filteredParticipants.map(p => {
+        const track = voiceTracks.find(t => t.participant.identity === p.id);
+        if (track) {
+            const isSpeaking = track.participant.isSpeaking;
+            const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
+            return {
+                ...p,
+                isSpeaking,
+                isMicrophoneEnabled,
+                voiceStatus: isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted')
+            };
+        }
+        return p;
+    });
+
     // Multi-selection state
     const [selectedIds, setSelectedIds] = useState([]);
     const [multiDeleteVisible, setMultiDeleteVisible] = useState(false);
@@ -243,15 +283,18 @@ const ParticipantsScreen = () => {
                 <View style={styles.info}>
                     <Text style={styles.name}>{item.name}</Text>
                     <Text style={[
-                        styles.status
-                    ]}>{item.status}</Text>
+                        styles.status,
+                        item.voiceStatus === 'Speaking' && styles.statusSpeaking,
+                        item.voiceStatus === 'Active' && styles.statusActive,
+                        item.voiceStatus === 'Muted' && styles.statusMuted,
+                    ]}>{item.voiceStatus ? item.voiceStatus : item.status}</Text>
                 </View>
 
                 {isAdminState && selectedIds.length > 0 && (
                     <View
                         style={[styles.checkbox, isSelected && styles.checkboxSelected]}
                     >
-                        {isSelected && <Ionicons name="checkmark" size={14} color="#FFF" />}
+                        {isSelected && <Ionicons name="checkmark" size={18} color="#FFF" />}
                     </View>
                 )}
             </TouchableOpacity>
@@ -343,29 +386,37 @@ const ParticipantsScreen = () => {
 
 
     return (
-        <SafeAreaView style={styles.container}>
+        <View style={styles.container}>
             {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Ionicons name="arrow-back" size={24} color="#FFF" />
-                </TouchableOpacity>
-                <View style={styles.headerTitleContainer}>
-                    <Text style={styles.headerTitle}>Participants</Text>
-                    <Text style={styles.headerSubtitle}>{participantsCount} Joined</Text>
-                </View>
-                <View style={{ width: 40, alignItems: 'flex-end' }}>
-                    {isAdminState && selectedIds.length > 0 && (
-                        <TouchableOpacity onPress={() => setMultiDeleteVisible(true)}>
-                            <CustomDeleteIcon />
+            <LinearGradient
+                colors={['#1A1E21', '#332F2B']}
+                start={{ x: 0.5, y: 1 }}
+                end={{ x: 0.5, y: 0 }}
+            >
+                <SafeAreaView edges={['top']}>
+                    <View style={styles.header}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Ionicons name="arrow-back" size={24} color="#FFF" />
                         </TouchableOpacity>
-                    )}
-                </View>
-            </View>
+                        <View style={styles.headerTitleContainer}>
+                            <Text style={styles.headerTitle}>Participants</Text>
+                            <Text style={styles.headerSubtitle}>{participantsCount} Joined</Text>
+                        </View>
+                        <View style={{ width: 40, alignItems: 'flex-end' }}>
+                            {isAdminState && selectedIds.length > 0 && (
+                                <TouchableOpacity onPress={() => setMultiDeleteVisible(true)}>
+                                    <CustomDeleteIcon />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                </SafeAreaView>
+            </LinearGradient>
 
             {/* Search Bar */}
             <View style={styles.searchContainer}>
                 <View style={styles.searchBar}>
-                    <Feather name="search" size={20} color="#A1A1AA" style={styles.searchIcon} />
+                    <Feather name="search" size={22} color="#A1A1AA" style={styles.searchIcon} />
                     <TextInput
                         style={styles.searchInput}
                         placeholder="Search participant"
@@ -378,7 +429,7 @@ const ParticipantsScreen = () => {
 
             {/* List */}
             <FlatList
-                data={filteredParticipants}
+                data={mappedParticipants}
                 renderItem={renderParticipant}
                 keyExtractor={item => item.id}
                 contentContainerStyle={styles.listContent}
@@ -554,7 +605,7 @@ const ParticipantsScreen = () => {
                     </View>
                 </Animated.View>
             </Modal>
-        </SafeAreaView>
+        </View>
     );
 };
 
@@ -578,13 +629,15 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         color: '#FFF',
-        fontSize: 22,
-        fontWeight: 'bold',
+        fontSize: 20,
+        fontWeight: 'regular',
         fontFamily: 'IBMPlexSans',
     },
     headerSubtitle: {
-        color: '#9BA1A6',
-        fontSize: 14,
+        color: '#A1A1AA',
+        fontSize: 13,
+        fontWeight: 'regular',
+        fontFamily: 'IBMPlexSans',
     },
     searchContainer: {
         paddingHorizontal: 20,
@@ -606,7 +659,7 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#FFF',
         fontSize: 16,
-        fontFamily: Typography.sans.bold,
+        fontFamily: Typography.sans.regular,
     },
     listContent: {
         paddingHorizontal: 20,
@@ -646,6 +699,16 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#A1A1AA',
     },
+    statusSpeaking: {
+        color: '#34C759',
+        fontWeight: 'bold',
+    },
+    statusActive: {
+        color: '#B99A4A',
+    },
+    statusMuted: {
+        color: '#D66A77',
+    },
     checkbox: {
         width: 20,
         height: 20,
@@ -658,6 +721,8 @@ const styles = StyleSheet.create({
     },
     checkboxSelected: {
         backgroundColor: '#B99A4A',
+        borderColor: '#B99A4A',
+
     },
     // Modal & Sheet Styles
     modalOverlay: {
