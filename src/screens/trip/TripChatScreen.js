@@ -953,33 +953,35 @@ const TripChatScreen = () => {
             <View style={styles.container}>
                 {/* Header */}
                 {/* Header */}
-                <LinearGradient
-                    colors={['#1A1E21', '#332F2B']}
-                    start={{ x: 0.5, y: 1 }}
-                    end={{ x: 0.5, y: 0 }}
-                >
-                    <SafeAreaView edges={['top']}>
-                        <View style={styles.headerContent}>
-                            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                                <Ionicons name="arrow-back" size={24} color="#FFF" />
-                            </TouchableOpacity>
+                <View style={styles.headerArea}>
+                    <LinearGradient
+                        colors={['#332F2B', '#1A1E21']}
+                        start={{ x: 0.5, y: 0 }}
+                        end={{ x: 0.5, y: 1 }}
+                    >
+                        <SafeAreaView edges={['top']}>
+                            <View style={styles.headerContent}>
+                                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                                    <Ionicons name="arrow-back" size={24} color="#FFF" />
+                                </TouchableOpacity>
 
-                            {tripData.image && (
-                                <Image
-                                    source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
-                                    style={styles.headerAvatar}
-                                />
-                            )}
+                                {tripData.image && (
+                                    <Image
+                                        source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                                        style={styles.headerAvatar}
+                                    />
+                                )}
 
-                            <View style={styles.headerInfo}>
-                                <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
-                                <Text style={styles.headerSubtitle} numberOfLines={1}>
-                                    {participantNames.join(', ')}
-                                </Text>
+                                <View style={styles.headerInfo}>
+                                    <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
+                                    <Text style={styles.headerSubtitle} numberOfLines={1}>
+                                        {participantNames.join(', ')}
+                                    </Text>
+                                </View>
                             </View>
-                        </View>
-                    </SafeAreaView>
-                </LinearGradient>
+                        </SafeAreaView>
+                    </LinearGradient>
+                </View>
 
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1231,12 +1233,20 @@ const styles = StyleSheet.create({
         backgroundColor: '#1A1E21',
     },
     headerArea: {
+        backgroundColor: '#1A1E21',
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.8,
+        shadowRadius: 4,
+        elevation: 8, // Android
+        zIndex: 10,
     },
     headerContent: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-        paddingVertical: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    
     },
     backButton: {
         padding: 5,
@@ -1252,7 +1262,7 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: 20,
         fontFamily: Typography.sans.semiBold,
     },
     headerSubtitle: {
@@ -1263,7 +1273,7 @@ const styles = StyleSheet.create({
     },
     chatBackground: {
         flex: 1,
-        backgroundColor: '#0D0E10', // Darker chat bg
+        backgroundColor: '#1A1E21', // Darker chat bg
     },
     messageRow: {
         flexDirection: 'row',
@@ -1419,12 +1429,12 @@ const styles = StyleSheet.create({
 
     // Input Bar
     inputContainer: {
-        backgroundColor: '#1A1E21',
+        backgroundColor: '#23272A',
     },
     inputBar: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#1A1E21',
+        backgroundColor: '#23272A',
         paddingHorizontal: 12,
         paddingVertical: 10,
     },

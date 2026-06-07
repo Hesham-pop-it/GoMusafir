@@ -139,6 +139,7 @@ const TripOverviewScreen = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
     const [userRole, setUserRole] = useState(passedIsAdmin ? 'admin' : 'participant');
+    const [isScrolled, setIsScrolled] = useState(false);
 
 
     const [visibilityModalVisible, setVisibilityModalVisible] = useState(false);
@@ -155,6 +156,7 @@ const TripOverviewScreen = () => {
     const [isDecrypting, setIsDecrypting] = useState(false);
     const [quickAlertVisible, setQuickAlertVisible] = useState(false);
     const [alertMessage, setAlertMessage] = useState('');
+    const [alertTitle, setAlertTitle] = useState('');
 
     const [selectedField, setSelectedField] = useState(null);
     const [emergencyModalVisible, setEmergencyModalVisible] = useState(false);
@@ -182,6 +184,7 @@ const TripOverviewScreen = () => {
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
     const [activeSpeakerData, setActiveSpeakerData] = useState(null);
     const [currentUserFullName, setCurrentUserFullName] = useState('');
+    const [currentUserPhoto, setCurrentUserPhoto] = useState('');
     const [resolvedOrgId, setResolvedOrgId] = useState(passedOrgId || trip?.orgId || trip?.org_id);
     const [unreadCount, setUnreadCount] = useState(0);
 
@@ -206,9 +209,14 @@ const TripOverviewScreen = () => {
                     setUserRole(role);
                     setIsAdmin(role === 'admin' || role === 'co-host' || role === 'manager');
 
-                    // Fetch full name for notifications
-                    get(ref(database, `users/${currentU.uid}/full_name`)).then(snap => {
-                        if (snap.exists()) setCurrentUserFullName(snap.val());
+                    // Fetch profile info for notifications
+                    get(ref(database, `users/${currentU.uid}`)).then(snap => {
+                        if (snap.exists()) {
+                            const uData = snap.val();
+                            if (uData.full_name) setCurrentUserFullName(uData.full_name);
+                            const photoVal = uData.photo || uData.profile_photo || uData.image;
+                            if (photoVal) setCurrentUserPhoto(photoVal);
+                        }
                     });
                 }
 
@@ -355,6 +363,8 @@ const TripOverviewScreen = () => {
             }
         });
 
+        let activeUnsubs = {}; // Manage individual user subscriptions
+
         const unsubscribe = onValue(participantsRef, (snapshot) => {
             const val = snapshot.val() || {};
             let uids = [];
@@ -385,94 +395,106 @@ const TripOverviewScreen = () => {
 
                 if (combinedUids.length === 0) {
                     setParticipantsList([]);
+                    Object.values(activeUnsubs).forEach(unsub => unsub());
+                    activeUnsubs = {};
                     return;
                 }
 
+                // Unsubscribe from removed users
+                Object.keys(activeUnsubs).forEach(uid => {
+                    if (!combinedUids.includes(uid)) {
+                        activeUnsubs[uid]();
+                        delete activeUnsubs[uid];
+                        setParticipantsList(prev => prev.filter(p => p.id !== uid));
+                    }
+                });
+
                 combinedUids.forEach((uid) => {
-                    const profileRef = ref(database, `users/${uid}/profile`);
-                const nameRef = ref(database, `users/${uid}/full_name`);
-                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+                    if (!activeUnsubs[uid]) {
+                        const userRef = ref(database, `users/${uid}`);
+                        
+                        const unsubUser = onValue(userRef, (userSnap) => {
+                            const userData = userSnap.val() || {};
+                            const profile = userData.profile || {};
+                            const fullName = userData.full_name;
+                            const visibility = userData.participant_visibility?.[tripId] || {};
+                            const isCurrentUser = uid === auth.currentUser?.uid;
+                            const amIAdmin = isAdmin; // captured from state
 
-                // Fetch granular nodes
-                Promise.all([get(profileRef), get(nameRef), get(visibilityRef)]).then(([userSnap, nameSnap, visSnap]) => {
-                    const profile = userSnap.val() || {};
-                    const fullName = nameSnap.val();
-                    const visibility = visSnap.val() || {};
-                    const isCurrentUser = uid === auth.currentUser?.uid;
-                    const amIAdmin = isAdmin; // captured from state
+                            // Privacy Logic based on role and settings
+                            const canSeePII = (field) => {
+                                if (isCurrentUser) return true; // Can always see self
 
-                    // Privacy Logic based on role and settings
-                    // Settings: 'Show to organizer', 'Show to everyone', 'Do not show'
-                    const canSeePII = (field) => {
-                        if (isCurrentUser) return true; // Can always see self
+                                // 1. Check Global Admin Config
+                                const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
 
-                        // 1. Check Global Admin Config
-                        const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
+                                if (globalSetting === 'Do not show') return false;
+                                if (globalSetting === 'Show to organizer') return amIAdmin;
+                                if (globalSetting === 'Show to everyone') return true;
 
-                        // Rule: 'Do not show' hides from EVERYONE including admin
-                        if (globalSetting === 'Do not show') return false;
-                        if (globalSetting === 'Show to organizer') return amIAdmin;
-                        if (globalSetting === 'Show to everyone') return true;
+                                // 2. If 'Custom choice', check participant's own setting
+                                if (globalSetting === 'Custom choice') {
+                                    const personalSetting = visibility[field] || 'Show to organizer';
+                                    if (personalSetting === 'Do not show') return false;
+                                    if (personalSetting === 'Show to organizer') return amIAdmin;
+                                    if (personalSetting === 'Show to everyone') return true;
+                                }
 
-                        // 2. If 'Custom choice', check participant's own setting
-                        if (globalSetting === 'Custom choice') {
-                            const personalSetting = visibility[field] || 'Show to organizer';
-                            if (personalSetting === 'Do not show') return false;
-                            if (personalSetting === 'Show to organizer') return amIAdmin;
-                            if (personalSetting === 'Show to everyone') return true;
-                        }
+                                return false;
+                            };
 
-                        return false;
-                    };
+                            let displayName = 'User';
+                            if (canSeePII('name')) {
+                                if (profile.firstName || profile.lastName) {
+                                    displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                                } else if (fullName) {
+                                    displayName = fullName;
+                                } else if (isCurrentUser) {
+                                    displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
+                                }
+                            } else if (isCurrentUser) {
+                                displayName = 'You';
+                            }
 
-                    let displayName = 'User';
-                    if (canSeePII('name')) {
-                        if (profile.firstName || profile.lastName) {
-                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                        } else if (fullName) {
-                            displayName = fullName;
-                        } else if (isCurrentUser) {
-                            displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
-                        }
-                    } else if (isCurrentUser) {
-                        displayName = 'You';
+                            const displayImage = canSeePII('photo') && profile.photoURL
+                                ? profile.photoURL
+                                : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+
+                            const role = staffList[uid];
+                            let status = uid === organizerId ? 'Organizer' : 'Joined';
+                            if (role === 'admin') {
+                                status = 'Admin';
+                            } else if (role === 'co-host') {
+                                status = 'Co-Host';
+                            } else if (role === 'manager') {
+                                status = 'Manager';
+                            }
+
+                            const pData = {
+                                id: uid,
+                                name: displayName,
+                                image: displayImage,
+                                status: status,
+                                isSpeaking: false,
+                                isOrganizer: uid === organizerId,
+                                canSeeLocation: canSeePII('location')
+                            };
+
+                            setParticipantsList(prev => {
+                                const filtered = prev.filter(p => p.id !== uid);
+                                return [...filtered, pData];
+                            });
+                        });
+                        activeUnsubs[uid] = unsubUser;
                     }
-
-                    const displayImage = canSeePII('photo') && profile.photoURL
-                        ? profile.photoURL
-                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
-
-                    const role = staffList[uid];
-                    let status = uid === organizerId ? 'Organizer' : 'Joined';
-                    if (role === 'admin') {
-                        status = 'Admin';
-                    } else if (role === 'co-host') {
-                        status = 'Co-Host';
-                    } else if (role === 'manager') {
-                        status = 'Manager';
-                    }
-
-                    const pData = {
-                        id: uid,
-                        name: displayName,
-                        image: displayImage,
-                        status: status,
-                        isSpeaking: false,
-                        isOrganizer: uid === organizerId,
-                        canSeeLocation: canSeePII('location')
-                    };
-
-                    setParticipantsList(prev => {
-                        const filtered = prev.filter(p => p.id !== uid);
-                        return [...filtered, pData];
-                    });
-                }).catch(err => {
                 });
             });
         });
-    });
 
-        return () => unsubscribe();
+        return () => {
+            unsubscribe();
+            Object.values(activeUnsubs).forEach(unsub => unsub());
+        };
     }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
 
     // Voice state is now managed globally by VoiceContext
@@ -895,13 +917,17 @@ const TripOverviewScreen = () => {
 
     const MOCK_NOTIFICATIONS = notificationsList;
 
+    const lastAlert = notificationsList.find(n => n.type === 'alert' || n.type === 'emergency');
+    const lastAlertSender = lastAlert ? lastAlert.name : 'Ethan Carter';
+
 
     const handleQuickMsgPress = (template) => {
+        setAlertTitle(template.name || 'Alert!');
         setAlertMessage(template.message);
         setQuickAlertVisible(true);
     };
 
-    const broadcastNotification = async (msg) => {
+    const broadcastNotification = async (msg, title) => {
         if (!orgId || !tripId) {
             alert("Trip information not fully loaded. Please wait.");
             return;
@@ -910,6 +936,7 @@ const TripOverviewScreen = () => {
         try {
             const timestamp = serverTimestamp();
             const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
+            const senderPhoto = currentUserPhoto || auth.currentUser?.photoURL || '';
 
             // 1. Fetch current UIDs directly from the source of truth (trips_participants)
             const participantsRef = ref(database, `trips_participants/${tripId}`);
@@ -935,9 +962,11 @@ const TripOverviewScreen = () => {
                 const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
                 return push(userNotifRef, {
                     name: adminName,
+                    title: alertTitle || title || 'Alert!',
                     message: msg,
                     timestamp: timestamp,
-                    type: 'alert'
+                    type: 'alert',
+                    senderImage: senderPhoto
                 });
             });
 
@@ -963,6 +992,7 @@ const TripOverviewScreen = () => {
                 const staffUids = Array.from(new Set(Object.keys(staffData)));
                 const userName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'A Participant';
                 const timestamp = serverTimestamp();
+                const senderPhoto = currentUserPhoto || auth.currentUser?.photoURL || '';
 
                 // 2. Send notification to each staff member (excluding the sender)
                 const promises = staffUids
@@ -971,10 +1001,12 @@ const TripOverviewScreen = () => {
                         const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${sUid}`);
                         return push(notifRef, {
                             name: isAdmin ? "Admin" : userName,
+                            title: 'Emergency Alert',
                             message: "needs immediate assistance!",
                             timestamp: timestamp,
                             type: 'emergency',
-                            senderUid: auth.currentUser?.uid
+                            senderUid: auth.currentUser?.uid,
+                            senderImage: senderPhoto
                         });
                     });
 
@@ -1191,7 +1223,7 @@ const TripOverviewScreen = () => {
 
             <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
                 {/* Fixed Background Header Layer (Z-Index: 0) - Title stays fixed */}
-                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5 }]}>
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: isScrolled ? 5 : 15 }]} pointerEvents="box-none">
 
                     {isAdmin ? (
                         <TouchableOpacity onPress={() => navigation.navigate('Home')} style={styles.iconButton}>
@@ -1236,6 +1268,15 @@ const TripOverviewScreen = () => {
                     style={{ flex: 1, zIndex: 10, marginTop: 0 }}
                     contentContainerStyle={{ flexGrow: 1 }}
                     showsVerticalScrollIndicator={false}
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                        const offsetY = event.nativeEvent.contentOffset.y;
+                        if (offsetY > 10 && !isScrolled) {
+                            setIsScrolled(true);
+                        } else if (offsetY <= 10 && isScrolled) {
+                            setIsScrolled(false);
+                        }
+                    }}
                 >
                     <View style={{ height: 75 }} pointerEvents="none" />
                     {/* 1. Transparent Gap with Interactive Buttons (Mirror) */}
@@ -1586,16 +1627,15 @@ const TripOverviewScreen = () => {
 
                                                     {item.type !== 'alert' && item.type !== 'emergency' && item.type !== 'broadcast' && (
                                                         <TouchableOpacity
-                                                            style={[styles.acceptButton, item.status === 'accepted' && { backgroundColor: '#A1A1AA' }]}
+                                                            style={[styles.acceptButton, item.status === 'accepted' && { backgroundColor: '#A1A1AA' }, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}
                                                             onPress={() => handleAcceptNotification(item)}
                                                             disabled={item.status === 'accepted'}
                                                         >
-                                                            <Ionicons
-                                                                name={item.status === 'accepted' ? "checkmark-done-circle" : "checkmark-circle-outline"}
-                                                                size={14}
-                                                                color="#FFF"
-                                                                style={{ marginRight: 6 }}
-                                                            />
+                                                            <Svg width="18" height="18" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: 8 }}>
+                                                                <Path d="M7.99967 14.6667C11.6816 14.6667 14.6663 11.6819 14.6663 8.00004C14.6663 4.31814 11.6816 1.33337 7.99967 1.33337C4.31778 1.33337 1.33301 4.31814 1.33301 8.00004C1.33301 11.6819 4.31778 14.6667 7.99967 14.6667Z" stroke="white" strokeWidth="1.5"/>
+                                                                <Path d="M5.66602 8.33337L6.99935 9.66671L10.3327 6.33337" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                                            </Svg>
+
                                                             <Text style={styles.acceptButtonText}>
                                                                 {item.status === 'accepted' ? 'Accepted' : 'Accept'}
                                                             </Text>
@@ -1694,26 +1734,21 @@ const TripOverviewScreen = () => {
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, styles.alertCard, !isAdmin && { flex: 1 }]}
                                 onPress={() => {
-                                    setCountdown(10);
-                                    setEmergencyModalVisible(true);
+                                    navigation.navigate('AlertHistory', {
+                                        alerts: notificationsList.filter(n => n.type === 'alert' || n.type === 'emergency')
+                                    });
                                 }}
                             >
                                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%', alignItems: 'flex-start' }}>
                                     <View style={styles.alertIconContainer}>
                                         <Ionicons name="information-circle-outline" size={24} color="#FDF3DC" />
                                     </View>
-                                    <TouchableOpacity 
-                                        onPress={(e) => {
-                                            e.stopPropagation();
-                                            navigation.navigate('AlertHistory');
-                                        }}
-                                        style={{ padding: 5 }}
-                                    >
+                                    <View style={{ padding: 5 }}>
                                         <Ionicons name="chevron-forward" size={24} color="#FFF" />
-                                    </TouchableOpacity>
+                                    </View>
                                 </View>
                                 <View style={styles.alertContent}>
-                                    <Text style={styles.alertTitle}>Ethan Carter</Text>
+                                    <Text style={styles.alertTitle}>{lastAlertSender}</Text>
                                 </View>
                             </TouchableOpacity>
                         </View>
@@ -1776,6 +1811,7 @@ const TripOverviewScreen = () => {
                 onDelete={handleDeletePress}
                 mapDarkStyle={mapDarkStyle}
                 isDecrypting={isDecrypting}
+                tripId={tripId}
             />
 
             {/* Delete Confirmation Modal */}
@@ -1944,7 +1980,7 @@ const TripOverviewScreen = () => {
                         <View style={styles.alertIconCircleSmall}>
                             <Ionicons name="information" size={20} color="#FF4B4B" />
                         </View>
-                        <Text style={styles.quickAlertTitle}>Alert!</Text>
+                        <Text style={styles.quickAlertTitle}>{alertTitle || 'Alert!'}</Text>
                     </View>
 
                     <Text style={styles.quickAlertMsg}>{alertMessage}</Text>
@@ -1958,7 +1994,7 @@ const TripOverviewScreen = () => {
                         />
                         <TouchableOpacity
                             style={[styles.confirmDeleteBtn, { backgroundColor: '#B99A4A' }]}
-                            onPress={() => broadcastNotification(alertMessage)}
+                            onPress={() => broadcastNotification(alertMessage, alertTitle)}
                         >
                             <Text style={styles.confirmDeleteText}>Send All</Text>
                         </TouchableOpacity>
@@ -2143,12 +2179,13 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: 16,
         paddingVertical: 10,
-        borderRadius: 14,
-        minWidth: 100,
+        borderRadius: 10,
+        minWidth: 130,
     },
     acceptButtonText: {
         color: '#FFF',
-        fontSize: responsiveFontSize(14),
+        fontSize: responsiveFontSize(16),
+        letterSpacing: 0.2,
         fontFamily: Typography.sans.bold,
     },
     notificationSeparator: {

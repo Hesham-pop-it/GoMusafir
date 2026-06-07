@@ -696,6 +696,9 @@ const LiveLocationScreen = () => {
             const url = `https://www.google.com/maps/dir/?api=1&destination=${selectedParticipant.latitude},${selectedParticipant.longitude}`;
             Linking.openURL(url);
             setGoogleMapsModal(false);
+        } else if (droppedPin) {
+            const url = `https://www.google.com/maps/dir/?api=1&destination=${droppedPin.latitude},${droppedPin.longitude}`;
+            Linking.openURL(url);
         }
     };
 
@@ -772,7 +775,10 @@ const LiveLocationScreen = () => {
                             <Marker
                                 coordinate={{ latitude: safetyPoint.lat, longitude: safetyPoint.lng }}
                                 title="Safe Point"
-                                onPress={() => handleLocationPress({ latitude: safetyPoint.lat, longitude: safetyPoint.lng, name: 'Safe Point' }, true)}
+                                onPress={() => {
+                                    const url = `https://www.google.com/maps/dir/?api=1&destination=${safetyPoint.lat},${safetyPoint.lng}`;
+                                    Linking.openURL(url);
+                                }}
                                 tracksViewChanges={false}
                             >
                                 <View style={[styles.participantMarker, { backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }]}>

@@ -407,15 +407,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     modalTitle: {
-        fontSize: 22,
+        fontSize: 18,
         color: '#FFF',
-        fontFamily: Typography.sans.bold,
+        letterSpacing:0.2,
+        fontFamily: Typography.sans.semiBold,
         marginBottom: 16,
     },
     modalMessage: {
         fontSize: 16,
-        color: '#9BA1A6',
+        color: '#FFF',
+        fontFamily: Typography.sans.regular,
         textAlign: 'center',
+        letterSpacing: 0.2,
         marginBottom: 32,
     },
     modalMessageLarge: {
@@ -432,13 +435,15 @@ const styles = StyleSheet.create({
         backgroundColor: '#942F31', // Darker red as in screenshot
         borderRadius: 28,
         justifyContent: 'center',
+        
         alignItems: 'center',
         marginBottom: 16,
     },
     modalConfirmText: {
         color: '#FFF',
-        fontSize: 18,
-        fontFamily: Typography.sans.bold,
+        fontSize: 17,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2
     },
     modalCancelButton: {
         width: '100%',

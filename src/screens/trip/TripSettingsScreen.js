@@ -58,6 +58,7 @@ const TripSettingsScreen = () => {
     const [pricingPlans, setPricingPlans] = useState(null);
     const [topupError, setTopupError] = useState(null);
     const [topupToken, setTopupToken] = useState(null);
+    const [isScrolled, setIsScrolled] = useState(false);
 
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
@@ -481,11 +482,17 @@ const TripSettingsScreen = () => {
     };
 
     return (
-        <View style={styles.container}>
+        <View style={{ flex: 1, backgroundColor: '#1A1E21' }}>
+            <LinearGradient
+                colors={['#332F2B', '#1A1E21']}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
+            />
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
             <SafeAreaView style={[styles.container, { marginTop: 20 }]}>
-                {/* Fixed Background Header Layer (Z-Index: 10) - Box-none allows touch-through */}
-                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10 }]} pointerEvents="box-none">
+                {/* Fixed Background Header Layer (Z-Index: isScrolled ? 5 : 15) - Box-none allows touch-through */}
+                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: isScrolled ? 5 : 15 }]} pointerEvents="box-none">
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
                         <Ionicons name="arrow-back" size={24} color="#FFF" />
                     </TouchableOpacity>
@@ -496,8 +503,18 @@ const TripSettingsScreen = () => {
                 </View>
 
                 <ScrollView
-                    style={{ flex: 1, zIndex: 0 }}
+                    style={{ flex: 1, zIndex: 10 }}
                     contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator={false}
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                        const offsetY = event.nativeEvent.contentOffset.y;
+                        if (offsetY > 10 && !isScrolled) {
+                            setIsScrolled(true);
+                        } else if (offsetY <= 10 && isScrolled) {
+                            setIsScrolled(false);
+                        }
+                    }}
                 >
                     <View style={{ marginTop: 80 }}>
                         {/* Journey Seat Statistics */}
@@ -795,16 +812,16 @@ const TripSettingsScreen = () => {
                     </Animated.View>
                 </Modal>
 
-                <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
-            </SafeAreaView>
-        </View>
-    );
-};
+                 <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
+             </SafeAreaView>
+         </View>
+     );
+ };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#1E2124',
+        backgroundColor: 'transparent',
     },
     header: {
         flexDirection: 'row',

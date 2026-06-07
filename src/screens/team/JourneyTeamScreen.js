@@ -94,11 +94,21 @@ const JourneyTeamScreen = () => {
                             name = userSnap.exists() ? userSnap.val() : 'Unknown User';
                         }
                         
+                        // Check if avatar is defined in profile, else fallback to root users/${uid}/photo_url
+                        let avatar = profile.photoURL || profile.profile_picture || '';
+                        if (!avatar) {
+                            const photoUrlSnap = await get(ref(database, `users/${uid}/photo_url`));
+                            avatar = photoUrlSnap.exists() ? photoUrlSnap.val() : '';
+                        }
+                        if (!avatar) {
+                            avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(name[0] || 'U')}&background=B99A4A&color=fff`;
+                        }
+                        
                         return {
                             id: uid,
                             name: name,
                             role: role.charAt(0).toUpperCase() + role.slice(1),
-                            avatar: profile.photoURL || profile.profile_picture || `https://ui-avatars.com/api/?name=${encodeURIComponent(name[0] || 'U')}&background=B99A4A&color=fff`,
+                            avatar: avatar,
                             isSuperAdmin: role === 'admin' // Role comes from org staff list, which is more reliable
                         };
                     } catch (e) {
@@ -154,7 +164,13 @@ const JourneyTeamScreen = () => {
         <GlowBackground>
             <SafeAreaView style={styles.container}>
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <TouchableOpacity onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                        } else {
+                            navigation.navigate('Home');
+                        }
+                    }} style={styles.backButton}>
                         <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                     {(userRole === 'admin' || userRole === 'co-host') && (

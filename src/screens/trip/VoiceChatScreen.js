@@ -37,7 +37,7 @@ import { useVoice } from '../../context/VoiceContext';
 setLogLevel('error');
 import * as Network from 'expo-network';
 import { database, functions, auth } from '../../config/firebase';
-import { ref, onValue, off, update } from 'firebase/database';
+import { ref, onValue, off, update, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { responsiveFontSize } from '../../utils/responsive';
@@ -71,15 +71,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
     const [participantMap, setParticipantMap] = useState({});
 
 
-    // Sync local mute state with hardware
-    useEffect(() => {
-        if (room?.localParticipant) {
-            room.localParticipant.setMicrophoneEnabled(!isMuted);
-        }
-    }, [isMuted, room]);
-
-
-
+    // Sync local mute state with hardware is now handled in VoiceContext.js
     // Fetch User Profiles for participants
     useEffect(() => {
         tracks.forEach(async (trackRef) => {
@@ -296,16 +288,18 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
 
     return (
         <ImageBackground
-            source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+            source={typeof tripData.image === 'string' ? { uri: tripData.image } : require('../../../assets/VCIMG.png') }
             style={styles.backgroundImage}
             resizeMode="cover"
         >
+
             <LinearGradient
-                colors={['rgba(0,0,0,0.6)', '#1A1E21']}
-                style={styles.gradientOverlay}
-                start={{ x: 0.5, y: 0 }}
-                end={{ x: 0.5, y: 0.4 }}
-            />
+                    colors={[' rgba(26,30,33,0.5)', '#1A1E21']}
+                    style={styles.gradientOverlay}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 0.4 }}
+                />
+            
 
             <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
                 <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
@@ -344,18 +338,10 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                         onPress={handleMuteAll}
                                         style={[
                                             styles.controlButtonOutline,
-                                            { flex: 1 },
-                                            isGlobalMuteActive && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                            { flex: 1 }
                                         ]}
                                     >
-                                        {/* <View style={{ marginRight: 8 }}>
-                                            {!isGlobalMuteActive ? (
-                                                <MicMutedIcon color="#FFF" size={20} />
-                                            ) : (
-                                                <MicUnmutedIcon color="#D66A77" size={20} />
-                                            )}
-                                        </View> */}
-                                        <Text style={[styles.controlText, isGlobalMuteActive && { color: '#D66A77' }]}>
+                                        <Text style={styles.controlText}>
                                             {isGlobalMuteActive ? 'Unmute All' : 'Mute All'}
                                         </Text>
                                     </TouchableOpacity>
@@ -430,13 +416,16 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                 {tracks.map((trackRef) => {
                                     const pData = participantMap[trackRef.participant.identity];
                                     if (!pData) return null;
+                                    const isSpeaking = trackRef.participant.isSpeaking;
                                     return (
                                         <View key={trackRef.participant.identity} style={styles.smallAvatarWrapper}>
                                             <Image 
                                                 source={{ uri: pData.avatar }} 
-                                                style={styles.headerSmallAvatar} 
+                                                style={[
+                                                    styles.headerSmallAvatar,
+                                                    { borderColor: isSpeaking ? '#34C759' : 'transparent' }
+                                                ]} 
                                             />
-                                            {trackRef.participant.isSpeaking && <View style={styles.smallSpeakingDot} />}
                                         </View>
                                     );
                                 })}
@@ -513,7 +502,7 @@ const VoiceChatScreen = () => {
     const { trip: passedTrip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
     
     // Core state and trip data
-    const tripData = passedTrip || { image: require('../../../assets/Madinah.png') };
+    const tripData = passedTrip || { image: require('../../../assets/Makkah.png') };
     const tripId = tripData.id || tripData.tripId;
     const orgId = tripData.orgId || tripData.org_id;
     const invitationCode = directCode || tripData.invitationCode;
@@ -543,6 +532,92 @@ const VoiceChatScreen = () => {
 
     const [isAdminState, setIsAdminState] = useState(isAdmin);
     const hasAutoStarted = useRef(false);
+    const [tripParticipants, setTripParticipants] = useState([]);
+    const [activeSpeaker, setActiveSpeaker] = useState(null);
+
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const participantsRef = ref(database, `trips_participants/${tripId}`);
+        const unsubscribe = onValue(participantsRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            let uids = [];
+            if (Array.isArray(val)) {
+                uids = val.filter(v => v !== null);
+            } else {
+                uids = Object.keys(val);
+            }
+
+            // Get staff list (admins, co-hosts, managers)
+            const staffRef = ref(database, `orgs/${orgId}/staff`);
+            get(staffRef).then((staffSnap) => {
+                const staffList = staffSnap.val() || {};
+                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                    const role = staffList[uid];
+                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                });
+
+                // Combine normal participants and staff/admins
+                const combinedUids = Array.from(new Set([...uids, ...teamMemberUids]));
+
+                if (combinedUids.length === 0) {
+                    setTripParticipants([]);
+                    return;
+                }
+
+                // Fetch profiles for these combined UIDs
+                const promises = combinedUids.map(async (uid) => {
+                    try {
+                        const userSnap = await get(ref(database, `users/${uid}`));
+                        if (userSnap.exists()) {
+                            const userData = userSnap.val() || {};
+                            const profile = userData.profile || {};
+                            
+                            let displayName = 'User';
+                            if (profile.firstName || profile.lastName) {
+                                displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                            } else if (userData.full_name) {
+                                displayName = userData.full_name;
+                            } else {
+                                displayName = 'Traveler';
+                            }
+
+                            const displayImage = profile.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+                            return {
+                                uid,
+                                avatar: displayImage
+                            };
+                        }
+                    } catch (e) {
+                        console.log("Fetch participant profile error:", e);
+                    }
+                    return null;
+                });
+
+                Promise.all(promises).then((results) => {
+                    const validParticipants = results.filter(p => p !== null);
+                    setTripParticipants(validParticipants);
+                });
+            });
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId]);
+
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
+        const unsubscribe = onValue(speakerRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setActiveSpeaker(snapshot.val());
+            } else {
+                setActiveSpeaker(null);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId]);
 
     useEffect(() => {
         const fetchRole = async () => {
@@ -599,12 +674,12 @@ const VoiceChatScreen = () => {
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
             <ImageBackground
-                source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                source={typeof tripData.image === 'string' ? { uri: tripData.image }  : require('../../../assets/VCIMG.png')}
                 style={styles.backgroundImage}
                 resizeMode="cover"
             >
                 <LinearGradient
-                    colors={['rgba(0,0,0,0.6)', '#1A1E21']}
+                    colors={[' rgba(26,30,33,0.5)', '#1A1E21']}
                     style={styles.gradientOverlay}
                     start={{ x: 0.5, y: 0 }}
                     end={{ x: 0.5, y: 0.4 }}
@@ -623,14 +698,16 @@ const VoiceChatScreen = () => {
                         <View style={styles.controlsGrid}>
                             {isAdmin ? (
                                 <>
-                                    <View style={styles.controlRow}>
-                                        <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
-                                            <Text style={styles.controlText}> Mute Myself</Text>
+                                    {isChannelActive && (
+                                        <View style={styles.controlRow}>
+                                            <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
+                                                <Text style={styles.controlText}> Mute Myself</Text>
+                                            </View>
+                                            <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
+                                                <Text style={styles.controlText}> Mute All</Text>
+                                            </View>
                                         </View>
-                                        <View style={[styles.controlButtonOutline, { flex: 1, opacity: 0.5 }]}>
-                                            <Text style={styles.controlText}> Mute All</Text>
-                                        </View>
-                                    </View>
+                                    )}
                                     <TouchableOpacity
                                         style={[
                                             styles.controlButtonOutline,
@@ -689,16 +766,44 @@ const VoiceChatScreen = () => {
                                     </TouchableOpacity>
                                 </View>
                             )}
+
+                            
                         </View>
 
                         <View style={styles.statusRow}>
-                                <View style={styles.networkStatus}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                        <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
-                                        <Text style={[styles.statusText, { color: '#34C759' }]}>Network Stable</Text>
-                                    </View>
-                                    <Text style={styles.sectionTitle}>Participants</Text>
+                            <View style={styles.networkStatus}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
+                                    <Text style={[styles.statusText, { color: '#34C759' }]}>Network Stable</Text>
                                 </View>
+                                <Text style={styles.sectionTitle}>Participants</Text>
+                            </View>
+
+                            <View style={styles.avatarScrollContainer}>
+                                <ScrollView 
+                                    horizontal 
+                                    showsHorizontalScrollIndicator={false}
+                                    contentContainerStyle={styles.headerAvatarsContent}
+                                >
+                                    {tripParticipants.map((p) => {
+                                        const isSpeaking = activeSpeaker && activeSpeaker.uid === p.uid;
+                                        return (
+                                            <View key={p.uid} style={styles.smallAvatarWrapper}>
+                                                <Image 
+                                                    source={{ uri: p.avatar }} 
+                                                    style={[
+                                                        styles.headerSmallAvatar,
+                                                        { borderColor: isSpeaking ? '#34C759' : 'transparent' }
+                                                    ]} 
+                                                />
+                                            </View>
+                                        );
+                                    })}
+                                    {tripParticipants.length === 0 && (
+                                        <Text style={{ color: '#888', fontSize: 12 }}>No participants yet</Text>
+                                    )}
+                                </ScrollView>
+                            </View>
                         </View>
                     </View>
 
@@ -730,6 +835,7 @@ const styles = StyleSheet.create({
         flex: 1,
         width: width,
     },
+
     gradientOverlay: {
         ...StyleSheet.absoluteFillObject,
     },
@@ -832,26 +938,29 @@ const styles = StyleSheet.create({
         marginTop: 5,
     },
     avatarScrollContainer: {
-        
-        marginLeft: 20,
-        height: 60,
+        backgroundColor: '#23272A',
+        borderRadius: 25,
+        paddingHorizontal: 10,
+        height: 46,
         justifyContent: 'center',
-        paddingTop: 10,
+        alignItems: 'center',
+        flexDirection: 'row',
+        maxWidth: 140,
     },
     headerAvatarsContent: {
         alignItems: 'center',
-        paddingRight: 20,
+        flexDirection: 'row',
     },
     smallAvatarWrapper: {
-        marginRight: -10, // Overlapping effect
+        marginHorizontal: 4,
         position: 'relative',
     },
     headerSmallAvatar: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
         borderWidth: 2,
-        borderColor: '#1A1E21',
+        borderColor: 'transparent',
     },
     smallSpeakingDot: {
         position: 'absolute',

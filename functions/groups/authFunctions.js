@@ -11,6 +11,7 @@ const { writeAuditLog } = require("../services/auditService");
 const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddleware");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
+const { sendPushNotification } = require("../services/notificationService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -67,6 +68,15 @@ exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) 
   if (Object.keys(updates).length > 0) {
     await userRef.update(updates);
   }
+
+  // Notify the user of a new sign in
+  sendPushNotification(
+    user.uid,
+    "New Sign-In",
+    "We noticed a new sign-in to your GoMusafir account.",
+    { type: 'NEW_SIGN_IN' },
+    { androidChannelId: "Admin" }
+  ).catch(e => console.log("Push error:", e.message));
 
   return {};
 });

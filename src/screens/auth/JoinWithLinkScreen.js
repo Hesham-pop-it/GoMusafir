@@ -26,6 +26,7 @@ import { httpsCallable } from 'firebase/functions';
 const JoinWithLinkScreen = ({ navigation, route }) => {
     const [invitationLink, setInvitationLink] = useState('');
     const [isValid, setIsValid] = useState(true);
+    const [errorMsg, setErrorMsg] = useState('Invalid link. Please check the link and try again');
     const [isLoading, setIsLoading] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -77,13 +78,15 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
                 const now = Date.now();
                 const end = typeof tripDetails.endDate === 'number' ? tripDetails.endDate : new Date(tripDetails.endDate).getTime();
                 if (now > end) {
-                    Alert.alert("Trip Ended", "This trip has already concluded.", [{ text: "OK" }]);
+                    setErrorMsg('invalid link, event is over');
+                    setIsValid(false);
                     setIsLoading(false);
                     return;
                 }
             }
             navigation.navigate('JoinEmail', { invitationCode: code, tripDetails });
         } catch (error) {
+            setErrorMsg('Invalid link. Please check the link and try again');
             setIsValid(false);
         } finally {
             setIsLoading(false);
@@ -98,6 +101,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
     const handleContinue = async () => {
         
         if (invitationLink.trim().length === 0) {
+            setErrorMsg('Invalid link. Please check the link and try again');
             setIsValid(false);
             return;
         }
@@ -111,6 +115,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
             // Enforce link format if it's a URL or contains certain patterns
             if (codeInput.includes('://') || codeInput.includes('.')) {
                 if (!codeInput.includes('gomusafir.app/link/')) {
+                    setErrorMsg('Invalid link. Please check the link and try again');
                     setIsValid(false);
                     setIsLoading(false);
                     return;
@@ -154,11 +159,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
                 // Add a small buffer (e.g., end of the day) if needed, 
                 // but here we follow exact timestamp comparison
                 if (now > end) {
-                    Alert.alert(
-                        "Trip Ended",
-                        "This trip has already concluded and is no longer accepting participants or logins.",
-                        [{ text: "OK" }]
-                    );
+                    setErrorMsg('invalid link, event is over');
+                    setIsValid(false);
                     setIsLoading(false);
                     return;
                 }
@@ -170,6 +172,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
 
         } catch (error) {
             console.log(error)
+            setErrorMsg('Invalid link. Please check the link and try again');
             setIsValid(false);
         } finally {
             setIsLoading(false);
@@ -206,7 +209,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
                             />
                         </View>
                         {!isValid && (
-                            <Text style={styles.errorText}>Invalid link. Please check the link and try again</Text>
+                            <Text style={styles.errorText}>{errorMsg}</Text>
                         )}
                     </View>
 

@@ -12,6 +12,7 @@ const { validate, schemas } = require("../middleware/validateSchema");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
+const { sendPushNotification } = require("../services/notificationService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -82,6 +83,12 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
     last_name: data.lastName,
     full_name: `${data.firstName} ${data.lastName}`,
     photo_url: data.photoURL || null,
+    profile: {
+      firstName: data.firstName,
+      lastName: data.lastName,
+      photoURL: data.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.firstName[0] || 'U')}&background=B99A4A&color=fff`,
+      updated_at: Date.now()
+    },
     p_email: encryptedEmail, // S12
     p_phone: encryptedPhone, // S12
     mfa_enrolled: false,
@@ -138,6 +145,15 @@ exports.updateMemberRole = onCall({ region: "europe-west1" }, async (request) =>
     targetId: data.targetUid,
     extra: { new_role: data.newRole },
   });
+
+  // Notify the user about their role change
+  sendPushNotification(
+    data.targetUid,
+    "Role Updated",
+    `Your role has been updated to ${data.newRole}.`,
+    { type: 'ROLE_CHANGED', orgId: callerOrgId, role: data.newRole },
+    { androidChannelId: "Admin" }
+  ).catch(e => console.log("Push error:", e.message));
 
   return { success: true };
 });

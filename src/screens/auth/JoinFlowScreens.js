@@ -215,7 +215,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                     "Trip Full",
                     `Sorry, this trip has reached its maximum capacity of ${tripDetails.totalSeats} participants.`,
                     [{ 
-                        text: "OK", 
+                        text: "OK",
                         onPress: () => navigation.navigate('Welcome') 
                     }]
                 );

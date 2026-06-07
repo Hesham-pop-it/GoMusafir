@@ -41,6 +41,8 @@ exports.requestTripLink       = tripFunctions.requestTripLink;
 exports.verifyLinkToken       = tripFunctions.verifyLinkToken;
 exports.removeParticipantFromTrip = tripFunctions.removeParticipantFromTrip;
 exports.getParticipantProfile = tripFunctions.getParticipantProfile;
+exports.updateParticipantProfile = tripFunctions.updateParticipantProfile;
+
 
 // ── Invites ───────────────────────────────────────────────────────────────────
 exports.redeemInvitation      = inviteFunctions.redeemInvitation;
@@ -70,3 +72,5 @@ exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
 exports.onChatCreated         = notificationFunctions.onChatCreated;
+exports.onVoiceChannelUpdated = notificationFunctions.onVoiceChannelUpdated;
+exports.onParticipantJoined   = notificationFunctions.onParticipantJoined;

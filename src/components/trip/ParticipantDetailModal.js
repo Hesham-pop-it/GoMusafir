@@ -3,9 +3,11 @@ import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView
 import Modal from 'react-native-modal';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
+import { useNavigation } from '@react-navigation/native';
 
 const { width } = Dimensions.get('window');
 
@@ -17,10 +19,12 @@ const ParticipantDetailModal = ({
     isAdmin,
     onDelete,
     mapDarkStyle,
-    isDecrypting
+    isDecrypting,
+    tripId
 }) => {
     if (!participant) return null;
 
+    const navigation = useNavigation();
     const [scrollOffset, setScrollOffset] = useState(0);
     const scrollViewRef = useRef(null);
 
@@ -80,6 +84,34 @@ const ParticipantDetailModal = ({
                         <Text style={styles.detailName}>{participant.name}</Text>
                     </View>
 
+                    {/* Real Map View */}
+                    <View style={styles.mapPlaceholder}>
+                        <MapView
+                            style={StyleSheet.absoluteFill}
+                            initialRegion={{
+                                latitude,
+                                longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                            region={{
+                                latitude,
+                                longitude,
+                                latitudeDelta: 0.01,
+                                longitudeDelta: 0.01,
+                            }}
+                            customMapStyle={mapDarkStyle}
+                        >
+                            <Marker
+                                coordinate={{ latitude, longitude }}
+                            >
+                                <View style={styles.mapPinContainer}>
+                                    <Image source={{ uri: participant.image }} style={styles.mapPinAvatar} />
+                                </View>
+                            </Marker>
+                        </MapView>
+                    </View>
+
                     {/* Name Fields */}
                     <View style={styles.row}>
                         <View style={styles.halfWidth}>
@@ -116,50 +148,36 @@ const ParticipantDetailModal = ({
                         )}
                     </View>
 
-                    {/* Real Map View */}
-                    <View style={styles.mapPlaceholder}>
-                        <MapView
-                            style={StyleSheet.absoluteFill}
-                            initialRegion={{
-                                latitude,
-                                longitude,
-                                latitudeDelta: 0.01,
-                                longitudeDelta: 0.01,
-                            }}
-                            region={{
-                                latitude,
-                                longitude,
-                                latitudeDelta: 0.01,
-                                longitudeDelta: 0.01,
-                            }}
-                            customMapStyle={mapDarkStyle}
-                        >
-                            <Marker
-                                coordinate={{ latitude, longitude }}
-                            >
-                                <View style={styles.mapPinContainer}>
-                                    <Image source={{ uri: participant.image }} style={styles.mapPinAvatar} />
-                                </View>
-                            </Marker>
-                        </MapView>
-                    </View>
-
                     {isAdmin && (
                         <>
+                            <TouchableOpacity
+                                style={styles.editButtonPill}
+                                onPress={() => {
+                                    onClose();
+                                    navigation.navigate('EditParticipant', { participant, tripId });
+                                }}
+                            >
+                                <Text style={styles.editButtonText}>Edit Participant</Text>
+                            </TouchableOpacity>
+ 
                             <TouchableOpacity
                                 style={styles.deleteButtonPill}
                                 onPress={() => onDelete('this')}
                             >
-                                <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                <Text style={{ color: '#fff' }}>Delete for this trip</Text>
+                                <Svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <Path d="M2.75002 6.167C2.75002 5.707 3.09502 5.333 3.52102 5.333H6.18602C6.71502 5.318 7.18202 4.955 7.36202 4.417L7.39202 4.322L7.50702 3.95C7.57702 3.722 7.63802 3.523 7.72402 3.345C8.06202 2.643 8.68802 2.156 9.41102 2.031C9.59502 2 9.78802 2 10.011 2H13.489C13.712 2 13.906 2 14.089 2.031C14.812 2.156 15.439 2.643 15.776 3.345C15.862 3.523 15.923 3.722 15.993 3.95L16.108 4.322L16.138 4.417C16.318 4.955 16.878 5.319 17.408 5.333H19.978C20.405 5.333 20.75 5.706 20.75 6.167C20.75 6.628 20.405 7 19.979 7H3.52002C3.09402 7 2.75002 6.627 2.75002 6.167ZM11.607 22H12.394C15.101 22 16.454 22 17.335 21.137C18.215 20.273 18.305 18.857 18.485 16.026L18.745 11.945C18.843 10.408 18.892 9.64 18.45 9.153C18.008 8.666 17.263 8.666 15.771 8.666H8.23002C6.73902 8.666 5.99302 8.666 5.55102 9.153C5.10902 9.64 5.15902 10.408 5.25602 11.945L5.51602 16.025C5.69602 18.858 5.78602 20.273 6.66602 21.137C7.54602 22.001 8.90002 22 11.607 22Z" fill="white"/>
+                                </Svg>
+                                <Text style={{ color: '#fff', fontFamily: Typography.sans.semiBold, fontSize: 16, marginLeft: 5 }}>Delete for this trip</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity
                                 style={styles.deleteButtonPill}
                                 onPress={() => onDelete('all')}
                             >
-                                <Ionicons name="trash-outline" size={20} color="#FFF" style={{ marginRight: 10 }} />
-                                <Text style={{ color: '#fff' }}>Delete for all trip</Text>
+                                <Svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <Path d="M2.75002 6.167C2.75002 5.707 3.09502 5.333 3.52102 5.333H6.18602C6.71502 5.318 7.18202 4.955 7.36202 4.417L7.39202 4.322L7.50702 3.95C7.57702 3.722 7.63802 3.523 7.72402 3.345C8.06202 2.643 8.68802 2.156 9.41102 2.031C9.59502 2 9.78802 2 10.011 2H13.489C13.712 2 13.906 2 14.089 2.031C14.812 2.156 15.439 2.643 15.776 3.345C15.862 3.523 15.923 3.722 15.993 3.95L16.108 4.322L16.138 4.417C16.318 4.955 16.878 5.319 17.408 5.333H19.978C20.405 5.333 20.75 5.706 20.75 6.167C20.75 6.628 20.405 7 19.979 7H3.52002C3.09402 7 2.75002 6.627 2.75002 6.167ZM11.607 22H12.394C15.101 22 16.454 22 17.335 21.137C18.215 20.273 18.305 18.857 18.485 16.026L18.745 11.945C18.843 10.408 18.892 9.64 18.45 9.153C18.008 8.666 17.263 8.666 15.771 8.666H8.23002C6.73902 8.666 5.99302 8.666 5.55102 9.153C5.10902 9.64 5.15902 10.408 5.25602 11.945L5.51602 16.025C5.69602 18.858 5.78602 20.273 6.66602 21.137C7.54602 22.001 8.90002 22 11.607 22Z" fill="white"/>
+                                </Svg>
+                                <Text style={{ color: '#fff', fontFamily: Typography.sans.semiBold, fontSize: 16, marginLeft: 5 }}>Delete for all trip</Text>
                             </TouchableOpacity>
                         </>
                     )}
@@ -208,13 +226,13 @@ const styles = StyleSheet.create({
         fontFamily: Typography.sans.bold,
     },
     handle: {
-        width: 60,
+        width: 130,
         height: 5,
         backgroundColor: '#FFF',
         borderRadius: 3,
         alignSelf: 'center',
         marginBottom: 20,
-        opacity: 0.8,
+
     },
     sheetTitle: {
         color: '#FFF',
@@ -223,8 +241,9 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
     divider: {
-        height: 0.2,
-        backgroundColor: '#eeeeee',
+        height: 1,
+        opacity: 0.5,
+        backgroundColor: '#EEEEEE',
         marginBottom: 24,
     },
     detailHeader: {
@@ -273,6 +292,23 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginBottom: 16,
+    },
+    editButtonPill: {
+        width: '100%',
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: '#B99A4A',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    editButtonText: {
+        color: '#FFFFFF',
+        fontSize: 16,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
     },
 });
 

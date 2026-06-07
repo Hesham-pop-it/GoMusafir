@@ -196,11 +196,7 @@ const styles = StyleSheet.create({
     fabContainer: {
         position: 'absolute',
         alignSelf: 'center',
-        shadowColor: 'rgba(212, 175, 55, 0.4)',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.6,
-        shadowRadius: 10,
-        elevation: 8,
+
     },
     fab: {
         width: 75,

@@ -488,7 +488,7 @@ const ParticipantsScreen = () => {
                                     style={styles.actionButtonOutline}
                                     onPress={() => {
                                         setDetailVisible(false);
-                                        navigation.navigate('EditParticipant', { participant: selectedParticipant });
+                                        navigation.navigate('EditParticipant', { participant: selectedParticipant, tripId });
                                     }}
                                 >
                                     <Text style={styles.actionButtonText}>Edit Participant</Text>

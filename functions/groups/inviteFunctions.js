@@ -191,7 +191,7 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
   verifyAppCheck(request);
   requireAuth(request);
 
-  const { token } = validate(schemas.redeemTeamInvite, request.data);
+  const { token, firstName, lastName, fullName, userName, name, displayName, phoneCode, phoneNumber, country, photoURL } = validate(schemas.redeemTeamInvite, request.data);
   const uid = request.auth.uid;
 
   // S1: Email must be verified
@@ -230,33 +230,86 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
   console.log("User record:", userRecord);
   console.log("Existing user:", existingUser);
   
-  if (userRecord.displayName) {
-    updates[`users/${uid}/full_name`] = userRecord.displayName;
-    
-    // Only create/update profile if they don't already have one
-    if (!existingUser || !existingUser.profile) {
-      const parts = userRecord.displayName.split(" ");
-      updates[`users/${uid}/profile`] = {
-          firstName: parts[0] || "",
-          lastName: parts.slice(1).join(" ") || "",
-          photoURL: userRecord.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userRecord.displayName[0] || 'U')}&background=B99A4A&color=fff`,
-          updated_at: Date.now()
-      };
+  let resolvedFirstName = firstName || "";
+  let resolvedLastName = lastName || "";
+  let resolvedFullName = fullName || userName || name || displayName || "";
+
+  if (!resolvedFullName && (resolvedFirstName || resolvedLastName)) {
+    resolvedFullName = `${resolvedFirstName} ${resolvedLastName}`.trim();
+  }
+  if (resolvedFullName && (!resolvedFirstName && !resolvedLastName)) {
+    const parts = resolvedFullName.split(" ");
+    resolvedFirstName = parts[0] || "";
+    resolvedLastName = parts.slice(1).join(" ") || "";
+  }
+
+  // Update Auth displayName and photoURL if we got them from the input but they're not set in Auth
+  const authUpdates = {};
+  if (resolvedFullName && !userRecord.displayName) {
+    authUpdates.displayName = resolvedFullName;
+  }
+  if (photoURL && !userRecord.photoURL) {
+    authUpdates.photoURL = photoURL;
+  }
+
+  if (Object.keys(authUpdates).length > 0) {
+    try {
+      await auth.updateUser(uid, authUpdates);
+    } catch (authErr) {
+      console.warn("Failed to update Auth user details:", authErr);
     }
-  } else if (existingUser && existingUser.full_name) {
-    // If there is no displayName in Auth, but they already have a record in the database,
-    // we keep their existing database name and only create a basic profile structure if missing.
-    if (!existingUser.profile) {
-      const parts = existingUser.full_name.split(" ");
+  }
+
+  // S12: Encrypt email and phone
+  const { encrypt } = require("../services/kmsService");
+  
+  if (!existingUser || !existingUser.p_email) {
+    updates[`users/${uid}/p_email`] = encrypt(userRecord.email);
+  }
+  
+  const phone = phoneNumber ? `${phoneCode || ""}${phoneNumber}` : "";
+  if (phone && (!existingUser || !existingUser.p_phone)) {
+    updates[`users/${uid}/p_phone`] = encrypt(phone);
+  }
+  
+  if (country && (!existingUser || !existingUser.country)) {
+    updates[`users/${uid}/country`] = country;
+  }
+  
+  if (!existingUser || !existingUser.created_at) {
+    updates[`users/${uid}/created_at`] = admin.database.ServerValue.TIMESTAMP;
+  }
+
+  if (resolvedFirstName) {
+    updates[`users/${uid}/first_name`] = resolvedFirstName;
+  }
+  if (resolvedLastName) {
+    updates[`users/${uid}/last_name`] = resolvedLastName;
+  }
+  if (photoURL) {
+    updates[`users/${uid}/photo_url`] = photoURL;
+  }
+
+  const nameToUse = resolvedFullName || userRecord.displayName || (existingUser && existingUser.full_name) || "";
+
+  if (nameToUse) {
+    updates[`users/${uid}/full_name`] = nameToUse;
+    
+    // Only create/update profile if they don't already have one OR if new name/photo inputs are provided
+    if (!existingUser || !existingUser.profile || resolvedFirstName || resolvedLastName || photoURL) {
+      const parts = nameToUse.split(" ");
+      const fName = resolvedFirstName || parts[0] || "";
+      const lName = resolvedLastName || parts.slice(1).join(" ") || "";
+      const resolvedPhotoURL = photoURL || userRecord.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(nameToUse[0] || 'U')}&background=B99A4A&color=fff`;
       updates[`users/${uid}/profile`] = {
-          firstName: parts[0] || "",
-          lastName: parts.slice(1).join(" ") || "",
-          photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(existingUser.full_name[0] || 'U')}&background=B99A4A&color=fff`,
+          firstName: fName,
+          lastName: lName,
+          photoURL: resolvedPhotoURL,
           updated_at: Date.now()
       };
     }
   } else {
-    // Fall back to "Team Member" ONLY if they have no name in Auth AND no record in the database
+    // Fall back to "Team Member" ONLY if they have no name in input, Auth AND no record in the database
     updates[`users/${uid}/full_name`] = "Team Member";
   }
 

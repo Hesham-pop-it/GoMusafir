@@ -7,6 +7,7 @@ const { admin, db } = require("../admin");
 const { writeAuditLog } = require("../services/auditService");
 const { verifyAppCheck, requireAuth, requireRole } = require("../middleware/appCheckMiddleware");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const { sendPushNotification } = require("../services/notificationService");
 
 // ── Regional Pricing — Server-Side Enforcement ────────────────────────────────
 const PRICING_PLANS = {
@@ -330,6 +331,19 @@ exports.stripeWebhookHandler = onRequest(
             }
 
             console.log(`✅ Payment confirmed: Org ${orgId}, Plan ${planId}, Seats ${seats}`);
+
+            // Notify Admin of Payment Success
+            const adminUidSnap = await db.ref(`orgs/${orgId}/metadata/admin_uid`).get();
+            const adminUid = adminUidSnap.val();
+            if (adminUid) {
+              sendPushNotification(
+                adminUid,
+                "Payment Successful",
+                `Your payment for ${planId === 'seat_topup' ? 'Seat Top-up' : planId} was successful.`,
+                { type: 'PAYMENT_SUCCESS', orgId, planId },
+                { androidChannelId: "Admin" }
+              ).catch(e => console.log("Push error:", e.message));
+            }
 
             // S30: Handle Seat Top-up Automation
             if (action === "SEAT_TOPUP") {

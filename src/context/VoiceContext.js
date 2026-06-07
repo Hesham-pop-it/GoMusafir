@@ -96,12 +96,26 @@ export const VoiceProvider = ({ children }) => {
         return () => unsubscribe();
     }, [activeTripId, activeOrgId]);
 
-    // Force mute when global mute is active
+    const prevGlobalMute = useRef(null);
+
+    // Force mute/unmute when global mute state changes
     useEffect(() => {
-        if (isGlobalMuteActive) {
+        if (prevGlobalMute.current !== null && prevGlobalMute.current !== isGlobalMuteActive) {
+            setIsMuted(isGlobalMuteActive);
+        } else if (prevGlobalMute.current === null && isGlobalMuteActive) {
             setIsMuted(true);
         }
+        prevGlobalMute.current = isGlobalMuteActive;
     }, [isGlobalMuteActive]);
+
+    // Sync local mute state with hardware
+    useEffect(() => {
+        if (room?.localParticipant && isConnected) {
+            room.localParticipant.setMicrophoneEnabled(!isMuted).catch(err => {
+                console.log("Failed to sync mic state:", err);
+            });
+        }
+    }, [isMuted, room, isConnected]);
 
     // Session Persistence & Auto-Reconnect
     useEffect(() => {

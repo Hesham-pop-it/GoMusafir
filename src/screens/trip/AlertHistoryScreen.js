@@ -11,16 +11,13 @@ import {
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
-import GlowBackground from '../../components/GlowBackground';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Typography } from '../../constants/Typography';
 
 const { width } = Dimensions.get('window');
 
-const InfoIcon = ({ size = 24 }) => (
-    <Svg width={size} height={size} viewBox="0 0 28 28" fill="none">
-        <Path d="M14 4C19.5228 4 24 8.47715 24 14C24 19.5228 19.5228 24 14 24C8.47715 24 4 19.5228 4 14C4 8.47715 8.47715 4 14 4ZM14 5.66699C9.39763 5.66699 5.66699 9.39763 5.66699 14C5.66699 18.6024 9.39763 22.333 14 22.333C18.6024 22.333 22.333 18.6024 22.333 14C22.333 9.39763 18.6024 5.66699 14 5.66699ZM14.833 19.417H13.167V12.75H14.833V19.417ZM14.833 9.41699V11.083H13.167V9.41699H14.833Z" fill="#B99A4A" />
-    </Svg>
-);
+
 
 const ALERT_DATA = [
     {
@@ -69,25 +66,65 @@ const ALERT_DATA = [
 
 const AlertHistoryScreen = () => {
     const navigation = useNavigation();
+    const route = useRoute();
+    const passedAlerts = route.params?.alerts;
 
-    const renderAlertItem = ({ item }) => (
-        <View style={styles.alertCard}>
-            <View style={styles.iconContainer}>
-                <InfoIcon />
-            </View>
-            <View style={styles.contentContainer}>
-                <Text style={styles.alertTitle}>{item.title}</Text>
-                <View style={styles.senderContainer}>
-                    <Image source={{ uri: item.senderImage }} style={styles.avatar} />
-                    <Text style={styles.senderName}>{item.sender}</Text>
-                </View>
-                <Text style={styles.timeText}>{item.time}</Text>
-            </View>
+    // Use passedAlerts if available (even if empty), otherwise fallback to ALERT_DATA
+    const alertsToDisplay = passedAlerts !== undefined ? passedAlerts : ALERT_DATA;
+
+    const renderEmptyState = () => (
+        <View style={styles.emptyContainer}>
+            <Ionicons name="notifications-off-outline" size={60} color="#636D77" />
+            <Text style={styles.emptyText}>No alerts found</Text>
+            <Text style={styles.emptySubtext}>You have no alert history for this trip.</Text>
         </View>
     );
 
+    const formatTime = (timestamp) => {
+        if (!timestamp) return '';
+        const date = new Date(timestamp);
+        return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')} - ${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getFullYear()}`;
+    };
+
+    const renderAlertItem = ({ item }) => {
+
+        let title = '';
+        if (item.title && item.message && item.title !== 'Alert!') {
+            title = `${item.title}: ${item.message}`;
+        } else {
+            title = item.message || item.title || '';
+        }
+        const sender = item.sender || item.name || 'System';
+        const senderImage = item.senderImage || 'https://www.gravatar.com/avatar/?d=mp'; // fallback avatar
+        const time = item.time || formatTime(item.timestamp);
+
+        return (
+            <View style={styles.alertCard}>
+                <View style={styles.iconContainer}>
+                    <Svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <Path d="M10 0C15.5228 0 20 4.47715 20 10C20 15.5228 15.5228 20 10 20C4.47715 20 0 15.5228 0 10C0 4.47715 4.47715 0 10 0ZM10 1.66699C5.39763 1.66699 1.66699 5.39763 1.66699 10C1.66699 14.6024 5.39763 18.333 10 18.333C14.6024 18.333 18.333 14.6024 18.333 10C18.333 5.39763 14.6024 1.66699 10 1.66699ZM10.833 15.417H9.16699V8.75H10.833V15.417ZM10.833 5.41699V7.08301H9.16699V5.41699H10.833Z" fill="#B99A4A" />
+                    </Svg>
+                </View>
+                <View style={styles.contentContainer}>
+                    <Text style={styles.alertTitle}>{title}</Text>
+                    <View style={styles.senderContainer}>
+                        <Image source={{ uri: senderImage }} style={styles.avatar} />
+                        <Text style={styles.senderName}>{sender}</Text>
+                    </View>
+                    <Text style={styles.timeText}>{time}</Text>
+                </View>
+            </View>
+        );
+    };
+
     return (
-        <GlowBackground>
+        <View style={{ flex: 1, backgroundColor: '#1A1E21' }}>
+            <LinearGradient
+                colors={['#332F2B', '#1A1E21']}
+                start={{ x: 0.5, y: 0 }}
+                end={{ x: 0.5, y: 1 }}
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
+            />
             <SafeAreaView style={styles.container}>
                 {/* Header */}
                 <View style={styles.header}>
@@ -99,14 +136,15 @@ const AlertHistoryScreen = () => {
                 </View>
 
                 <FlatList
-                    data={ALERT_DATA}
+                    data={alertsToDisplay}
                     renderItem={renderAlertItem}
                     keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
+                    contentContainerStyle={alertsToDisplay.length === 0 ? [styles.listContent, { flex: 1 }] : styles.listContent}
                     showsVerticalScrollIndicator={false}
+                    ListEmptyComponent={renderEmptyState}
                 />
             </SafeAreaView>
-        </GlowBackground>
+        </View>
     );
 };
 
@@ -156,10 +194,10 @@ const styles = StyleSheet.create({
     },
     alertTitle: {
         color: '#FFF',
-        fontSize: 15,
+        fontSize: 14,
         lineHeight: 22,
         marginBottom: 12,
-        fontWeight: '500',
+        fontFamily: Typography.sans.regular
     },
     senderContainer: {
         flexDirection: 'row',
@@ -173,12 +211,37 @@ const styles = StyleSheet.create({
         marginRight: 8,
     },
     senderName: {
-        color: '#fff',
-        fontSize: 13,
+        color: '#ffffff',
+        fontSize: 12,
+        fontFamily: Typography.sans.semiBold,
+        opacity: 0.6
     },
     timeText: {
-        color: '#fff',
+        color: '#ffffff',
         fontSize: 12,
+        fontFamily: Typography.sans.semiBold,
+        opacity: 0.6
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 30,
+        marginTop: 100,
+    },
+    emptyText: {
+        color: '#FFF',
+        fontSize: 20,
+        fontFamily: Typography.sans.bold,
+        marginTop: 16,
+        marginBottom: 8,
+    },
+    emptySubtext: {
+        color: '#A1A1AA',
+        fontSize: 14,
+        fontFamily: Typography.sans.regular,
+        textAlign: 'center',
+        lineHeight: 20,
     },
 });
 

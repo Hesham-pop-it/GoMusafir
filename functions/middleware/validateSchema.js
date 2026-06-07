@@ -56,6 +56,16 @@ const updateLocationSchema = z.object({
 
 const redeemTeamInviteSchema = z.object({
   token: z.string().uuid(),
+  firstName: z.string().min(1).max(50).optional().nullable(),
+  lastName: z.string().min(1).max(50).optional().nullable(),
+  fullName: z.string().min(1).max(100).optional().nullable(),
+  userName: z.string().min(1).max(100).optional().nullable(),
+  name: z.string().min(1).max(100).optional().nullable(),
+  displayName: z.string().min(1).max(100).optional().nullable(),
+  phoneCode: z.string().regex(/^\+\d{1,4}$/).optional().nullable(),
+  phoneNumber: z.string().min(5).max(20).optional().nullable(),
+  country: z.object({ name: z.string(), code: z.string() }).optional().nullable(),
+  photoURL: z.string().optional().nullable(),
 });
 
 const getTeamInviteMetadataSchema = z.object({

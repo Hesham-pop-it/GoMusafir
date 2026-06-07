@@ -11,6 +11,7 @@ const { validate, schemas } = require("../middleware/validateSchema");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
+const { sendPushNotification } = require("../services/notificationService");
 
 // ── Request Trip Creation Link (Step 4) ──────────────────────────────────────
 exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
@@ -183,6 +184,16 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     ipAddress: request.rawRequest?.ip,
   });
 
+  if (uid) {
+    sendPushNotification(
+      uid,
+      "Trip Created",
+      `Your trip "${title}" has been created successfully. Share the invite link with your team!`,
+      { type: "TRIP_CREATED", tripId },
+      { androidChannelId: "Admin", tripId }
+    ).catch(e => console.error("Push notification failed:", e));
+  }
+
   return { tripId, inviteCode };
 });
 
@@ -319,6 +330,10 @@ exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (re
     throw new HttpsError("permission-denied", "Trip does not belong to your organization.");
   }
 
+  // Get trip info for notification
+  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
+  const tripTitle = tripSnap.exists() ? tripSnap.val().title : 'your trip';
+
   // Atomic update to remove from participant list, user's joined list, and active location data
   const updates = {
     [`trips_participants/${tripId}/${targetUid}`]: null,
@@ -334,6 +349,14 @@ exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (re
     targetId: targetUid,
     extra: { tripId }
   });
+
+  sendPushNotification(
+    targetUid,
+    "Removed from Trip",
+    `You have been removed from the trip "${tripTitle}".`,
+    { type: "PARTICIPANT_REMOVED", tripId },
+    { androidChannelId: "Admin", tripId }
+  ).catch(e => console.error("Push notification failed:", e));
 
   return { success: true };
 });
@@ -394,7 +417,6 @@ exports.getParticipantProfile = onCall({ region: "europe-west1" }, async (reques
 
 // ── Delete Trip ───────────────────────────────────────────────────────────────
 exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
-  console.log("[deleteTrip] Request Auth:", request.auth ? { uid: request.auth.uid, role: request.auth.token?.role } : "undefined");
   verifyAppCheck(request);
   requireRole(request, ["admin", "co-host"]);
 
@@ -451,6 +473,90 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
     targetId: tripId,
   });
 
+  // Notify all participants asynchronously
+  if (trip && trip.title) {
+    Promise.all(
+      participantIds.map(pid => 
+        sendPushNotification(
+          pid,
+          "Trip Deleted",
+          `The trip "${trip.title}" has been deleted by the organizer.`,
+          { type: "TRIP_DELETED", tripId },
+          { androidChannelId: "Admin", tripId }
+        )
+      )
+    ).catch(e => console.error("Push notification failed:", e));
+  }
+
   return { success: true };
 });
+
+// ── Update Participant Profile (Admin only) ──────────────────────────────────
+exports.updateParticipantProfile = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireRole(request, ["admin", "manager", "co-host"]);
+
+  const { targetUid, tripId, firstName, lastName, email, phone, photoURL } = request.data;
+  const orgId = request.auth.token.orgId;
+
+  if (!targetUid || !tripId || !firstName || !lastName || !email || !phone) {
+    throw new HttpsError("invalid-argument", "Missing required fields.");
+  }
+
+  // Security: Verify trip belongs to caller's org
+  const tripOrgSnap = await db.ref(`trips_orgs/${tripId}`).get();
+  if (!tripOrgSnap.exists() || tripOrgSnap.val() !== orgId) {
+    throw new HttpsError("permission-denied", "Access denied to this trip's data.");
+  }
+
+  // Verify target user is associated with this trip or organization
+  const participantSnap = await db.ref(`trips_participants/${tripId}/${targetUid}`).get();
+  const staffSnap = await db.ref(`orgs/${orgId}/staff/${targetUid}`).get();
+
+  if (!participantSnap.exists() && !staffSnap.exists()) {
+    throw new HttpsError("permission-denied", "Target user is not associated with this trip or organization.");
+  }
+
+  const { encrypt } = require("../services/kmsService");
+
+  const encryptedEmail = encrypt(email);
+  const encryptedPhone = encrypt(phone);
+  const encryptedPhotoUrl = photoURL ? encrypt(photoURL) : null;
+
+  const profile = {
+    firstName: firstName,
+    lastName: lastName,
+    phone: phone,
+    email: email,
+    photoURL: photoURL || null,
+    updated_at: Date.now()
+  };
+
+  const encryptedProfile = encrypt(JSON.stringify(profile));
+
+  const updates = {
+    [`users/${targetUid}/first_name`]: firstName,
+    [`users/${targetUid}/last_name`]: lastName,
+    [`users/${targetUid}/full_name`]: `${firstName} ${lastName}`.trim(),
+    [`users/${targetUid}/photo_url`]: photoURL || null,
+    [`users/${targetUid}/p_photo_url`]: encryptedPhotoUrl,
+    [`users/${targetUid}/profile`]: profile,
+    [`users/${targetUid}/p_profile`]: encryptedProfile,
+    [`users/${targetUid}/p_email`]: encryptedEmail,
+    [`users/${targetUid}/p_phone`]: encryptedPhone,
+    [`trips_participants/${tripId}/${targetUid}`]: Date.now(),
+  };
+
+  await db.ref().update(updates);
+
+  await writeAuditLog(orgId, {
+    action: "PARTICIPANT_PROFILE_UPDATED",
+    byUid: request.auth.uid,
+    targetId: targetUid,
+    extra: { tripId }
+  });
+
+  return { success: true };
+});
+
 

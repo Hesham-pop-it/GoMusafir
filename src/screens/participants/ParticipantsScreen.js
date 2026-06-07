@@ -679,13 +679,13 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingVertical: 22,
         borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: 'rgba(255, 255, 255, 0.15)',
+        borderBottomColor: 'rgba(255, 255, 255, 0.5)',
         paddingHorizontal: 16,
     },
     avatar: {
-        width: 50,
-        height: 50,
-        borderRadius: 10,
+        width: 60,
+        height: 60,
+        borderRadius: 15,
         backgroundColor: '#333',
     },
     cardContent: {
@@ -695,13 +695,16 @@ const styles = StyleSheet.create({
     },
     nameText: {
         color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: 'bold',
+        fontSize: 18,
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
         marginBottom: 4,
     },
     tripText: {
-        color: '#9BA1A6',
-        fontSize: 14,
+        color: '#A1A1AA',
+        fontSize: 15,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.regular,
     },
     separator: {
         height: 1,

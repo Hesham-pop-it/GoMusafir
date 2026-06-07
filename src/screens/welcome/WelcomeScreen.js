@@ -8,10 +8,12 @@ import {
     FlatList,
     TouchableWithoutFeedback,
     Animated,
-    Platform
+    Platform,
+    AppState
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { VideoView, useVideoPlayer } from 'expo-video';
+import { useIsFocused } from '@react-navigation/native';
 import { setAudioModeAsync } from 'expo-audio';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
@@ -221,7 +223,7 @@ const FlyingGreetings = () => {
 };
 
 const WelcomeScreen = ({ navigation }) => {
-    const player = useVideoPlayer(require('../../../assets/Login Animation - 1080p.mp4'), (player) => {
+    const player = useVideoPlayer(require('../../../assets/Login Animation - 720p.mp4'), (player) => {
         player.muted = true;
         player.loop = true;
         player.audioMixingMode = 'mixWithOthers';
@@ -245,6 +247,39 @@ const WelcomeScreen = ({ navigation }) => {
         };
         configureAudio();
     }, []);
+
+    const isFocused = useIsFocused();
+
+    React.useEffect(() => {
+        if (isFocused) {
+            player.play();
+        } else {
+            player.pause();
+        }
+
+        const subscription = AppState.addEventListener('change', (nextAppState) => {
+            if (nextAppState === 'active' && isFocused) {
+                player.play();
+            } else if (nextAppState === 'background') {
+                player.pause();
+            }
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [isFocused, player]);
+
+    React.useEffect(() => {
+        const subscription = player.addListener('playToEnd', () => {
+            player.replay();
+            player.play();
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [player]);
 
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
@@ -273,7 +308,7 @@ const WelcomeScreen = ({ navigation }) => {
                 style={StyleSheet.absoluteFillObject}
                 player={player}
                 nativeControls={false}
-                contentFit="fill"
+                contentFit="cover"
                 allowsPictureInPicture={false}
                 allowsFullscreen={false}
             />
