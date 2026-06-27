@@ -565,11 +565,11 @@ const EditParticipantScreen = () => {
                             )}
                         </View>
 
-                        {/* SVG Circular cutout mask */}
+                        {/* SVG Square cutout mask */}
                         <Svg height="100%" width="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
                             <Path
                                 fillRule="evenodd"
-                                d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2} ${Dimensions.get('window').height / 2 - 40} m -${CROP_SIZE / 2} 0 a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 ${CROP_SIZE} 0 a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 -${CROP_SIZE} 0`}
+                                d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2 - CROP_SIZE / 2} ${Dimensions.get('window').height / 2 - 40 - CROP_SIZE / 2} h ${CROP_SIZE} v ${CROP_SIZE} h -${CROP_SIZE} Z`}
                                 fill="rgba(26, 30, 33, 0.85)"
                             />
                         </Svg>
@@ -583,7 +583,6 @@ const EditParticipantScreen = () => {
                                     top: (Dimensions.get('window').height - CROP_SIZE) / 2 - 41,
                                     width: CROP_SIZE + 2,
                                     height: CROP_SIZE + 2,
-                                    borderRadius: CROP_SIZE / 2 + 1,
                                 }
                             ]}
                             pointerEvents="none"

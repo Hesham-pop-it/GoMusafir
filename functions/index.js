@@ -59,6 +59,7 @@ exports.getRegionalPricing    = paymentFunctions.getRegionalPricing;
 exports.generateSeatTopupToken = paymentFunctions.generateSeatTopupToken;
 exports.previewSeatTopup      = paymentFunctions.previewSeatTopup;
 exports.verifyAndPaySeatTopup = paymentFunctions.verifyAndPaySeatTopup;
+exports.creditPrepaidSeats    = paymentFunctions.creditPrepaidSeats;
 
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
@@ -68,6 +69,7 @@ exports.secureCleanupPII      = systemFunctions.secureCleanupPII;
 // ── Voice Chat ────────────────────────────────────────────────────────────────
 exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
 exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
+exports.onActiveHostsUpdated  = voiceFunctions.onActiveHostsUpdated;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;

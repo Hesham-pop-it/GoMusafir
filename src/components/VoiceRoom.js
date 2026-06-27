@@ -8,6 +8,7 @@ import {
   Dimensions,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
 import {
   LiveKitRoom,
@@ -23,7 +24,7 @@ import { Track } from 'livekit-client';
 import { Mic, MicOff, PhoneOff, Users, Volume2 } from 'lucide-react-native';
 import { Colors } from '../constants/Colors';
 import { BlurView } from 'expo-blur';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -175,6 +176,8 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
           playsInSilentModeIOS: true,
           staysActiveInBackground: true,
           shouldRouteThroughEarpieceAndroid: false,
+          interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
+          interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
         });
 
         await AudioSession.configureAudio({
@@ -188,6 +191,13 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
             categoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP']
           },
         });
+        if (Platform.OS === 'ios') {
+          await AudioSession.setAppleAudioConfiguration({
+            audioCategory: 'playAndRecord',
+            audioMode: 'voiceChat',
+            audioCategoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP', 'mixWithOthers']
+          });
+        }
         await AudioSession.startAudioSession();
       } catch (e) {
         console.log('AudioSession setup error:', e);

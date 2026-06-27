@@ -993,23 +993,30 @@ const TripChatScreen = () => {
                         style={styles.chatBackground}
                         imageStyle={{ opacity: 0.1 }}
                     >
-                        <View style={styles.backgroundLogoContainer}>
-                            <Logo width={SCREEN_WIDTH * 0.7} height={SCREEN_WIDTH * 0.7} color="rgba(185, 154, 74, 0.2)" />
+                        <View style={{ flex: 1 }}>
+                            <View style={styles.backgroundLogoContainer} pointerEvents="none">
+                                <Logo 
+                                    width={SCREEN_WIDTH * 0.5} 
+                                    height={SCREEN_WIDTH * 0.5} 
+                                    color="rgba(185, 154, 74, 0.2)" 
+                                    style={{ width: SCREEN_WIDTH * 0.5, height: SCREEN_WIDTH * 0.5 }}
+                                />
+                            </View>
+                            <FlatList
+                                ref={flatListRef}
+                                data={messages}
+                                renderItem={renderMessage}
+                                keyExtractor={item => item.id}
+                                inverted={true}
+                                contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
+                                onScrollBeginDrag={dismissAll}
+                                keyboardDismissMode="interactive"
+                                initialNumToRender={15}
+                                maxToRenderPerBatch={10}
+                                windowSize={10}
+                                removeClippedSubviews={Platform.OS === 'android'}
+                            />
                         </View>
-                        <FlatList
-                            ref={flatListRef}
-                            data={messages}
-                            renderItem={renderMessage}
-                            keyExtractor={item => item.id}
-                            inverted={true}
-                            contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
-                            onScrollBeginDrag={dismissAll}
-                            keyboardDismissMode="interactive"
-                            initialNumToRender={15}
-                            maxToRenderPerBatch={10}
-                            windowSize={10}
-                            removeClippedSubviews={Platform.OS === 'android'}
-                        />
 
                         {/* Input Bar - wrapped in SafeAreaView */}
                         <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
@@ -1274,6 +1281,7 @@ const styles = StyleSheet.create({
     chatBackground: {
         flex: 1,
         backgroundColor: '#1A1E21', // Darker chat bg
+        
     },
     messageRow: {
         flexDirection: 'row',
@@ -1465,6 +1473,7 @@ const styles = StyleSheet.create({
 
     // Attachment Drawer
     attachmentDrawer: {
+        height:320,
         backgroundColor: '#1A1E21',
         paddingTop: 20,
         borderTopWidth: 1,

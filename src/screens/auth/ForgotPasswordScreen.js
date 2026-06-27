@@ -17,11 +17,35 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
+import { auth } from '../../config/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { Alert, ActivityIndicator } from 'react-native';
 
 const ForgotPasswordScreen = () => {
     const navigation = useNavigation();
     const [email, setEmail] = useState('');
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+    const [isLoading, setIsLoading] = useState(false);
+
+    const handleSend = async () => {
+        if (email.trim().length === 0 || isLoading) return;
+        setIsLoading(true);
+        try {
+            await sendPasswordResetEmail(auth, email.trim());
+            navigation.navigate('ForgotPasswordVerify', { email: email.trim() });
+        } catch (error) {
+            console.warn("Password reset error:", error);
+            let msg = "Failed to send password reset email. Please verify the email address is registered.";
+            if (error.code === 'auth/user-not-found') {
+                msg = "This email is not registered with us.";
+            } else if (error.code === 'auth/invalid-email') {
+                msg = "Please enter a valid email address.";
+            }
+            Alert.alert("Request Failed", msg);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     useEffect(() => {
         const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -79,13 +103,17 @@ const ForgotPasswordScreen = () => {
                     <TouchableOpacity
                         style={[
                             styles.loginButton,
-                            email.trim().length === 0 && { opacity: 0.5 },
+                            (email.trim().length === 0 || isLoading) && { opacity: 0.5 },
                             { marginBottom: isKeyboardVisible ? 20 : 100 }
                         ]}
-                        onPress={() => navigation.navigate('ForgotPasswordVerify')}
-                        disabled={email.trim().length === 0}
+                        onPress={handleSend}
+                        disabled={email.trim().length === 0 || isLoading}
                     >
-                        <Text style={styles.loginButtonText}>Send link</Text>
+                        {isLoading ? (
+                            <ActivityIndicator color="#FFF" />
+                        ) : (
+                            <Text style={styles.loginButtonText}>Send link</Text>
+                        )}
                     </TouchableOpacity>
                 </View>
             </SafeAreaView>

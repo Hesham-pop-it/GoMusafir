@@ -73,7 +73,7 @@ exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) 
   sendPushNotification(
     user.uid,
     "New Sign-In",
-    "We noticed a new sign-in to your GoMusafir account.",
+    "We noticed a new sign-in to your GoMusāfir account.",
     { type: 'NEW_SIGN_IN' },
     { androidChannelId: "Admin" }
   ).catch(e => console.log("Push error:", e.message));
@@ -146,12 +146,14 @@ exports.sendCustomEmailOTP = onCall({ region: "europe-west1", secrets: ["SENDGRI
   // Rate Limiting check (prevent spamming emails)
   const rateLimitRef = db.ref(`otp_codes/${uid}/lastSent`);
   const snapshot = await rateLimitRef.get();
-  if (snapshot.exists() && Date.now() - snapshot.val() < 60000) {
+  const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
+  const limitTime = isEmulator ? 5000 : 60000;
+  if (snapshot.exists() && Date.now() - snapshot.val() < limitTime) {
     throw new HttpsError("resource-exhausted", "auth/too-many-requests");
   }
 
   // Generate ultra-secure 6-digit code
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = email === 'apple@popitnl.nl' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
 
   // Store code in RTDB securely with an expiration timestamp
   await db.ref(`otp_codes/${uid}`).set({
@@ -160,13 +162,17 @@ exports.sendCustomEmailOTP = onCall({ region: "europe-west1", secrets: ["SENDGRI
     lastSent: Date.now()
   });
 
+  if (email === 'apple@popitnl.nl') {
+      return { success: true };
+  }
+
   try {
     await sendEmail({
       to: email,
-      subject: "Your GoMusafir Verification Code",
+      subject: "Your GoMusāfir Verification Code",
       html: `
         <div style="font-family: Arial, sans-serif; text-align: center; color: #333;">
-          <h2 style="color: #B99A4A;">GoMusafir Verification</h2>
+          <h2 style="color: #B99A4A;">GoMusāfir Verification</h2>
           <p>Use the following 6-digit code to verify your beautiful new workspace:</p>
           <h1 style="background: #1A1814; color: #FFF; padding: 20px; border-radius: 8px; font-size: 36px; letter-spacing: 4px;">${code}</h1>
           <p>This code will expire in 10 minutes.</p>
@@ -190,6 +196,19 @@ exports.verifyCustomEmailOTP = onCall({ region: "europe-west1" }, async (request
   if (!otp || otp.length !== 6) {
     throw new HttpsError("invalid-argument", "Invalid OTP format");
   }
+
+  // ── Apple Review Bypass ───────────────────────────────────────────────────────
+  // Apple testers use apple@popitnl.nl with OTP 123456. Short-circuit all DB
+  // checks so the bypass works even if sendCustomEmailOTP was never called,
+  // or if the stored OTP has expired.
+  const isAppleBypass = request.auth.token.email === 'apple@popitnl.nl' && otp === '123456';
+  if (isAppleBypass) {
+    await admin.auth().updateUser(uid, { emailVerified: true });
+    // Clean up any leftover OTP record (best-effort)
+    await db.ref(`otp_codes/${uid}`).remove().catch(() => {});
+    return { verified: true };
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
 
   const otpRef = db.ref(`otp_codes/${uid}`);
   const snapshot = await otpRef.get();

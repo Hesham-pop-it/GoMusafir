@@ -45,6 +45,12 @@ const createTripSchema = z.object({
 
 const redeemInviteSchema = z.object({
   inviteCode: z.string().uuid(),
+  firstName: z.string().min(1).max(50).optional().nullable(),
+  lastName: z.string().min(1).max(50).optional().nullable(),
+  phone: z.string().min(5).max(30).optional().nullable(),
+  photoURL: z.string().optional().nullable(),
+  voiceConsent: z.boolean().optional().nullable(),
+  locationConsent: z.boolean().optional().nullable(),
 });
 
 const updateLocationSchema = z.object({

@@ -29,7 +29,7 @@ import {
     AudioSession,
     AndroidAudioTypePresets
 } from '@livekit/react-native';
-import { Track, ParticipantEvent, ConnectionQuality, setLogLevel } from 'livekit-client';
+import { Track, ParticipantEvent, ConnectionQuality, setLogLevel, RoomEvent } from 'livekit-client';
 
 import { useVoice } from '../../context/VoiceContext';
 
@@ -64,11 +64,86 @@ const MicMutedIcon = ({ color = "white", size = 20 }) => (
     </Svg>
 );
 
-const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetchToken, loading, isMuted, setIsMuted, isGlobalMuteActive, sendMuteCommand }) => {
+const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetchToken, loading, isMuted, setIsMuted, isGlobalMuteActive, sendMuteCommand, teamMemberUids }) => {
     const room = useRoomContext();
     // Include local track so users can see their own signal bars (helps debugging)
     const tracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
     const [participantMap, setParticipantMap] = useState({});
+    const [speakingUids, setSpeakingUids] = useState([]);
+    const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
+
+    const handleHoldToTalkStart = async () => {
+        if (isGlobalMuteActive && !isAdmin) {
+            Alert.alert("Muted by Organizer", "The organizer has globally muted the channel. You cannot unmute yourself at this time.");
+            return;
+        }
+        setIsHoldToTalkActive(true);
+        setIsMuted(false);
+    };
+
+    const handleHoldToTalkEnd = async () => {
+        setIsHoldToTalkActive(false);
+        setIsMuted(true);
+    };
+
+    const staffInChatCount = React.useMemo(() => {
+        if (!teamMemberUids) return 0;
+        let count = 0;
+        tracks.forEach(trackRef => {
+            const identity = trackRef.participant.identity;
+            if (identity && teamMemberUids.has(identity)) {
+                count++;
+            }
+        });
+        return count;
+    }, [tracks, teamMemberUids]);
+
+    // Keep track of active speakers to sort them to the top
+    useEffect(() => {
+        if (!room) return;
+
+        const handleActiveSpeakersChanged = (speakers) => {
+            setSpeakingUids((speakers || []).map(s => s.identity));
+        };
+
+        room.on(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        
+        if (room.activeSpeakers) {
+            setSpeakingUids(room.activeSpeakers.map(s => s.identity));
+        } else {
+            setSpeakingUids([]);
+        }
+
+        return () => {
+            room.off(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        };
+    }, [room]);
+
+    const sortedTracks = React.useMemo(() => {
+        return [...tracks].sort((a, b) => {
+            // Rule 1: Local participant (You) always goes to the very top (first)
+            if (a.participant.isLocal && !b.participant.isLocal) return -1;
+            if (!a.participant.isLocal && b.participant.isLocal) return 1;
+
+            const aId = a.participant.identity;
+            const bId = b.participant.identity;
+            
+            const aIndex = speakingUids.indexOf(aId);
+            const bIndex = speakingUids.indexOf(bId);
+            
+            // If both are speaking, sort by activeSpeakers order (loudest first)
+            if (aIndex !== -1 && bIndex !== -1) {
+                return aIndex - bIndex;
+            }
+            // If only a is speaking, a comes first
+            if (aIndex !== -1) return -1;
+            // If only b is speaking, b comes first
+            if (bIndex !== -1) return 1;
+            
+            // Otherwise, keep the original/stable order
+            return 0;
+        });
+    }, [tracks, speakingUids]);
 
 
     // Sync local mute state with hardware is now handled in VoiceContext.js
@@ -77,16 +152,23 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
         tracks.forEach(async (trackRef) => {
             const uid = trackRef.participant.identity;
             if (uid && !participantMap[uid]) {
-                const userRef = ref(database, `users/${uid}`);
-                onValue(userRef, (snap) => {
-                    const userData = snap.val() || {};
-                    const profile = userData.profile || {};
-                    
+                try {
+                    const profileRef = ref(database, `users/${uid}/profile`);
+                    const fullNameRef = ref(database, `users/${uid}/full_name`);
+
+                    const [profileSnap, nameSnap] = await Promise.all([
+                        get(profileRef),
+                        get(fullNameRef)
+                    ]);
+
+                    const profile = profileSnap.val() || {};
+                    const fullName = nameSnap.val();
+
                     let displayName = 'User';
                     if (profile.firstName || profile.lastName) {
                         displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                    } else if (userData.full_name) {
-                        displayName = userData.full_name;
+                    } else if (fullName) {
+                        displayName = fullName;
                     } else {
                         displayName = 'Traveler';
                     }
@@ -100,7 +182,9 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                             avatar: displayImage
                         }
                     }));
-                }, { onlyOnce: true });
+                } catch (e) {
+                    console.log("Fetch user profile error in VoiceChat:", e);
+                }
             }
         });
     }, [tracks]);
@@ -117,12 +201,12 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                 const myInfo = participantMap[myUid];
                 
                 if (orgId && tripId && myInfo) {
-                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                        activeSpeaker: {
-                            name: myInfo.name,
-                            avatar: myInfo.avatar,
-                            uid: myUid
-                        }
+                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`), {
+                        name: myInfo.name,
+                        avatar: myInfo.avatar,
+                        uid: myUid
+                    }).catch((err) => {
+                        console.log("Failed to update active speaker:", err.message);
                     });
                 }
             }
@@ -137,6 +221,13 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
     const handleToggleMute = async () => {
         try {
             const nextState = !isMuted;
+            
+            // If the room is globally muted by the admin, participants cannot unmute themselves
+            if (!nextState && isGlobalMuteActive && !isAdmin) {
+                Alert.alert("Muted by Organizer", "The organizer has globally muted the channel. You cannot unmute yourself at this time.");
+                return;
+            }
+
             setIsMuted(nextState);
             
             if (isAdmin) {
@@ -159,13 +250,12 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
             if (trackRef.participant.isLocal) {
                 await handleToggleMute();
             } else if (isAdmin) {
-                // Admin can mute others
-                if (trackRef.participant.isMicrophoneEnabled) {
-                    await sendMuteCommand(trackRef.participant.identity);
-                } else {
-                    // Optionally: Request to unmute
-                    Alert.alert("Already Muted", "This participant is already muted.");
-                }
+                // Admin can mute/unmute others
+                const shouldMute = trackRef.participant.isMicrophoneEnabled;
+                await sendMuteCommand(trackRef.participant.identity, shouldMute);
+            } else {
+                // Participant clicked on another participant's mic icon
+                Alert.alert("Action Not Allowed", "Only journey organizers can mute other participants.");
             }
         } catch (error) {
             console.log("Participant mic press error:", error);
@@ -287,19 +377,14 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
     const navigation = useNavigation();
 
     return (
-        <ImageBackground
-            source={typeof tripData.image === 'string' ? { uri: tripData.image } : require('../../../assets/VCIMG.png') }
-            style={styles.backgroundImage}
-            resizeMode="cover"
-        >
-
-            <LinearGradient
-                    colors={[' rgba(26,30,33,0.5)', '#1A1E21']}
-                    style={styles.gradientOverlay}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 0.4 }}
+        <View style={styles.container}>
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 310 }}>
+                <Image
+                    source={require('../../../assets/VCIMG.png')}
+                    style={{ flex: 1 }}
+                    resizeMode="cover"
                 />
-            
+            </View>
 
             <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
                 <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
@@ -338,7 +423,8 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                         onPress={handleMuteAll}
                                         style={[
                                             styles.controlButtonOutline,
-                                            { flex: 1 }
+                                            { flex: 1 },
+                                            isGlobalMuteActive && { backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
                                         ]}
                                     >
                                         <Text style={styles.controlText}>
@@ -351,50 +437,63 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                         styles.controlButtonOutline,
                                         { width: '100%', borderStyle: 'solid', backgroundColor: '#942F31', borderColor: '#942F31' }
                                     ]}
-                                    onPress={onStopChannel}
+                                    onPress={staffInChatCount >= 2 ? onDisconnect : onStopChannel}
                                 >
-                                    <Ionicons name="stop-circle-outline" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                                    <Ionicons name={staffInChatCount >= 2 ? "exit-outline" : "stop-circle-outline"} size={20} color="#FFF" style={{ marginRight: 8 }} />
                                     <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                        Stop Channel
+                                        {staffInChatCount >= 2 ? 'Leave Channel' : 'Stop Voice Chat'}
                                     </Text>
                                 </TouchableOpacity>
                             </>
                         ) : (
-                            <View style={styles.controlRow}>
-                                <TouchableOpacity
-                                    onPress={() => !(isGlobalMuteActive || false) && setIsMuted(!(isMuted || false))}
-                                    style={[
-                                        styles.controlButtonOutline,
-                                        { flex: 1, opacity: (isGlobalMuteActive || false) ? 0.6 : 1 },
-                                        !(isMuted || false) && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
-                                    ]}
-                                    disabled={(isGlobalMuteActive || false)}
-                                >
-                                    <View style={{ marginRight: 8 }}>
-                                        {/* {(isMuted || false) ? (
-                                            <MicMutedIcon color="#FFF" size={20} />
-                                        ) : (
-                                            <MicUnmutedIcon color="#D66A77" size={20} />
-                                        )} */}
-                                    </View>
-                                    <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
-                                        {isGlobalMuteActive ? 'Muted by Admin' : (isMuted ? 'UnMute Myself' : 'Mute Myself')}
-                                    </Text>
-                                </TouchableOpacity>
+                            <>
+                                <View style={styles.controlRow}>
+                                    <TouchableOpacity
+                                        onPress={handleToggleMute}
+                                        style={[
+                                            styles.controlButtonOutline,
+                                            { flex: 1 },
+                                            (isGlobalMuteActive && isMuted) && { opacity: 0.6 },
+                                            !(isMuted || false) && { backgroundColor: '#2D2528', borderColor: '#2D2528' }
+                                        ]}
+                                    >
+                                        <Text style={[styles.controlText, !isMuted && { color: '#D66A77' }]}>
+                                            {isGlobalMuteActive && isMuted ? 'Muted by Admin' : (isMuted ? 'Unmute Myself' : 'Mute Myself')}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPressIn={handleHoldToTalkStart}
+                                        onPressOut={handleHoldToTalkEnd}
+                                        style={[
+                                            styles.controlButtonOutline,
+                                            { flex: 1 },
+                                            isHoldToTalkActive && { backgroundColor: '#B99A4A', borderColor: '#B99A4A' }
+                                        ]}
+                                    >
+                                        <Text style={[styles.controlText, isHoldToTalkActive && { color: '#FFFFFF' }]}>
+                                            Hold to Talk
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
                                 <TouchableOpacity
                                     onPress={onDisconnect}
                                     style={[
                                         styles.controlButtonOutline,
                                         {
-                                            borderColor: '#942F31',
+                                            width: '100%',
+                                            borderStyle: 'solid',
                                             backgroundColor: '#942F31',
-                                            flex: 1
+                                            borderColor: '#942F31',
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
                                         }
                                     ]}
                                 >
+                                    <Ionicons name="refresh-outline" size={20} color="#FFF" style={{ marginRight: 8, transform: [{ scaleX: -1 }] }} />
                                     <Text style={[styles.controlText, { color: '#fff' }]}>Channel Leave</Text>
                                 </TouchableOpacity>
-                            </View>
+                            </>
                         )}
                     </View>
 
@@ -413,7 +512,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                 showsHorizontalScrollIndicator={false}
                                 contentContainerStyle={styles.headerAvatarsContent}
                             >
-                                {tracks.map((trackRef) => {
+                                {sortedTracks.map((trackRef) => {
                                     const pData = participantMap[trackRef.participant.identity];
                                     if (!pData) return null;
                                     const isSpeaking = trackRef.participant.isSpeaking;
@@ -440,7 +539,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.listSection}>
-                        {tracks.map((trackRef, index) => {
+                        {sortedTracks.map((trackRef, index) => {
                             const pData = participantMap[trackRef.participant.identity] || { 
                                 name: trackRef.participant.name || 'User', 
                                 avatar: 'https://randomuser.me/api/portraits/lego/1.jpg' 
@@ -482,7 +581,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                             )}
                                         </TouchableOpacity>
                                     </View>
-                                    {index < tracks.length - 1 && <View style={styles.rowSeparator} />}
+                                    {index < sortedTracks.length - 1 && <View style={styles.rowSeparator} />}
                                 </View>
                             );
                         })}
@@ -492,7 +591,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
 
                 <TripBottomTabBar activeRoute="VoiceChat" tripData={tripData} />
             </SafeAreaView>
-        </ImageBackground>
+        </View>
     );
 };
 
@@ -533,10 +632,26 @@ const VoiceChatScreen = () => {
     const [isAdminState, setIsAdminState] = useState(isAdmin);
     const hasAutoStarted = useRef(false);
     const [tripParticipants, setTripParticipants] = useState([]);
+    const [teamMemberUids, setTeamMemberUids] = useState(() => {
+        const initial = new Set();
+        if (auth.currentUser) {
+            initial.add(auth.currentUser.uid);
+        }
+        return initial;
+    });
     const [activeSpeaker, setActiveSpeaker] = useState(null);
 
     useEffect(() => {
         if (!tripId || !orgId) return;
+
+        // Anchor current_trip in the DB so the Firebase rule
+        // (trips_orgs/${current_trip} == $orgId) passes for participants
+        // when they try to read orgs/${orgId}/staff
+        if (auth.currentUser) {
+            update(ref(database, `users/${auth.currentUser.uid}`), {
+                current_trip: tripId
+            }).catch(() => {});
+        }
 
         const participantsRef = ref(database, `trips_participants/${tripId}`);
         const unsubscribe = onValue(participantsRef, (snapshot) => {
@@ -549,16 +664,20 @@ const VoiceChatScreen = () => {
             }
 
             // Get staff list (admins, co-hosts, managers)
+            // Participants can read this once current_trip is set in their DB node
             const staffRef = ref(database, `orgs/${orgId}/staff`);
             get(staffRef).then((staffSnap) => {
                 const staffList = staffSnap.val() || {};
-                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                const staffUids = Object.keys(staffList).filter(uid => {
                     const role = staffList[uid];
                     return role === 'admin' || role === 'co-host' || role === 'manager';
                 });
 
+                // Store team member UIDs for horizontal scroll filtering
+                setTeamMemberUids(new Set(staffUids));
+
                 // Combine normal participants and staff/admins
-                const combinedUids = Array.from(new Set([...uids, ...teamMemberUids]));
+                const combinedUids = Array.from(new Set([...uids, ...staffUids]));
 
                 if (combinedUids.length === 0) {
                     setTripParticipants([]);
@@ -568,26 +687,31 @@ const VoiceChatScreen = () => {
                 // Fetch profiles for these combined UIDs
                 const promises = combinedUids.map(async (uid) => {
                     try {
-                        const userSnap = await get(ref(database, `users/${uid}`));
-                        if (userSnap.exists()) {
-                            const userData = userSnap.val() || {};
-                            const profile = userData.profile || {};
-                            
-                            let displayName = 'User';
-                            if (profile.firstName || profile.lastName) {
-                                displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                            } else if (userData.full_name) {
-                                displayName = userData.full_name;
-                            } else {
-                                displayName = 'Traveler';
-                            }
+                        const profileRef = ref(database, `users/${uid}/profile`);
+                        const fullNameRef = ref(database, `users/${uid}/full_name`);
 
-                            const displayImage = profile.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
-                            return {
-                                uid,
-                                avatar: displayImage
-                            };
+                        const [profileSnap, nameSnap] = await Promise.all([
+                            get(profileRef),
+                            get(fullNameRef)
+                        ]);
+
+                        const profile = profileSnap.val() || {};
+                        const fullName = nameSnap.val();
+
+                        let displayName = 'User';
+                        if (profile.firstName || profile.lastName) {
+                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                        } else if (fullName) {
+                            displayName = fullName;
+                        } else {
+                            displayName = 'Traveler';
                         }
+
+                        const displayImage = profile.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+                        return {
+                            uid,
+                            avatar: displayImage
+                        };
                     } catch (e) {
                         console.log("Fetch participant profile error:", e);
                     }
@@ -598,6 +722,55 @@ const VoiceChatScreen = () => {
                     const validParticipants = results.filter(p => p !== null);
                     setTripParticipants(validParticipants);
                 });
+            }).catch((err) => {
+                // Permission denied for staff read — retry after anchoring current_trip
+                console.log("Staff read failed, retrying after current_trip anchor:", err.message);
+                setTimeout(() => {
+                    get(staffRef).then((staffSnap) => {
+                        const staffList = staffSnap.val() || {};
+                        const staffUids = Object.keys(staffList).filter(uid => {
+                            const role = staffList[uid];
+                            return role === 'admin' || role === 'co-host' || role === 'manager';
+                        });
+                        setTeamMemberUids(new Set(staffUids));
+
+                        const combinedUids = Array.from(new Set([...uids, ...staffUids]));
+                        if (combinedUids.length === 0) {
+                            setTripParticipants([]);
+                            return;
+                        }
+                        const promises = combinedUids.map(async (uid) => {
+                            try {
+                                const profileRef = ref(database, `users/${uid}/profile`);
+                                const fullNameRef = ref(database, `users/${uid}/full_name`);
+
+                                const [profileSnap, nameSnap] = await Promise.all([
+                                    get(profileRef),
+                                    get(fullNameRef)
+                                ]);
+
+                                const profile = profileSnap.val() || {};
+                                const fullName = nameSnap.val();
+
+                                let displayName = 'User';
+                                if (profile.firstName || profile.lastName) {
+                                    displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
+                                } else if (fullName) {
+                                    displayName = fullName;
+                                } else {
+                                    displayName = 'Traveler';
+                                }
+
+                                const displayImage = profile.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+                                return { uid, avatar: displayImage };
+                            } catch (e) {}
+                            return null;
+                        });
+                        Promise.all(promises).then((results) => {
+                            setTripParticipants(results.filter(p => p !== null));
+                        });
+                    }).catch(() => {});
+                }, 1500);
             });
         });
 
@@ -665,6 +838,7 @@ const VoiceChatScreen = () => {
                 setIsMuted={setIsMuted}
                 isGlobalMuteActive={isGlobalMuteActive}
                 sendMuteCommand={sendMuteCommand}
+                teamMemberUids={teamMemberUids}
             />
         );
     }
@@ -673,19 +847,15 @@ const VoiceChatScreen = () => {
         <View style={styles.container}>
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
-            <ImageBackground
-                source={typeof tripData.image === 'string' ? { uri: tripData.image }  : require('../../../assets/VCIMG.png')}
-                style={styles.backgroundImage}
-                resizeMode="cover"
-            >
-                <LinearGradient
-                    colors={[' rgba(26,30,33,0.5)', '#1A1E21']}
-                    style={styles.gradientOverlay}
-                    start={{ x: 0.5, y: 0 }}
-                    end={{ x: 0.5, y: 0.4 }}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 310 }}>
+                <Image
+                    source={require('../../../assets/VCIMG.png')}
+                    style={{ flex: 1 }}
+                    resizeMode="cover"
                 />
+            </View>
 
-                <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
+            <SafeAreaView style={{ flex: 1, marginTop: 20 }}>
                     <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 0 }]}>
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
                             <Ionicons name="arrow-back" size={24} color="#FFF" />
@@ -734,37 +904,37 @@ const VoiceChatScreen = () => {
                                     </TouchableOpacity>
                                 </>
                             ) : (
-                                <View style={styles.controlRow}>
-                                    <View style={[styles.controlButtonOutline, { flex: 1, opacity: (isMuted || isGlobalMuteActive || false) ? 0.7 : 1 }]}>
-                                        <TouchableOpacity
-                                            style={{ flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'center' }}
-                                            onPress={() => !(isGlobalMuteActive || false) && setIsMuted(!(isMuted || false))}
-                                            disabled={(isGlobalMuteActive || false)}
-                                        >
-                                            <Text style={styles.controlText}> {(isGlobalMuteActive || false) ? ' Force Muted' : ((isMuted || false) ? ' Unmute' : ' Mute')}</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                    <TouchableOpacity
-                                        onPress={handleConnect}
-                                        style={[
-                                            styles.controlButtonOutline,
-                                            {
-                                                borderColor: isChannelActive ? '#B99A4A' : '#3F4346',
-                                                backgroundColor: isChannelActive ? '#B99A4A' : '#23272A',
-                                                flex: 1
-                                            }
-                                        ]}
-                                        disabled={loading || !isChannelActive}
-                                    >
-                                        {loading || isChannelActive === null ? (
-                                            <ActivityIndicator color="#FFF" size="small" />
-                                        ) : (
+                                <TouchableOpacity
+                                    onPress={handleConnect}
+                                    style={[
+                                        styles.controlButtonOutline,
+                                        {
+                                            width: '100%',
+                                            borderColor: isChannelActive ? '#B99A4A' : '#3F4346',
+                                            backgroundColor: isChannelActive ? '#B99A4A' : '#23272A',
+                                            flexDirection: 'row',
+                                            alignItems: 'center',
+                                            justifyContent: 'center'
+                                        }
+                                    ]}
+                                    disabled={loading || !isChannelActive}
+                                >
+                                    {loading || isChannelActive === null ? (
+                                        <ActivityIndicator color="#FFF" size="small" />
+                                    ) : (
+                                        <>
+                                            <Ionicons
+                                                name={isChannelActive ? "enter-outline" : "play-circle-outline"}
+                                                size={24}
+                                                color="#FFF"
+                                                style={{ marginRight: 8 }}
+                                            />
                                             <Text style={[styles.controlText, { color: '#fff', opacity: isChannelActive ? 1 : 0.5 }]}>
                                                 {isChannelActive ? 'Channel Join' : 'Channel Stopped'}
                                             </Text>
-                                        )}
-                                    </TouchableOpacity>
-                                </View>
+                                        </>
+                                    )}
+                                </TouchableOpacity>
                             )}
 
                             
@@ -785,22 +955,25 @@ const VoiceChatScreen = () => {
                                     showsHorizontalScrollIndicator={false}
                                     contentContainerStyle={styles.headerAvatarsContent}
                                 >
-                                    {tripParticipants.map((p) => {
-                                        const isSpeaking = activeSpeaker && activeSpeaker.uid === p.uid;
-                                        return (
-                                            <View key={p.uid} style={styles.smallAvatarWrapper}>
-                                                <Image 
-                                                    source={{ uri: p.avatar }} 
-                                                    style={[
-                                                        styles.headerSmallAvatar,
-                                                        { borderColor: isSpeaking ? '#34C759' : 'transparent' }
-                                                    ]} 
-                                                />
-                                            </View>
-                                        );
-                                    })}
-                                    {tripParticipants.length === 0 && (
-                                        <Text style={{ color: '#888', fontSize: 12 }}>No participants yet</Text>
+                                    {tripParticipants
+                                        .filter((p) => teamMemberUids.has(p.uid))
+                                        .map((p) => {
+                                            const isSpeaking = activeSpeaker && activeSpeaker.uid === p.uid;
+                                            return (
+                                                <View key={p.uid} style={styles.smallAvatarWrapper}>
+                                                    <Image 
+                                                        source={{ uri: p.avatar }} 
+                                                        style={[
+                                                            styles.headerSmallAvatar,
+                                                            { borderColor: isSpeaking ? '#34C759' : 'transparent' }
+                                                        ]} 
+                                                    />
+                                                </View>
+                                            );
+                                        })
+                                    }
+                                    {tripParticipants.filter((p) => teamMemberUids.has(p.uid)).length === 0 && (
+                                        <Text style={{ color: '#888', fontSize: 12 }}>No team members yet</Text>
                                     )}
                                 </ScrollView>
                             </View>
@@ -821,7 +994,6 @@ const VoiceChatScreen = () => {
 
                     <TripBottomTabBar activeRoute="VoiceChat" tripData={tripData} />
                 </SafeAreaView>
-            </ImageBackground>
         </View>
     );
 };
@@ -833,7 +1005,6 @@ const styles = StyleSheet.create({
     },
     backgroundImage: {
         flex: 1,
-        width: width,
     },
 
     gradientOverlay: {
@@ -1008,6 +1179,7 @@ const styles = StyleSheet.create({
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.semiBold,
         marginBottom: 2,
+        letterSpacing: 0.2
     },
     statusSubText: {
         color: '#9BA1A6',

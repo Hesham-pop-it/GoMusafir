@@ -21,7 +21,15 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
   checkRateLimit(request.auth.uid, 10);
 
   // S17: Validate input
-  const { inviteCode } = validate(schemas.redeemInvite, request.data);
+  const {
+    inviteCode,
+    firstName,
+    lastName,
+    phone,
+    photoURL,
+    voiceConsent,
+    locationConsent
+  } = validate(schemas.redeemInvite, request.data);
   const uid = request.auth.uid;
 
   // S1: Email must be verified before joining any trip
@@ -76,8 +84,8 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
   const consentRecord = {
     terms: "accepted",
     privacy: "accepted",
-    voice: request.data.voiceConsent ? "accepted" : "declined",
-    location: request.data.locationConsent ? "accepted" : "declined",
+    voice: voiceConsent ? "accepted" : "declined",
+    location: locationConsent ? "accepted" : "declined",
     recorded_at: admin.database.ServerValue.TIMESTAMP,
     ip_hash: ipHash,
   };
@@ -108,34 +116,69 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
   }
 
   // S22/S12: Encrypt phone if provided and not already stored
-  let phone = request.data.phone || existingUser.profile?.phone || "";
-  if (phone && !existingUser.p_phone) {
+  let resolvedPhone = phone || existingUser.profile?.phone || "";
+  if (resolvedPhone && !existingUser.p_phone) {
     const { encrypt } = require("../services/kmsService");
-    updates[`users/${uid}/p_phone`] = encrypt(phone);
+    updates[`users/${uid}/p_phone`] = encrypt(resolvedPhone);
   }
 
   // S22: Force capture profile info and ENCRYPT IT (S12)
-  const firstName = request.data.firstName || existingUser.profile?.firstName || "";
-  const lastName = request.data.lastName || existingUser.profile?.lastName || "";
-  const photoURL = request.data.photoURL || existingUser.profile?.photoURL || "";
+  const resolvedFirstName = firstName || existingUser.profile?.firstName || "";
+  const resolvedLastName = lastName || existingUser.profile?.lastName || "";
+  const resolvedPhotoURL = photoURL || existingUser.profile?.photoURL || "";
 
-  if (firstName || lastName || phone || photoURL || !existingUser.p_profile) {
+  if (resolvedFirstName || resolvedLastName || resolvedPhone || resolvedPhotoURL || !existingUser.p_profile) {
     const { encrypt } = require("../services/kmsService");
     const profileBlob = JSON.stringify({
-      firstName,
-      lastName,
-      phone,
-      photoURL,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      phone: resolvedPhone,
+      photoURL: resolvedPhotoURL,
       email: userRecord.email
     });
     
     // Store as encrypted blob
     updates[`users/${uid}/p_profile`] = encrypt(profileBlob);
+
+    // Also store unencrypted profile & photo fields for basic UI visibility / avatar rendering
+    const unencryptedProfile = {
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
+      phone: resolvedPhone,
+      photoURL: resolvedPhotoURL,
+      email: userRecord.email,
+      updated_at: Date.now()
+    };
+    updates[`users/${uid}/profile`] = unencryptedProfile;
+    if (resolvedPhotoURL) {
+      updates[`users/${uid}/photo_url`] = resolvedPhotoURL;
+      updates[`users/${uid}/photo`] = resolvedPhotoURL;
+      updates[`users/${uid}/image`] = resolvedPhotoURL;
+      updates[`users/${uid}/profile_photo`] = resolvedPhotoURL;
+    }
     
     // Also update top-level full_name but MASKED for basic UI identification without decryption
-    if (firstName || lastName) {
-        const maskedName = `${firstName.charAt(0)}*** ${lastName ? lastName.charAt(0) : ""}***`.trim();
+    if (resolvedFirstName || resolvedLastName) {
+        const maskedName = `${resolvedFirstName.charAt(0)}*** ${resolvedLastName ? resolvedLastName.charAt(0) : ""}***`.trim();
         updates[`users/${uid}/full_name`] = maskedName;
+    }
+
+    // Update Firebase Auth user record if display name or photo URL are not already set
+    const authUpdates = {};
+    const newFullName = `${resolvedFirstName} ${resolvedLastName}`.trim();
+    if (newFullName && !userRecord.displayName) {
+      authUpdates.displayName = newFullName;
+    }
+    if (resolvedPhotoURL && !userRecord.photoURL) {
+      authUpdates.photoURL = resolvedPhotoURL;
+    }
+
+    if (Object.keys(authUpdates).length > 0) {
+      try {
+        await auth.updateUser(uid, authUpdates);
+      } catch (authErr) {
+        console.warn("Failed to update Auth user details:", authErr);
+      }
     }
   }
 

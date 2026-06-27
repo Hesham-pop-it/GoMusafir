@@ -10,7 +10,7 @@ const crypto = require("crypto");
  * @param {string} orgId
  * @param {object} params - { action, byUid, targetId, ipAddress, extra }
  */
-async function writeAuditLog(orgId, { action, byUid, targetId = null, ipAddress = null, extra = {} }) {
+async function writeAuditLog(orgId, { action, byUid = null, targetId = null, ipAddress = null, extra = {} }) {
   const logRef = db.ref(`orgs/${orgId}/logs`).push();
   const entry = {
     action,
@@ -20,8 +20,8 @@ async function writeAuditLog(orgId, { action, byUid, targetId = null, ipAddress 
     timestamp: admin.database.ServerValue.TIMESTAMP,
     ...extra,
   };
-  // Strip nulls so RTDB rules don't reject missing keys
-  Object.keys(entry).forEach((k) => entry[k] === null && delete entry[k]);
+  // Strip nulls and undefined values so RTDB doesn't throw or rules don't reject missing keys
+  Object.keys(entry).forEach((k) => (entry[k] === null || entry[k] === undefined) && delete entry[k]);
   await logRef.set(entry);
 }
 

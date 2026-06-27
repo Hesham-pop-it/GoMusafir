@@ -8,6 +8,7 @@ const Logo = ({ width = 122, height = 120, color = "#B99A4A", style }) => {
             height={height}
             viewBox="0 0 122 120"
             fill="none"
+            preserveAspectRatio="xMidYMid meet"
             style={style}
         >
             <Path

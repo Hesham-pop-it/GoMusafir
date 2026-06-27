@@ -99,22 +99,22 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = async () => {
-        
+
         if (invitationLink.trim().length === 0) {
             setErrorMsg('Invalid link. Please check the link and try again');
             setIsValid(false);
             return;
         }
-        
+
         setIsLoading(true);
 
         try {
-            // Extract code from link (e.g. gomusafir.app/link/XYZ)
+            // Extract code from link (e.g. app.gomusafir.app/link/XYZ)
             let codeInput = invitationLink.trim();
-            
+
             // Enforce link format if it's a URL or contains certain patterns
             if (codeInput.includes('://') || codeInput.includes('.')) {
-                if (!codeInput.includes('gomusafir.app/link/')) {
+                if (!codeInput.includes('app.gomusafir.app/link/')) {
                     setErrorMsg('Invalid link. Please check the link and try again');
                     setIsValid(false);
                     setIsLoading(false);
@@ -152,10 +152,10 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
             // If the end date has passed, block everyone (even existing participants)
             if (tripDetails.endDate) {
                 const now = Date.now();
-                const end = typeof tripDetails.endDate === 'number' 
-                    ? tripDetails.endDate 
+                const end = typeof tripDetails.endDate === 'number'
+                    ? tripDetails.endDate
                     : new Date(tripDetails.endDate).getTime();
-                
+
                 // Add a small buffer (e.g., end of the day) if needed, 
                 // but here we follow exact timestamp comparison
                 if (now > end) {

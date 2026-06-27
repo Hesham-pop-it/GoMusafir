@@ -76,62 +76,69 @@ export default function App() {
       try {
         currentDeviceId = await getDeviceId();
 
-        unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-          if (deviceRef) {
-            off(deviceRef);
-            deviceRef = null;
-          }
+        if (auth) {
+          unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+            if (deviceRef) {
+              off(deviceRef);
+              deviceRef = null;
+            }
 
-          if (user && user.emailVerified) {
-            deviceRef = ref(database, `users/${user.uid}/active_device_id`);
-            await set(deviceRef, currentDeviceId);
+            if (user && user.emailVerified) {
+              deviceRef = ref(database, `users/${user.uid}/active_device_id`);
+              await set(deviceRef, currentDeviceId);
 
-            onValue(deviceRef, (snapshot) => {
-              const activeId = snapshot.val();
-              if (activeId && activeId !== currentDeviceId) {
-                Alert.alert("Session Ended", "This account has been logged in on another device. You have been signed out.");
-                signOut(auth);
-              }
-            });
-
-            const userRef = ref(database, `users/${user.uid}`);
-            onValue(userRef, async (snapshot) => {
-              const userData = snapshot.val() || {};
-              const idTokenResult = await user.getIdTokenResult(true);
-              const role = idTokenResult.claims.role || 'participant';
-              const isStaff = role === 'admin' || role === 'co-host' || role === 'manager' || !!userData.staff_org_id;
-              
-              const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
-              let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
-              const mfaLock = await AsyncStorage.getItem('mfa_lock');
-
-              const invitationCode = joinSnap.val()?.invitationCode;
-              if (isJoining && !invitationCode && !userData.mfa_pending && !mfaLock && (isStaff || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
-                await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
-                isJoining = false;
-              }
-
-              if (userData.mfa_pending || mfaLock) {
-                setInitialRoute("BusinessVerification");
-              } else if (!isJoining) {
-                if (isStaff) {
-                  setInitialRoute("Home");
-                } else {
-                  setInitialRoute("TripOverview");
+              onValue(deviceRef, (snapshot) => {
+                const activeId = snapshot.val();
+                if (activeId && activeId !== currentDeviceId) {
+                  Alert.alert("Session Ended", "This account has been logged in on another device. You have been signed out.");
+                  signOut(auth);
                 }
-              }
-              
-              registerForPushNotificationsAsync();
-              setTimeout(() => {
-                setAppIsReady(true);
-              }, 300);
-            });
+              });
 
-          } else {
-            setInitialRoute("Welcome");
-            setAppIsReady(true);
-          }
-        });
+              registerForPushNotificationsAsync(user);
+
+              const userRef = ref(database, `users/${user.uid}`);
+              onValue(userRef, async (snapshot) => {
+                const userData = snapshot.val() || {};
+                const idTokenResult = await user.getIdTokenResult(true);
+                const role = idTokenResult.claims.role || 'participant';
+                const isStaff = role === 'admin' || role === 'co-host' || role === 'manager' || !!userData.staff_org_id;
+                
+                const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
+                let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
+                const mfaLock = await AsyncStorage.getItem('mfa_lock');
+
+                const invitationCode = joinSnap.val()?.invitationCode;
+                if (isJoining && !invitationCode && !userData.mfa_pending && !mfaLock && (isStaff || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
+                  await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
+                  isJoining = false;
+                }
+
+                if (userData.mfa_pending || mfaLock) {
+                  setInitialRoute("BusinessVerification");
+                } else if (!isJoining) {
+                  if (isStaff) {
+                    setInitialRoute("Home");
+                  } else {
+                    setInitialRoute("TripOverview");
+                  }
+                }
+                
+                setTimeout(() => {
+                  setAppIsReady(true);
+                }, 300);
+              });
+
+            } else {
+              setInitialRoute("Welcome");
+              setAppIsReady(true);
+            }
+          });
+        } else {
+          console.warn("[App] Firebase Auth not initialized. Defaulting to Welcome screen.");
+          setInitialRoute("Welcome");
+          setAppIsReady(true);
+        }
 
       } catch (e) {
         setAppIsReady(true);

@@ -2,6 +2,7 @@ import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 
 // Import organized screens
 import WelcomeScreen from '../screens/welcome/WelcomeScreen';
@@ -49,8 +50,59 @@ let isTrimming = false;
 export const navigationRef = createNavigationContainerRef();
 const Stack = createNativeStackNavigator();
 
+const webOnlyPaths = [
+    'create-journey',
+    'create-account',
+    'payment-success',
+    'payment-cancel',
+    'increase-seats',
+    'contact'
+];
+
+const checkAndOpenWebUrl = (url) => {
+    if (!url) return false;
+    try {
+        const parsed = Linking.parse(url);
+        const path = parsed.path || '';
+        const shouldOpenInBrowser = webOnlyPaths.some(keyword => 
+            path.includes(keyword) || url.includes(keyword)
+        );
+
+        if (shouldOpenInBrowser) {
+            WebBrowser.openBrowserAsync(url, {
+                presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+            });
+            return true;
+        }
+    } catch (e) {
+        console.error('Error checking deep link URL:', e);
+    }
+    return false;
+};
+
 const linking = {
-    prefixes: [Linking.createURL('/'), 'https://gomusafir.app', 'https://www.gomusafir.app', 'gomusafir://'],
+    prefixes: [Linking.createURL('/'), 'https://app.gomusafir.app', 'https://www.app.gomusafir.app', 'gomusafir://'],
+    async getInitialURL() {
+        const url = await Linking.getInitialURL();
+        if (url && checkAndOpenWebUrl(url)) {
+            return null;
+        }
+        return url;
+    },
+    subscribe(listener) {
+        const onReceiveURL = ({ url }) => {
+            if (url && checkAndOpenWebUrl(url)) {
+                return;
+            }
+            WebBrowser.dismissBrowser();
+            listener(url);
+        };
+
+        const subscription = Linking.addEventListener('url', onReceiveURL);
+        return () => {
+            subscription.remove();
+        };
+    },
     config: {
         screens: {
             JoinWithLink: 'link/:invitationCode',

@@ -55,7 +55,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                 notification: silent ? undefined : {
                     channelId: androidChannelId,
                     sound: "default",
-                    priority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "high" : "default",
+                    notificationPriority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "PRIORITY_HIGH" : "PRIORITY_DEFAULT",
                 },
             },
             apns: {

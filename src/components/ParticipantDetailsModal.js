@@ -11,6 +11,7 @@ import {
     Animated,
     ActivityIndicator,
     I18nManager,
+    Alert,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { Colors } from '../constants/Colors';
@@ -195,15 +196,14 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                     <View style={{ marginVertical: 24 }}>
                         {/* Delete Button */}
                         <TouchableOpacity 
-                            style={styles.removeButton} 
+                            style={styles.deleteButton} 
                             onPress={() => Alert.alert(
                                 t('remove_participant'), 
                                 t('confirm_delete'), 
                                 [{ text: t('cancel') }, { text: t('delete'), onPress: () => onDelete(participant.id) }]
                             )}
                         >
-                            <Ionicons name="trash-outline" size={20} color="#FF4B4B" />
-                            <Text style={styles.removeButtonText}>{t('remove_participant')}</Text>
+                            <Text style={styles.deleteButtonText}>{t('remove_participant')}</Text>
                         </TouchableOpacity>
 
                         {/* Bottom Spacer for scrolling */}

@@ -46,8 +46,8 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
       admin_uid: uid,
       admin_first_name: data.firstName,
       admin_last_name: data.lastName,
-      admin_email: data.email,
-      admin_phone: `${data.phoneCode}${data.phoneNumber}`,
+      p_admin_email: encryptedEmail,
+      p_admin_phone: encryptedPhone,
       admin_photo_url: data.photoURL || null,
       plan: "free",
       created_at: now,
@@ -96,6 +96,24 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
     country: data.country,
     created_at: now,
   };
+
+  // Create Stripe Customer safely (non-blocking)
+  let stripeCustomerId = null;
+  try {
+    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+    const customer = await stripe.customers.create({
+      email: data.email,
+      name: data.companyName,
+      metadata: {
+        orgId: orgId
+      }
+    });
+    stripeCustomerId = customer.id;
+    newOrg.stripe_customer_id = stripeCustomerId;
+    console.log(`✅ Stripe Customer created: ${stripeCustomerId} for Org ${orgId}`);
+  } catch (stripeErr) {
+    console.warn("⚠️ Stripe Customer creation failed during org signup (non-blocking):", stripeErr);
+  }
 
   // Atomic multi-path write
   const updates = {
@@ -220,7 +238,7 @@ exports.inviteTeamMember = onCall({ region: "europe-west1", secrets: ["SENDGRID_
 
   // Dispatch Email
   try {
-    const inviteLink = `https://gomusafir.app/team-join?token=${token}`; // Adjust to your actual web path if needed
+    const inviteLink = `https://join.gomusafir.app/team-join?token=${token}`; // Adjust to your actual web path if needed
     await sendEmail({
       to: data.email,
       subject: "You've been invited to join GoMusafir",
@@ -259,7 +277,7 @@ exports.leaveOrganization = onCall({ region: "europe-west1" }, async (request) =
   if (!orgId || !role) {
     throw new HttpsError("failed-precondition", "You are not part of an organization.");
   }
-  
+
   if (role === "admin") {
     throw new HttpsError("failed-precondition", "Admins cannot leave. They must delete the organization instead.");
   }

@@ -20,9 +20,43 @@
       },
       "bundleIdentifier": "com.popit.GoMusafir",
       "associatedDomains": [
-        "applinks:gomusafir.app",
-        "webcredentials:gomusafir.app"
+        "applinks:app.gomusafir.app",
+        "applinks:www.app.gomusafir.app",
+        "applinks:join.gomusafir.app",
+        "applinks:www.join.gomusafir.app",
+        "webcredentials:app.gomusafir.app",
+        "webcredentials:www.app.gomusafir.app",
+        "webcredentials:join.gomusafir.app",
+        "webcredentials:www.join.gomusafir.app",
+        "applinks:app.gomusafir.app",
+        "applinks:www.app.gomusafir.app",
+        "applinks:join.gomusafir.app",
+        "applinks:www.join.gomusafir.app",
+        "webcredentials:app.gomusafir.app",
+        "webcredentials:www.app.gomusafir.app",
+        "webcredentials:join.gomusafir.app",
+        "webcredentials:www.join.gomusafir.app"
       ],
+      "entitlements": {
+        "com.apple.developer.associated-domains": [
+          "applinks:app.gomusafir.app",
+          "applinks:www.app.gomusafir.app",
+          "applinks:join.gomusafir.app",
+          "applinks:www.join.gomusafir.app",
+          "webcredentials:app.gomusafir.app",
+          "webcredentials:www.app.gomusafir.app",
+          "webcredentials:join.gomusafir.app",
+          "webcredentials:www.join.gomusafir.app",
+          "applinks:app.gomusafir.app",
+          "applinks:www.app.gomusafir.app",
+          "applinks:join.gomusafir.app",
+          "applinks:www.join.gomusafir.app",
+          "webcredentials:app.gomusafir.app",
+          "webcredentials:www.app.gomusafir.app",
+          "webcredentials:join.gomusafir.app",
+          "webcredentials:www.join.gomusafir.app"
+        ]
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Allow GoMusafir to access your location to show nearby places and provide navigation.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
@@ -32,12 +66,16 @@
           "remote-notification",
           "location",
           "audio",
+          "voip",
+          "remote-notification",
+          "location",
+          "audio",
           "voip"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "edgeToEdgeEnabled": false,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
@@ -51,7 +89,8 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "package": "com.popit.GoMusafir",
       "intentFilters": [
@@ -61,12 +100,12 @@
           "data": [
             {
               "scheme": "https",
-              "host": "www.gomusafir.app",
+              "host": "www.app.gomusafir.app",
               "pathPrefix": "/link"
             },
             {
               "scheme": "https",
-              "host": "gomusafir.app",
+              "host": "app.gomusafir.app",
               "pathPrefix": "/link"
             }
           ],

@@ -37,7 +37,7 @@ exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_A
     action: "CREATE_TRIP"
   });
 
-  const webLink = `https://go-musafir.web.app/create-journey?token=${linkToken}`;
+  const webLink = `https://app.gomusafir.app/create-journey?token=${linkToken}`;
   const htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
       <h2 style="color: #B99A4A; text-align: center;">Ready to Start a New Journey?</h2>
@@ -77,19 +77,23 @@ exports.verifyLinkToken = onCall({ region: "europe-west1" }, async (request) => 
     throw new HttpsError("deadline-exceeded", "This link has expired. Please request a new one from the app.");
   }
 
+  const orgSnap = await db.ref(`orgs/${data.orgId}/prepaid_seats`).get();
+  const prepaidSeats = orgSnap.val() || 0;
+
   // Optional: We can mark it as used here, or wait for the trip creation to succeed.
   // For now, we return the orgId so the website knows which org to create the trip for.
   return {
     valid: true,
     orgId: data.orgId,
     email: data.email,
-    action: data.action
+    action: data.action,
+    prepaidSeats
   };
 });
 
 // ── Create Trip ───────────────────────────────────────────────────────────────
 // S15: Invitation code is a UUID (cryptographically random).
-// S16: Invite link is scoped — only resolves on *.gomusafir.app
+// S16: Invite link is scoped — only resolves on *.app.gomusafir.app
 exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
@@ -114,7 +118,23 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
 
     // Security: Ensure payment was completed before allowing trip creation
     if (!tokenData.paid) {
-      throw new HttpsError("failed-precondition", "Payment is required before creating a trip. Please complete checkout first.");
+      // Check if it can be covered using the organization's prepaid seats balance
+      const requestedSeatsNum = parseInt(totalSeats) || 15;
+      let balanceCovered = false;
+
+      await db.ref(`orgs/${tokenData.orgId}`).transaction((orgData) => {
+        if (!orgData) return orgData;
+        const currentBalance = orgData.prepaid_seats || 0;
+        if (currentBalance >= requestedSeatsNum) {
+          orgData.prepaid_seats = currentBalance - requestedSeatsNum;
+          balanceCovered = true;
+        }
+        return orgData;
+      });
+
+      if (!balanceCovered) {
+        throw new HttpsError("failed-precondition", "Payment is required before creating a trip. Please complete checkout first.");
+      }
     }
 
     orgId = tokenData.orgId;
@@ -393,11 +413,11 @@ exports.getParticipantProfile = onCall({ region: "europe-west1" }, async (reques
   // Try to decrypt the full profile blob if it exists
   if (userData.p_profile) {
     try {
-        const decryptedProfile = JSON.parse(decrypt(userData.p_profile));
-        profile = decryptedProfile;
-        email = decryptedProfile.email;
-        phone = decryptedProfile.phone;
-        fullName = `${decryptedProfile.firstName} ${decryptedProfile.lastName}`.trim();
+      const decryptedProfile = JSON.parse(decrypt(userData.p_profile));
+      profile = decryptedProfile;
+      email = decryptedProfile.email;
+      phone = decryptedProfile.phone;
+      fullName = `${decryptedProfile.firstName} ${decryptedProfile.lastName}`.trim();
     } catch (e) {
     }
   } else {
@@ -447,7 +467,7 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
 
   // 3. Construct atomic update
   const updates = {};
-  
+
   // Remove trip metadata and active status
   updates[`orgs/${orgId}/trips/${tripId}`] = null;
   updates[`trips_orgs/${tripId}`] = null;
@@ -476,7 +496,7 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
   // Notify all participants asynchronously
   if (trip && trip.title) {
     Promise.all(
-      participantIds.map(pid => 
+      participantIds.map(pid =>
         sendPushNotification(
           pid,
           "Trip Deleted",

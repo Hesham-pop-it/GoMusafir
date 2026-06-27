@@ -110,7 +110,36 @@ const BusinessLoginScreen = () => {
             }
 
         } catch (error) {
-            Alert.alert("Login Failed", error.message || "Invalid email or password.");
+            let message = "Invalid email or password.";
+            switch (error.code) {
+                case 'auth/invalid-email':
+                    message = "Please enter a valid email address.";
+                    break;
+                case 'auth/user-disabled':
+                    message = "This user account has been disabled.";
+                    break;
+                case 'auth/user-not-found':
+                    message = "No account found with this email.";
+                    break;
+                case 'auth/wrong-password':
+                    message = "Incorrect password. Please try again.";
+                    break;
+                case 'auth/invalid-credential':
+                    message = "Invalid email or password.";
+                    break;
+                case 'auth/too-many-requests':
+                    message = "Too many unsuccessful login attempts. Please try again later.";
+                    break;
+                case 'auth/network-request-failed':
+                    message = "Network error. Please check your internet connection.";
+                    break;
+                default:
+                    if (error.message) {
+                        message = error.message;
+                    }
+                    break;
+            }
+            Alert.alert("Login Failed", message);
         } finally {
             setIsLoading(false);
         }
@@ -275,6 +304,7 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         color: '#FFF',
+        
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
     },

@@ -137,8 +137,10 @@ const InviteMemberScreen = () => {
                     <View style={styles.modalContent}>
                         <View style={styles.modalIndicator} />
                         <Text style={styles.successMessage}>
-                            An invitation email has been sent to your new team member
+                            An invitation email has been sent
                         </Text>
+                        <Text style={[styles.successMessage, { marginBottom: 40 }]}>to your new team member</Text>
+
                         <GradientBorderButton
                             text="Continue"
                             onPress={() => {
@@ -171,7 +173,7 @@ const styles = StyleSheet.create({
         padding: 10,
     },
     title: {
-        fontSize: 28,
+        fontSize: 32,
         color: '#FFF',
         fontFamily: Typography.serif.regular,
         marginTop: 20,
@@ -182,7 +184,7 @@ const styles = StyleSheet.create({
     },
     label: {
         color: '#FFFBF3',
-        fontSize: 13,
+        fontSize: 16,
         marginBottom: 12,
         fontFamily: Typography.sans.regular,
     },
@@ -200,7 +202,7 @@ const styles = StyleSheet.create({
     },
     sectionTitle: {
         color: '#FFF',
-        fontSize: 16,
+        fontSize: 18,
         fontFamily: Typography.sans.semiBold,
         marginBottom: 8,
     },
@@ -216,23 +218,22 @@ const styles = StyleSheet.create({
         borderColor: 'rgba(255, 255, 255, 0.5)',
     },
     radioOuter: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 2,
-        borderColor: '#636D77',
+        width: 16,
+        height: 16,
+        borderRadius: 8,
+        backgroundColor: '#8E949A',
         justifyContent: 'center',
         alignItems: 'center',
         marginRight: 16,
-        marginTop: 2,
+        marginTop: -4,
     },
     radioOuterActive: {
-        borderColor: '#B99A4A',
+        backgroundColor: '#B99A4A',
     },
     radioInner: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
+        width: 16,
+        height: 16,
+        borderRadius: 8,
         backgroundColor: '#B99A4A',
     },
     roleContent: {
@@ -240,7 +241,7 @@ const styles = StyleSheet.create({
     },
     roleTitle: {
         color: '#FFF',
-        fontSize: 13,
+        fontSize: 16,
         fontFamily: Typography.sans.regular,
         marginBottom: 8,
     },
@@ -251,14 +252,14 @@ const styles = StyleSheet.create({
     roleDescription: {
         color: '#fff',
         opacity: 0.5,
-        fontSize: 13,
+        fontSize: 16,
         fontFamily: Typography.sans.regular,
         lineHeight: 20,
     },
     roleDescriptionActive: {
         color: '#fff',
         opacity: 0.5,
-        fontSize: 13,
+        fontSize: 16,
         fontFamily: Typography.sans.regular,
     },
     footer: {
@@ -303,7 +304,6 @@ const styles = StyleSheet.create({
         color: '#FFF',
         textAlign: 'center',
         fontFamily: Typography.sans.semiBold,
-        marginBottom: 40,
         letterSpacing: 0.2,
         lineHeight: 28,
     },

@@ -14,7 +14,8 @@ import {
     KeyboardAvoidingView,
     PanResponder,
     Animated,
-    Dimensions
+    Dimensions,
+    ActivityIndicator
 } from 'react-native';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import Modal from 'react-native-modal';
@@ -29,7 +30,7 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
 import { database, auth } from '../../config/firebase';
-import { ref, onValue, get } from 'firebase/database';
+import { ref, onValue, get, set } from 'firebase/database';
 
 const TRIPS_DATA = [
     {
@@ -353,16 +354,27 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, s
 const LANGUAGES = [
     { code: 'ar', label: 'Arabic' },
     { code: 'en', label: 'English' },
+    { code: 'ur', label: 'Urdu' },
+    { code: 'id', label: 'Indonesian' },
+    { code: 'tr', label: 'Turkish' },
+    { code: 'fr', label: 'French' },
+    { code: 'hi', label: 'Hindi' },
+    { code: 'bn', label: 'Bengali' },
+    { code: 'ms', label: 'Malay' },
+    { code: 'fa', label: 'Persian (Farsi)' },
+    { code: 'es', label: 'Spanish' },
+    { code: 'pt', label: 'Portuguese' },
+    { code: 'ru', label: 'Russian' },
+    { code: 'de', label: 'German' },
     { code: 'nl', label: 'Dutch' },
 ];
 
 const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
-    const { changeLanguage } = useLanguage();
     const renderLanguageItem = ({ item }) => (
         <TouchableOpacity
             style={styles.languageItem}
             onPress={() => {
-                changeLanguage(item.code);
+                onSelect(item.code);
                 onClose();
             }}
         >
@@ -398,6 +410,20 @@ const LanguageModal = ({ visible, onClose, onSelect, selectedLanguage }) => {
     );
 };
 
+const getLocalDateString = (dateVal) => {
+    if (!dateVal) return '';
+    try {
+        const d = new Date(dateVal);
+        if (isNaN(d.getTime())) return '';
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    } catch (e) {
+        return '';
+    }
+};
+
 const HomeScreen = ({ navigation }) => {
     const insets = useSafeAreaInsets();
     const { t, language, changeLanguage, isRTL } = useLanguage();
@@ -415,6 +441,7 @@ const HomeScreen = ({ navigation }) => {
     const [participantsCounts, setParticipantsCounts] = useState({});
     const countListeners = useRef({}); // Track listeners by tripId to avoid duplicates and leaks
     const [isLoading, setIsLoading] = useState(true);
+    const [userLikes, setUserLikes] = useState({});
 
     const [isAdmin, setIsAdmin] = useState(false);
 
@@ -433,6 +460,10 @@ const HomeScreen = ({ navigation }) => {
                 setIsLoading(false);
                 return;
             }
+
+            // Extract user likes from profile
+            const likesObj = userData.profile?.likes || {};
+            setUserLikes(likesObj);
 
             const orgId = userData.staff_org_id;
             setIsAdmin(!!orgId);
@@ -463,11 +494,11 @@ const HomeScreen = ({ navigation }) => {
                                         : [];
                                     const filtered = uids.filter(uid => {
                                         const role = staffList[uid];
-                                        return !role || role === 'co-host' || role === 'manager';
+                                        return !role || role === 'admin' || role === 'co-host' || role === 'manager';
                                     });
                                     const teamMemberUids = Object.keys(staffList).filter(uid => {
                                         const role = staffList[uid];
-                                        return role === 'co-host' || role === 'manager';
+                                        return role === 'admin' || role === 'co-host' || role === 'manager';
                                     });
                                     const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
                                     setParticipantsCounts(prev => ({ ...prev, [tId]: combined.length }));
@@ -517,11 +548,11 @@ const HomeScreen = ({ navigation }) => {
                                             : [];
                                         const filtered = uids.filter(uid => {
                                             const role = staffList[uid];
-                                            return !role || role === 'co-host' || role === 'manager';
+                                            return !role || role === 'admin' || role === 'co-host' || role === 'manager';
                                         });
                                         const teamMemberUids = Object.keys(staffList).filter(uid => {
                                             const role = staffList[uid];
-                                            return role === 'co-host' || role === 'manager';
+                                            return role === 'admin' || role === 'co-host' || role === 'manager';
                                         });
                                         const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
                                         setParticipantsCounts(prev => ({ ...prev, [tripId]: combined.length }));
@@ -598,19 +629,27 @@ const HomeScreen = ({ navigation }) => {
         }
 
         if (startDate) {
-            const filterStart = new Date(startDate).getTime();
-            result = result.filter(item => (item.start_date || 0) >= filterStart);
+            result = result.filter(item => {
+                if (!item.start_date) return false;
+                const itemStartStr = getLocalDateString(item.start_date);
+                return itemStartStr && itemStartStr >= startDate;
+            });
         }
 
         if (endDate) {
-            const filterEnd = new Date(endDate).getTime();
-            result = result.filter(item => (item.end_date || 0) <= filterEnd);
+            result = result.filter(item => {
+                if (!item.end_date) return false;
+                const itemEndStr = getLocalDateString(item.end_date);
+                return itemEndStr && itemEndStr <= endDate;
+            });
         }
 
         if (participants) {
             result = result.filter(item => {
-                const totalSeats = parseInt(item.total_seats) || 15;
-                return totalSeats >= parseInt(participants);
+                const count = participantsCounts[item.id] !== undefined 
+                    ? participantsCounts[item.id] 
+                    : (item.participants || 0);
+                return count >= parseInt(participants);
             });
         }
 
@@ -635,11 +674,11 @@ const HomeScreen = ({ navigation }) => {
                 return countA - countB;
             });
         } else if (sortOption === 'Likes') {
-            result.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+            result = result.filter(item => userLikes && userLikes[item.id]);
         }
 
         setFilteredData(result);
-    }, [searchQuery, sortOption, allTrips, startDate, endDate, destination, participants]);
+    }, [searchQuery, sortOption, allTrips, startDate, endDate, destination, participants, userLikes, participantsCounts]);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -654,6 +693,42 @@ const HomeScreen = ({ navigation }) => {
         }
     }, []);
 
+
+    const renderEmptyComponent = () => {
+        if (isLoading) {
+            return (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#B99A4A" />
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                    <Feather name="compass" size={32} color="#B99A4A" />
+                </View>
+                <Text style={styles.emptyTitle}>{t('no_trips_title')}</Text>
+                <Text style={styles.emptySubtitle}>{t('no_trips_subtitle')}</Text>
+            </View>
+        );
+    };
+
+    const toggleLikeTrip = async (tripId) => {
+        const user = auth.currentUser;
+        if (!user) return;
+        const likeRef = ref(database, `users/${user.uid}/profile/likes/${tripId}`);
+        const isLiked = !!userLikes[tripId];
+        try {
+            if (isLiked) {
+                await set(likeRef, null);
+            } else {
+                await set(likeRef, true);
+            }
+        } catch (err) {
+            console.error("Failed to toggle like:", err);
+        }
+    };
 
     const renderTripItem = ({ item }) => {
         // Determine image source
@@ -689,8 +764,8 @@ const HomeScreen = ({ navigation }) => {
                 <View style={styles.cardContent}>
                     <View style={styles.cardHeader}>
                         <Text style={styles.cardTitle}>{item.title}</Text>
-                        <TouchableOpacity>
-                            <Svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <TouchableOpacity onPress={() => toggleLikeTrip(item.id)}>
+                            <Svg width="20" height="20" viewBox="0 0 20 20" fill={userLikes[item.id] ? "#B99A4A" : "none"} xmlns="http://www.w3.org/2000/svg">
                                 <Path d="M10.5165 17.3416C10.2332 17.4416 9.7665 17.4416 9.48317 17.3416C7.0665 16.5166 1.6665 13.075 1.6665 7.24165C1.6665 4.66665 3.7415 2.58331 6.29984 2.58331C7.8165 2.58331 9.15817 3.31665 9.99984 4.44998C10.8415 3.31665 12.1915 2.58331 13.6998 2.58331C16.2582 2.58331 18.3332 4.66665 18.3332 7.24165C18.3332 13.075 12.9332 16.5166 10.5165 17.3416Z" stroke="#B99A4A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                             </Svg>
                         </TouchableOpacity>
@@ -837,8 +912,9 @@ const HomeScreen = ({ navigation }) => {
                         data={filteredData}
                         renderItem={renderTripItem}
                         keyExtractor={item => item.id}
-                        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+                        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }, filteredData.length === 0 && { flexGrow: 1, justifyContent: 'center' }]}
                         showsVerticalScrollIndicator={false}
+                        ListEmptyComponent={renderEmptyComponent}
                     />
                 </View>
 
@@ -1195,6 +1271,43 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         alignSelf: 'center',
         marginVertical: 12,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 30,
+        paddingBottom: 60,
+    },
+    emptyIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#1E2328',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#B99A4A',
+    },
+    emptyTitle: {
+        fontSize: 20,
+        color: '#FFF',
+        fontFamily: Typography.serif.regular,
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: '#A1A1AA',
+        fontFamily: Typography.sans.regular,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

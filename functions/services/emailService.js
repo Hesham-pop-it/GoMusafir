@@ -19,7 +19,7 @@ function initSendGrid() {
 }
 
 const DEFAULT_TEMPLATE_ID = "d-eff261607ce94c2ab816abce9c740ef2";
-const FROM_EMAIL = "noreply@gomusafir.app";
+const FROM_EMAIL = "noreply@join.gomusafir.app";
 
 /**
  * Sends a dynamic template email via SendGrid.
@@ -31,7 +31,7 @@ async function sendEmail({ to, subject, html, templateId = DEFAULT_TEMPLATE_ID }
     to,
     from: {
       email: FROM_EMAIL,
-      name: "GoMusafir"
+      name: "GoMusāfir"
     },
     templateId: templateId,
     dynamicTemplateData: {

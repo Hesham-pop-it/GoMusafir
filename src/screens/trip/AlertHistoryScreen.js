@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { ref, get } from 'firebase/database';
+import { database } from '../../config/firebase';
 import {
     View,
     Text,
@@ -7,6 +9,8 @@ import {
     FlatList,
     Image,
     Dimensions,
+    Linking,
+    Platform
 } from 'react-native';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,46 +26,26 @@ const { width } = Dimensions.get('window');
 const ALERT_DATA = [
     {
         id: '1',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
+        title: 'Emergency Alert',
+        message: 'needs immediate assistance! Lost near Askari 4.',
+        sender: 'Sophia Bennett',
+        senderImage: 'https://randomuser.me/api/portraits/women/32.jpg',
+        time: '18:00 - 12/12/2025',
+        type: 'emergency',
+        latitude: 21.4225,
+        longitude: 39.8262
     },
     {
         id: '2',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
-    },
-    {
-        id: '3',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
-    },
-    {
-        id: '4',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
-    },
-    {
-        id: '5',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
-    },
-    {
-        id: '6',
-        title: 'Bus Departure: The bus for the city tour will depart in 30 minutes.',
-        sender: 'Ethan Carter',
-        senderImage: 'https://randomuser.me/api/portraits/men/32.jpg',
-        time: '18:00 - 12/12/2025'
-    },
+        title: 'Emergency Alert',
+        message: 'needs immediate assistance! Medical concern near gate 4.',
+        sender: 'Liam Harper',
+        senderImage: 'https://randomuser.me/api/portraits/men/33.jpg',
+        time: '19:15 - 12/12/2025',
+        type: 'emergency',
+        latitude: 21.4235,
+        longitude: 39.8272
+    }
 ];
 
 const AlertHistoryScreen = () => {
@@ -69,8 +53,48 @@ const AlertHistoryScreen = () => {
     const route = useRoute();
     const passedAlerts = route.params?.alerts;
 
-    // Use passedAlerts if available (even if empty), otherwise fallback to ALERT_DATA
-    const alertsToDisplay = passedAlerts !== undefined ? passedAlerts : ALERT_DATA;
+    // Use passedAlerts if available (even if empty), otherwise fallback to ALERT_DATA. Filter only emergency alerts.
+    const rawAlerts = passedAlerts !== undefined ? passedAlerts : ALERT_DATA;
+    const alertsToDisplay = rawAlerts.filter(item => item.type === 'emergency');
+
+    const [profileImages, setProfileImages] = useState({});
+
+    useEffect(() => {
+        // Find all unique senderUids in the alerts list
+        const uids = Array.from(new Set(
+            alertsToDisplay
+                .map(item => item.senderUid)
+                .filter(uid => typeof uid === 'string' && uid.trim() !== '')
+        ));
+
+        if (uids.length === 0) return;
+
+        const fetchProfiles = async () => {
+            const promises = uids.map(async (uid) => {
+                try {
+                    const snap = await get(ref(database, `users/${uid}/profile`));
+                    if (snap.exists()) {
+                        const profile = snap.val();
+                        return { uid, avatar: profile.photoURL };
+                    }
+                } catch (e) {
+                    console.log("Error fetching profile in AlertHistory:", e);
+                }
+                return { uid, avatar: null };
+            });
+
+            const results = await Promise.all(promises);
+            const map = {};
+            results.forEach(res => {
+                if (res && res.avatar) {
+                    map[res.uid] = res.avatar;
+                }
+            });
+            setProfileImages(prev => ({ ...prev, ...map }));
+        };
+
+        fetchProfiles();
+    }, [alertsToDisplay]);
 
     const renderEmptyState = () => (
         <View style={styles.emptyContainer}>
@@ -95,7 +119,12 @@ const AlertHistoryScreen = () => {
             title = item.message || item.title || '';
         }
         const sender = item.sender || item.name || 'System';
-        const senderImage = item.senderImage || 'https://www.gravatar.com/avatar/?d=mp'; // fallback avatar
+        
+        const rawImage = profileImages[item.senderUid] || item.senderImage;
+        const senderImage = (rawImage && rawImage.trim() !== '' && !rawImage.includes('d=mp') && !rawImage.includes('gravatar.com'))
+            ? rawImage 
+            : `https://ui-avatars.com/api/?name=${encodeURIComponent(sender)}&background=B99A4A&color=fff`;
+
         const time = item.time || formatTime(item.timestamp);
 
         return (
@@ -111,7 +140,33 @@ const AlertHistoryScreen = () => {
                         <Image source={{ uri: senderImage }} style={styles.avatar} />
                         <Text style={styles.senderName}>{sender}</Text>
                     </View>
-                    <Text style={styles.timeText}>{time}</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                        <Text style={styles.timeText}>{time}</Text>
+                        {item.latitude && item.longitude && (
+                            <TouchableOpacity
+                                style={{
+                                    backgroundColor: '#FF3B30',
+                                    paddingHorizontal: 10,
+                                    paddingVertical: 5,
+                                    borderRadius: 12,
+                                    flexDirection: 'row',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: 4
+                                }}
+                                onPress={() => {
+                                    const url = Platform.select({
+                                        ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
+                                        android: `geo:0,0?q=${item.latitude},${item.longitude}`
+                                    });
+                                    Linking.openURL(url);
+                                }}
+                            >
+                                <Ionicons name="location-outline" size={14} color="#FFF" />
+                                <Text style={{ color: '#FFF', fontSize: 11, fontFamily: Typography.sans.bold }}>Location</Text>
+                            </TouchableOpacity>
+                        )}
+                    </View>
                 </View>
             </View>
         );

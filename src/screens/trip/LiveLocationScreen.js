@@ -92,6 +92,7 @@ const LiveLocationScreen = () => {
     const [participants, setParticipants] = useState({});
     const [selectedMarker, setSelectedMarker] = useState(null);
     const [droppedPin, setDroppedPin] = useState(null);
+    const [pinnedLocation, setPinnedLocation] = useState(null);
     const [isSafetyActive, setIsSafetyActive] = useState(false);
     const [safetyPoint, setSafetyPoint] = useState(null);
     const [incomingRequest, setIncomingRequest] = useState(null);
@@ -110,6 +111,7 @@ const LiveLocationScreen = () => {
     const [userRole, setUserRole] = useState('participant');
     const [locationPermissions, setLocationPermissions] = useState({});
     const [activeParticipantUids, setActiveParticipantUids] = useState([]);
+    const [tracksViewChanges, setTracksViewChanges] = useState(true);
 
 
     // Swipe down to close logic for modals - Interactive version
@@ -232,6 +234,16 @@ const LiveLocationScreen = () => {
         });
         return () => unsubscribe();
     }, [resolvedOrgId, tripId]);
+
+    // Tracks view changes dynamically to resolve map marker image loading bugs
+    useEffect(() => {
+        setTracksViewChanges(true);
+        const timer = setTimeout(() => {
+            setTracksViewChanges(false);
+        }, 3000);
+        return () => clearTimeout(timer);
+    }, [participantsList]);
+
     const [hasAutoCentered, setHasAutoCentered] = useState(false);
 
     // Auto-center once when user location is first found
@@ -364,6 +376,7 @@ const LiveLocationScreen = () => {
         let locationsRef = null;
         let safetyRef = null;
         let notifRef = null;
+        let pinnedLocationRef = null;
 
         if (resolvedOrgId && tripId) {
             locationsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations`);
@@ -378,6 +391,12 @@ const LiveLocationScreen = () => {
             onValue(safetyRef, (snap) => {
                 setSafetyPoint(snap.val());
                 setIsSafetyActive(!!snap.val());
+            });
+
+            // Listen for Pinned Location
+            pinnedLocationRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/pinned_location`);
+            onValue(pinnedLocationRef, (snap) => {
+                setPinnedLocation(snap.val());
             });
 
             // Listen for Incoming Requests
@@ -404,15 +423,11 @@ const LiveLocationScreen = () => {
                 if (staffRef) {
                     get(staffRef).then(staffSnap => {
                         const staffList = staffSnap.val() || {};
-                        const filtered = uids.filter(uid => {
-                            const role = staffList[uid];
-                            return !role || role === 'co-host' || role === 'manager';
-                        });
                         const teamMemberUids = Object.keys(staffList).filter(uid => {
                             const role = staffList[uid];
-                            return role === 'co-host' || role === 'manager';
+                            return role === 'admin' || role === 'co-host' || role === 'manager';
                         });
-                        const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
+                        const combined = Array.from(new Set([...uids, ...teamMemberUids]));
                         setActiveParticipantUids(combined);
                     }).catch(() => {
                         setActiveParticipantUids(uids);
@@ -428,6 +443,7 @@ const LiveLocationScreen = () => {
             if (locationsRef) off(locationsRef);
             if (safetyRef) off(safetyRef);
             if (notifRef) off(notifRef);
+            if (pinnedLocationRef) off(pinnedLocationRef);
             const officialParticipantsRef = ref(database, `trips_participants/${tripId}`);
             off(officialParticipantsRef);
         };
@@ -459,7 +475,7 @@ const LiveLocationScreen = () => {
 
     // Fetch Trip Participants Profile Data - UID Targeted & Cached
     useEffect(() => {
-        const uidsToFetch = Object.keys(participants);
+        const uidsToFetch = activeParticipantUids;
         if (uidsToFetch.length === 0 || !tripId) return;
 
         uidsToFetch.forEach(async (uid) => {
@@ -540,7 +556,7 @@ const LiveLocationScreen = () => {
             } catch (err) {
             }
         });
-    }, [participants, tripId, isAdmin, globalVisibilityConfig]);
+    }, [activeParticipantUids, tripId, isAdmin, globalVisibilityConfig]);
 
 
     const centerOnUser = () => {
@@ -568,6 +584,51 @@ const LiveLocationScreen = () => {
             });
         }
     };
+
+    const pinLocationToDB = async () => {
+        const resolvedOrg = resolvedOrgId || orgId;
+        if (!isAdmin || !droppedPin || !resolvedOrg || !tripId) return;
+        try {
+            const pinRef = ref(database, `trips_active/${resolvedOrg}/${tripId}/pinned_location`);
+            await set(pinRef, {
+                latitude: droppedPin.latitude,
+                longitude: droppedPin.longitude,
+                title: droppedPin.title,
+                address: droppedPin.address,
+                by: auth.currentUser.uid,
+                created_at: serverTimestamp()
+            });
+            // Update local state to show it is now shared/pinned
+            setDroppedPin(prev => prev ? { ...prev, isShared: true } : null);
+            Alert.alert("Success", "Location pinned for all participants.");
+        } catch (error) {
+            Alert.alert("Error", "Failed to pin location: " + error.message);
+        }
+    };
+
+    const unpinLocationFromDB = async () => {
+        const resolvedOrg = resolvedOrgId || orgId;
+        if (!isAdmin || !resolvedOrg || !tripId) return;
+        try {
+            const pinRef = ref(database, `trips_active/${resolvedOrg}/${tripId}/pinned_location`);
+            await remove(pinRef);
+            setDroppedPin(null);
+            Alert.alert("Success", "Location unpinned.");
+        } catch (error) {
+            Alert.alert("Error", "Failed to unpin location: " + error.message);
+        }
+    };
+
+    useEffect(() => {
+        if (!pinnedLocation && droppedPin?.isShared) {
+            setDroppedPin(null);
+        } else if (pinnedLocation && droppedPin?.isShared) {
+            setDroppedPin({
+                ...pinnedLocation,
+                isShared: true
+            });
+        }
+    }, [pinnedLocation]);
 
     const checkLocationPermission = async (participant) => {
         if (!orgId || !tripId || !auth.currentUser) return false;
@@ -750,11 +811,11 @@ const LiveLocationScreen = () => {
                         onPress={handleMapPress}
                         onLongPress={handleMapPress}
                         moveOnMarkerPress={false}
-                        showsUserLocation={!isLocationHiddenGlobally}
+                        showsUserLocation={true}
                         showsMyLocationButton={false}
                     >
-                        {/* Dropped Pin Marker */}
-                        {droppedPin && (
+                        {/* Dropped Pin Marker (Only for local unsaved pins) */}
+                        {droppedPin && !droppedPin.isShared && (
                             <Marker
                                 coordinate={{ latitude: droppedPin.latitude, longitude: droppedPin.longitude }}
                                 anchor={{ x: 0.5, y: 0.5 }}
@@ -765,6 +826,45 @@ const LiveLocationScreen = () => {
                                 <View style={styles.droppedPinMarkerContainer}>
                                     <View style={styles.droppedPinCircle}>
                                         <Ionicons name="pin" size={22} color="#EF4444" />
+                                    </View>
+                                </View>
+                            </Marker>
+                        )}
+
+                        {/* Pinned Location Marker (Shared, persisted pin) */}
+                        {pinnedLocation && (
+                            <Marker
+                                coordinate={{ latitude: pinnedLocation.latitude, longitude: pinnedLocation.longitude }}
+                                anchor={{ x: 0.5, y: 0.5 }}
+                                onPress={(e) => {
+                                    e.stopPropagation();
+                                    if (isAdmin) {
+                                        // Organizers see the card to allow unpinning
+                                        setDroppedPin({
+                                            ...pinnedLocation,
+                                            isShared: true
+                                        });
+                                        setSelectedMarker(null);
+                                        if (mapRef.current) {
+                                            mapRef.current.animateToRegion({
+                                                latitude: pinnedLocation.latitude,
+                                                longitude: pinnedLocation.longitude,
+                                                latitudeDelta: 0.01,
+                                                longitudeDelta: 0.01,
+                                            }, 1000);
+                                        }
+                                    } else {
+                                        // Participants automatically get redirected to Google Maps directions
+                                        const url = `https://www.google.com/maps/dir/?api=1&destination=${pinnedLocation.latitude},${pinnedLocation.longitude}`;
+                                        Linking.openURL(url).catch((err) => {
+                                            console.warn("Failed to open Google Maps directions:", err);
+                                        });
+                                    }
+                                }}
+                            >
+                                <View style={styles.droppedPinMarkerContainer}>
+                                    <View style={[styles.droppedPinCircle, { backgroundColor: '#B99A4A' }]}>
+                                        <Ionicons name="pin" size={22} color="#FFF" />
                                     </View>
                                 </View>
                             </Marker>
@@ -794,11 +894,11 @@ const LiveLocationScreen = () => {
                         {Object.entries(participants)
                             .filter(([uid, loc]) => {
                                 if (!loc.lat || !loc.lng) return false;
-                                if (isLocationHiddenGlobally) {
-                                    return false;
-                                }
                                 
                                 const isMe = uid === auth.currentUser?.uid;
+                                if (isLocationHiddenGlobally && !isMe) {
+                                    return false;
+                                }
 
                                 // NEW: Filter by active participant list
                                 if (!isMe && activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
@@ -835,7 +935,7 @@ const LiveLocationScreen = () => {
                                         }}
                                         zIndex={isSelected ? 100 : (isMe ? 50 : 10)}
                                         anchor={{ x: 0.5, y: 0.5 }}
-                                        tracksViewChanges={false}
+                                        tracksViewChanges={tracksViewChanges}
                                         onSelect={() => {
                                             setSelectedMarker({ id: uid, latitude: loc.lat, longitude: loc.lng });
                                             setDroppedPin(null);
@@ -856,9 +956,9 @@ const LiveLocationScreen = () => {
                                             ]}
                                         >
                                             <View style={styles.markerCircle}>
-                                                {p?.image && !p.image.includes('ui-avatars.com') ? (
+                                                {avatarUri && !avatarUri.includes('ui-avatars.com') ? (
                                                     <Image
-                                                        source={{ uri: p.image }}
+                                                        source={{ uri: avatarUri }}
                                                         style={styles.markerAvatar}
                                                         resizeMode="cover"
                                                     />
@@ -965,13 +1065,27 @@ const LiveLocationScreen = () => {
                                     <Text style={styles.directionsPillText}>Directions</Text>
                                 </TouchableOpacity>
 
-                                <TouchableOpacity 
-                                    style={styles.startPill}
-                                    onPress={openGoogleMaps}
-                                >
-                                    <Ionicons name="navigate" size={18} color="#FFF" />
-                                    <Text style={styles.startPillText}>Start</Text>
-                                </TouchableOpacity>
+
+
+                                {isAdmin && !droppedPin.isShared && (
+                                    <TouchableOpacity 
+                                        style={styles.pinPill}
+                                        onPress={pinLocationToDB}
+                                    >
+                                        <Ionicons name="pin" size={18} color="#FFF" />
+                                        <Text style={styles.pinPillText}>Pin Location</Text>
+                                    </TouchableOpacity>
+                                )}
+
+                                {isAdmin && droppedPin.isShared && (
+                                    <TouchableOpacity 
+                                        style={styles.unpinPill}
+                                        onPress={unpinLocationFromDB}
+                                    >
+                                        <Ionicons name="trash-outline" size={18} color="#FF383C" />
+                                        <Text style={styles.unpinPillText}>Unpin</Text>
+                                    </TouchableOpacity>
+                                )}
 
                                 <TouchableOpacity 
                                     style={styles.callPill}
@@ -982,26 +1096,6 @@ const LiveLocationScreen = () => {
                                 </TouchableOpacity>
                             </ScrollView>
 
-                            {/* Images Row */}
-                            <ScrollView 
-                                horizontal 
-                                showsHorizontalScrollIndicator={false} 
-                                style={styles.imagesRow}
-                                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-                            >
-                                <Image 
-                                    source={{ uri: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=300&auto=format&fit=crop&q=60' }} 
-                                    style={styles.locationMockImage} 
-                                />
-                                <Image 
-                                    source={{ uri: 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=300&auto=format&fit=crop&q=60' }} 
-                                    style={styles.locationMockImage} 
-                                />
-                                <Image 
-                                    source={{ uri: 'https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=300&auto=format&fit=crop&q=60' }} 
-                                    style={styles.locationMockImage} 
-                                />
-                            </ScrollView>
                         </View>
                     )}
 
@@ -1039,10 +1133,11 @@ const LiveLocationScreen = () => {
                                 styles.participantsModal,
                                 { transform: [{ translateY: panYParticipants }] }
                             ]}
-                            {...participantsSwipe.panHandlers}
                         >
-                            <View style={styles.modalHandle} />
-                            <Text style={styles.modalTitle}>Participants</Text>
+                            <View {...participantsSwipe.panHandlers} style={{ width: '100%' }}>
+                                <View style={styles.modalHandle} />
+                                <Text style={styles.modalTitle}>Participants</Text>
+                            </View>
 
                             {/* Search Bar */}
                             <View style={styles.searchContainer}>
@@ -1056,73 +1151,79 @@ const LiveLocationScreen = () => {
                                 />
                             </View>
 
-
                             <ScrollView style={styles.participantsList}>
-                                {Object.entries(participants)
-                                    .filter(([uid, loc]) => {
+                                {activeParticipantUids
+                                    .filter((uid) => {
                                         const isMe = uid === auth.currentUser?.uid;
                                         if (isMe) return false;
                                         if (isLocationHiddenGlobally) {
                                             return false;
                                         }
-                                        if (!loc || !loc.lat || !loc.lng) return false;
-                                        // Filter list by active participant list
-                                        if (activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
-                                            return false;
+                                        if (searchQuery.trim().length > 0) {
+                                            const p = participantsList.find(part => part.id === uid);
+                                            const name = p?.name || `User (${uid.substring(0, 5)})`;
+                                            if (!name.toLowerCase().includes(searchQuery.toLowerCase())) {
+                                                return false;
+                                            }
                                         }
                                         return true;
                                     })
-                                    .map(([uid, loc]) => {
-                                    const p = participantsList.find(part => part.id === uid);
+                                    .map((uid) => {
+                                        const loc = participants[uid];
+                                        const p = participantsList.find(part => part.id === uid);
+                                        const hasLocation = loc && loc.lat && loc.lng;
 
-                                    return (
-                                        <TouchableOpacity
-                                            key={uid}
-                                            style={styles.participantItem}
-                                            onPress={() => {
-                                                const activePart = { id: uid, latitude: loc.lat, longitude: loc.lng };
-                                                setSelectedMarker(activePart);
-                                                setShowParticipantsList(false);
-                                                if (mapRef.current && loc.lat && loc.lng) {
-                                                    mapRef.current.animateToRegion({
-                                                        latitude: loc.lat,
-                                                        longitude: loc.lng,
-                                                        latitudeDelta: 0.01,
-                                                        longitudeDelta: 0.01,
-                                                    }, 1000);
-                                                }
-                                            }}
-                                        >
-                                            
-                                            <Image
-                                                source={{ uri: p?.image || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff` }}
-                                                style={styles.participantAvatar}
-                                            />
-                                            <View style={{ flex: 1, height: 60, justifyContent: 'center' }}>
-                                                <Text style={[styles.participantName, { flex: 0 }]}>{p?.name || `User (${uid.substring(0, 5)})`}</Text>
-                                            </View>
+                                        return (
+                                            <TouchableOpacity
+                                                key={uid}
+                                                style={styles.participantItem}
+                                                onPress={() => {
+                                                    if (hasLocation) {
+                                                        const activePart = { id: uid, latitude: loc.lat, longitude: loc.lng };
+                                                        setSelectedMarker(activePart);
+                                                        setShowParticipantsList(false);
+                                                        if (mapRef.current) {
+                                                            mapRef.current.animateToRegion({
+                                                                latitude: loc.lat,
+                                                                longitude: loc.lng,
+                                                                latitudeDelta: 0.01,
+                                                                longitudeDelta: 0.01,
+                                                            }, 1000);
+                                                        }
+                                                    }
+                                                }}
+                                                disabled={!hasLocation}
+                                                activeOpacity={hasLocation ? 0.7 : 1}
+                                            >
+                                                
+                                                <Image
+                                                    source={{ uri: p?.image || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff` }}
+                                                    style={styles.participantAvatar}
+                                                />
+                                                <View style={{ flex: 1, height: 60, justifyContent: 'center' }}>
+                                                    <Text style={[styles.participantName, { flex: 0 }]}>{p?.name || `User (${uid.substring(0, 5)})`}</Text>
+                                                </View>
 
-                                            <View style={styles.actionButtons}>
-                                                {locationPermissions[uid] || (globalVisibilityConfig?.location === 'Show to everyone') || (isAdmin && globalVisibilityConfig?.location === 'Show to organizer') ? (
-                                                    <TouchableOpacity
-                                                        style={styles.locateBtn}
-                                                        onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                                    >
-                                                        <LocationPinIcon />
-                                                    </TouchableOpacity>
-                                                ) : (
-                                                    <TouchableOpacity
-                                                        style={styles.questionBtn}
-                                                        onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                                    >
-                                                        <Text style={styles.questionText}>?</Text>
-                                                    </TouchableOpacity>
-                                                )}
-                                            </View>
-                                        </TouchableOpacity>
-                                    );
-                                })}
-
+                                                <View style={styles.actionButtons}>
+                                                    {hasLocation && (locationPermissions[uid] || (globalVisibilityConfig?.location === 'Show to everyone') || (isAdmin && globalVisibilityConfig?.location === 'Show to organizer')) ? (
+                                                        <TouchableOpacity
+                                                            style={styles.locateBtn}
+                                                            onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
+                                                        >
+                                                            <LocationPinIcon />
+                                                        </TouchableOpacity>
+                                                    ) : (
+                                                        <TouchableOpacity
+                                                            style={styles.questionBtn}
+                                                            onPress={() => handleQuestionPress({ id: uid })}
+                                                        >
+                                                            <Text style={styles.questionText}>?</Text>
+                                                        </TouchableOpacity>
+                                                    )}
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
 
                             </ScrollView>
                         </Animated.View>
@@ -1770,6 +1871,38 @@ const styles = StyleSheet.create({
         height: 80,
         borderRadius: 8,
         backgroundColor: '#2D3135',
+    },
+    pinPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#B99A4A',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 24,
+        gap: 6,
+    },
+    pinPillText: {
+        color: '#FFF',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
+    },
+    unpinPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#2D3135',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 24,
+        gap: 6,
+        borderWidth: 1,
+        borderColor: '#FF383C',
+    },
+    unpinPillText: {
+        color: '#FF383C',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        fontWeight: 'bold',
     },
 });
 

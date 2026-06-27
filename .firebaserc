@@ -7,6 +7,9 @@
       "hosting": {
         "api": [
           "api-gomusafir"
+        ],
+        "website": [
+          "go-musafir"
         ]
       }
     }

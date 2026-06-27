@@ -11,6 +11,7 @@ import {
     Platform,
     AppState
 } from 'react-native';
+import { StatusBar } from 'react-native';
 import Modal from 'react-native-modal';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useIsFocused } from '@react-navigation/native';
@@ -223,7 +224,7 @@ const FlyingGreetings = () => {
 };
 
 const WelcomeScreen = ({ navigation }) => {
-    const player = useVideoPlayer(require('../../../assets/Login Animation - 720p.mp4'), (player) => {
+    const player = useVideoPlayer(require('../../../assets/Login Animation - 1080p.mp4'), (player) => {
         player.muted = true;
         player.loop = true;
         player.audioMixingMode = 'mixWithOthers';
@@ -260,7 +261,7 @@ const WelcomeScreen = ({ navigation }) => {
         const subscription = AppState.addEventListener('change', (nextAppState) => {
             if (nextAppState === 'active' && isFocused) {
                 player.play();
-            } else if (nextAppState === 'background') {
+            } else {
                 player.pause();
             }
         });
@@ -303,9 +304,11 @@ const WelcomeScreen = ({ navigation }) => {
     );
 
     return (
+
         <View style={styles.container}>
+
             <VideoView
-                style={StyleSheet.absoluteFillObject}
+                style={[StyleSheet.absoluteFillObject, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
                 player={player}
                 nativeControls={false}
                 contentFit="cover"
@@ -340,7 +343,16 @@ const WelcomeScreen = ({ navigation }) => {
 
                         <TouchableOpacity
                             style={[styles.button, styles.secondaryButton]}
-                            onPress={() => WebBrowser.openBrowserAsync('https://gomusafir.app/create-account')} // TODO: Replace with dynamic config for prod vs staging
+                            onPress={async () => {
+                                player.pause();
+                                await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', {
+                                    presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+                                    
+                                });
+                                if (isFocused) {
+                                    player.play();
+                                }
+                            }} // TODO: Replace with dynamic config for prod vs staging
                         >
                             <Text style={styles.secondaryButtonText}>Create a Business Account</Text>
                         </TouchableOpacity>
@@ -438,14 +450,15 @@ const WelcomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.dark.background
+        backgroundColor: Colors.dark.background,
+        width: SCREEN_WIDTH,
+        height: SCREEN_HEIGHT,
     },
     backgroundVideo: {
         ...StyleSheet.absoluteFillObject,
     },
     overlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.2)', // Slight dark overlay for better text contrast
     },
     safeArea: {
         flex: 1,

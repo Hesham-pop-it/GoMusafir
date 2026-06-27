@@ -15,12 +15,14 @@ import {
     Linking
 } from 'react-native';
 import Modal from 'react-native-modal';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { Typography } from '../../constants/Typography';
+import { Colors } from '../../constants/Colors';
+import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import { auth, database } from '../../config/firebase';
 import { signOut } from 'firebase/auth';
@@ -33,6 +35,7 @@ const { width } = Dimensions.get('window');
 const TripSettingsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
+    const insets = useSafeAreaInsets();
     const { trip, invitationCode: directCode, isAdmin: passedIsAdmin, tripId: paramTripId, orgId: paramOrgId } = route.params || {};
     const tripId = paramTripId || trip?.id || trip?.tripId || trip?.trip_id;
     const orgId = paramOrgId || trip?.orgId || trip?.org_id;
@@ -42,6 +45,8 @@ const TripSettingsScreen = () => {
 
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+    const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
+    const [isDeletingAccount, setIsDeletingAccount] = useState(false);
     const [seatModalVisible, setSeatModalVisible] = useState(false);
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [seatCount, setSeatCount] = useState(1);
@@ -73,9 +78,10 @@ const TripSettingsScreen = () => {
 
     useEffect(() => {
         const user = auth.currentUser;
-        if (!user || !trip?.id) return;
+        const currentTripId = resolvedTripId || trip?.id || trip?.tripId || trip?.trip_id;
+        if (!user || !currentTripId) return;
 
-        const visibilityRef = ref(database, `users/${user.uid}/participant_visibility/${trip.id}`);
+        const visibilityRef = ref(database, `users/${user.uid}/participant_visibility/${currentTripId}`);
         const unsubscribe = onValue(visibilityRef, (snapshot) => {
             if (snapshot.exists()) {
                 setVisibilitySettings(prev => ({ ...prev, ...snapshot.val() }));
@@ -83,7 +89,7 @@ const TripSettingsScreen = () => {
         });
 
         return () => unsubscribe();
-    }, [trip?.id]);
+    }, [resolvedTripId, trip?.id, trip?.tripId, trip?.trip_id]);
 
     // 1. Robust ID Resolution for Sync Path
     useEffect(() => {
@@ -158,11 +164,11 @@ const TripSettingsScreen = () => {
                         : [];
                     const filtered = uids.filter(uid => {
                         const role = staffList[uid];
-                        return !role || role === 'co-host' || role === 'manager';
+                        return !role || role === 'admin' || role === 'co-host' || role === 'manager';
                     });
                     const teamMemberUids = Object.keys(staffList).filter(uid => {
                         const role = staffList[uid];
-                        return role === 'co-host' || role === 'manager';
+                        return role === 'admin' || role === 'co-host' || role === 'manager';
                     });
                     const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
                     setFilledSeats(combined.length);
@@ -364,6 +370,31 @@ const TripSettingsScreen = () => {
         }
     };
 
+    const handleDeleteAccount = async () => {
+        setIsDeletingAccount(true);
+        try {
+            const { functions } = require('../../config/firebase');
+            const { httpsCallable } = require('firebase/functions');
+            const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
+            await deleteMyAccount();
+            setDeleteAccountModalVisible(false);
+            await signOut(auth);
+        } catch (error) {
+            setDeleteAccountModalVisible(false);
+            if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
+                Alert.alert(
+                    "Security Verification",
+                    "For your security, please log out and log back in to verify your identity before proceeding.",
+                    [{ text: "OK" }]
+                );
+            } else {
+                Alert.alert("Error", error.message || "Failed to delete account");
+            }
+        } finally {
+            setIsDeletingAccount(false);
+        }
+    };
+
 
     const { height: screenHeight } = Dimensions.get('window');
 
@@ -407,11 +438,13 @@ const TripSettingsScreen = () => {
 
     const panYDelete = React.useRef(new Animated.Value(0)).current;
     const panYLogout = React.useRef(new Animated.Value(0)).current;
+    const panYDeleteAccount = React.useRef(new Animated.Value(0)).current;
     const panYSeat = React.useRef(new Animated.Value(0)).current;
     const panYRequest = React.useRef(new Animated.Value(0)).current;
 
     const deleteSwipe = createDraggableResponder(setDeleteModalVisible, panYDelete);
     const logoutSwipe = createDraggableResponder(setLogoutModalVisible, panYLogout);
+    const deleteAccountSwipe = createDraggableResponder(setDeleteAccountModalVisible, panYDeleteAccount);
     const seatSwipe = createDraggableResponder(setSeatModalVisible, panYSeat);
     const requestSentSwipe = createDraggableResponder(setRequestSentVisible, panYRequest);
 
@@ -490,9 +523,9 @@ const TripSettingsScreen = () => {
                 style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
             />
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
-            <SafeAreaView style={[styles.container, { marginTop: 20 }]}>
+            <View style={styles.container}>
                 {/* Fixed Background Header Layer (Z-Index: isScrolled ? 5 : 15) - Box-none allows touch-through */}
-                <View style={[styles.header, { position: 'absolute', top: 0, left: 0, right: 0, zIndex: isScrolled ? 5 : 15 }]} pointerEvents="box-none">
+                <View style={[styles.header, { position: 'absolute', top: 30, left: 0, right: 0, zIndex: isScrolled ? 5 : 15 }]} pointerEvents="box-none">
                     <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
                         <Ionicons name="arrow-back" size={24} color="#FFF" />
                     </TouchableOpacity>
@@ -503,8 +536,8 @@ const TripSettingsScreen = () => {
                 </View>
 
                 <ScrollView
-                    style={{ flex: 1, zIndex: 10 }}
-                    contentContainerStyle={styles.scrollContent}
+                    style={{ flex: 1, zIndex: 10, marginTop: 0 }}
+                    contentContainerStyle={[styles.scrollContent, { flexGrow: 1, paddingTop: 0 }]}
                     showsVerticalScrollIndicator={false}
                     scrollEventThrottle={16}
                     onScroll={(event) => {
@@ -516,7 +549,8 @@ const TripSettingsScreen = () => {
                         }
                     }}
                 >
-                    <View style={{ marginTop: 80 }}>
+                    <View style={{ height: 75 + insets.top + 20 }} pointerEvents="none" />
+                    <View>
                         {/* Journey Seat Statistics */}
                         <Text style={styles.statsSectionTitle}>Journey Seat Statistics</Text>
 
@@ -588,14 +622,33 @@ const TripSettingsScreen = () => {
                         )}
                         
 
-                        {/* Action Button (Delete for Admin / Logout for Participant) */}
+                        {/* Action Button (Delete for Admin / Logout & Delete for Participant) */}
                         {userRole !== 'manager' && (
-                            <TouchableOpacity
-                                style={styles.deleteButton}
-                                onPress={() => (userRole === 'admin' || userRole === 'co-host') ? setDeleteModalVisible(true) : setLogoutModalVisible(true)}
-                            >
-                                <Text style={styles.deleteButtonText}>{(userRole === 'admin' || userRole === 'co-host') ? 'Delete Journey' : 'Log Out'}</Text>
-                            </TouchableOpacity>
+                            (userRole === 'admin' || userRole === 'co-host') ? (
+                                <TouchableOpacity
+                                    style={styles.deleteButton}
+                                    onPress={() => setDeleteModalVisible(true)}
+                                >
+                                    <Text style={styles.deleteButtonText}>Delete Journey</Text>
+                                </TouchableOpacity>
+                            ) : (
+                                <>
+                                    <View style={{ marginTop: 20 }}>
+                                        <GradientBorderButton
+                                            text="Sign Out"
+                                            onPress={() => setLogoutModalVisible(true)}
+                                            innerBg={Colors.dark.background}
+                                        />
+                                    </View>
+
+                                    <TouchableOpacity
+                                        style={styles.deleteButton}
+                                        onPress={() => setDeleteAccountModalVisible(true)}
+                                    >
+                                        <Text style={styles.deleteButtonText}>Delete Account</Text>
+                                    </TouchableOpacity>
+                                </>
+                            )
                         )}
 
                         <View style={{ height: 100 }} />
@@ -641,6 +694,7 @@ const TripSettingsScreen = () => {
                         >
                             <LinearGradient
                                 colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                locations={[0, 0.76]}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                                 style={styles.cancelGradientBorder}
@@ -672,7 +726,7 @@ const TripSettingsScreen = () => {
                         {...logoutSwipe.panHandlers}
                     >
                         <View style={styles.modalHandle} />
-                        <Text style={[styles.deleteQuestionText, { marginBottom: 30 }]}>
+                        <Text style={[styles.deleteQuestionText, { marginBottom: 30, paddingHorizontal: 30 }]}>
                             Are you sure you want to log out?
                         </Text>
 
@@ -688,7 +742,65 @@ const TripSettingsScreen = () => {
                             onPress={() => setLogoutModalVisible(false)}
                         >
                             <LinearGradient
-                                colors={['#D4AF37', '#B8860B', '#8B6914']}
+                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                locations={[0, 0.76]}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 0 }}
+                                style={styles.cancelGradientBorder}
+                            >
+                                <View style={styles.cancelButtonInner}>
+                                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                                </View>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    </Animated.View>
+                </Modal>
+
+                {/* Delete Account Confirmation Modal */}
+                <Modal
+                    isVisible={deleteAccountModalVisible}
+                    onBackdropPress={() => setDeleteAccountModalVisible(false)}
+                    onSwipeComplete={() => setDeleteAccountModalVisible(false)}
+                    swipeDirection="down"
+                    backdropOpacity={0.7}
+                    style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
+                    useNativeDriver={true}
+                    hideModalContentWhileAnimating={true}
+                >
+                    <Animated.View
+                        style={[
+                            styles.deleteModalContent,
+                            { transform: [{ translateY: panYDeleteAccount }] }
+                        ]}
+                        {...deleteAccountSwipe.panHandlers}
+                    >
+                        <View style={styles.modalHandle} />
+                        <Text style={styles.deleteWarningText}>
+                            Your account and all related data will be permanently deleted. This action cannot be undone.
+                        </Text>
+                        <Text style={[styles.deleteQuestionText, { marginBottom: 30, paddingHorizontal: 30 }]}>
+                            Are you sure you want to delete your account?
+                        </Text>
+
+                        <TouchableOpacity
+                            style={[styles.deleteConfirmButton, isDeletingAccount && { opacity: 0.5 }]}
+                            onPress={handleDeleteAccount}
+                            disabled={isDeletingAccount}
+                        >
+                            {isDeletingAccount ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                            ) : (
+                                <Text style={styles.deleteConfirmButtonText}>Delete Account</Text>
+                            )}
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.cancelButtonWrapper}
+                            onPress={() => setDeleteAccountModalVisible(false)}
+                        >
+                            <LinearGradient
+                                colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
+                                locations={[0, 0.76]}
                                 start={{ x: 0, y: 0 }}
                                 end={{ x: 1, y: 0 }}
                                 style={styles.cancelGradientBorder}
@@ -812,8 +924,8 @@ const TripSettingsScreen = () => {
                     </Animated.View>
                 </Modal>
 
-                 <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
-             </SafeAreaView>
+                  <TripBottomTabBar activeRoute="TripSettings" tripData={trip} />
+             </View>
          </View>
      );
  };
@@ -952,16 +1064,20 @@ const styles = StyleSheet.create({
         letterSpacing: 0.2,
     },
     deleteButton: {
-        backgroundColor: '#2D2528',
-        borderRadius: 30,
-        paddingVertical: 20,
+        height: 56,
+        borderRadius: 28,
+        borderWidth: 1,
+        borderColor: '#FF383C',
+        justifyContent: 'center',
         alignItems: 'center',
         marginVertical: 20,
+        backgroundColor: 'transparent',
     },
     deleteButtonText: {
-        color: '#D66A77',
-        fontFamily: Typography.sans.bold,
-        fontSize: responsiveFontSize(16),
+        color: '#FF383C',
+        fontSize: 16,
+        letterSpacing: 0.2,
+        fontFamily: Typography.sans.semiBold,
     },
     visibilityItemContainer: {
         marginBottom: 10,
@@ -1241,6 +1357,26 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.regular,
+    },
+    logoutBtnWrapper: {
+        width: '100%',
+        marginTop: 20,
+    },
+    logoutGradientBorder: {
+        borderRadius: 30,
+        padding: 2,
+    },
+    logoutBtnInner: {
+        backgroundColor: '#1A1E21',
+        borderRadius: 28,
+        paddingVertical: 18,
+        alignItems: 'center',
+    },
+    logoutBtnText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.semiBold,
+        letterSpacing: 0.2,
     },
 });
 

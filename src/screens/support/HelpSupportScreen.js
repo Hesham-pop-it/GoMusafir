@@ -22,16 +22,16 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 
 const FAQItem = ({ question, answer, isExpanded, onPress }) => (
     <View style={styles.faqItemContainer}>
-        <TouchableOpacity 
-            style={styles.faqItem} 
+        <TouchableOpacity
+            style={styles.faqItem}
             onPress={onPress}
             activeOpacity={0.7}
         >
             <Text style={styles.faqQuestion}>{question}</Text>
-            <Feather 
-                name={isExpanded ? "chevron-down" : "chevron-right"} 
-                size={20} 
-                color={"#A1A1AA"} 
+            <Feather
+                name={isExpanded ? "chevron-down" : "chevron-right"}
+                size={20}
+                color={"#A1A1AA"}
             />
         </TouchableOpacity>
         {isExpanded && (
@@ -50,11 +50,11 @@ const SupportSection = ({ title, items, expandedId, onToggleItem, showTitle = tr
                 const itemId = `${title}-${index}`;
                 return (
                     <React.Fragment key={itemId}>
-                        <FAQItem 
-                            question={item.question} 
+                        <FAQItem
+                            question={item.question}
                             answer={item.answer}
                             isExpanded={expandedId === itemId}
-                            onPress={() => onToggleItem(itemId)} 
+                            onPress={() => onToggleItem(itemId)}
                         />
                         {index < items.length - 1 && <View style={styles.separator} />}
                     </React.Fragment>
@@ -68,7 +68,7 @@ const HelpSupportScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
     const { isAdmin = false } = route.params || {};
-    
+
     const [searchQuery, setSearchQuery] = useState('');
     const [expandedId, setExpandedId] = useState(null);
 
@@ -219,7 +219,7 @@ const HelpSupportScreen = () => {
             items: [
                 {
                     question: 'Do you provide support during trips?',
-                    answer: 'Yes. Via Help & Support and gomusafir.app/contact. SLA options are available on contract.'
+                    answer: 'Yes. Via Help & Support and app.gomusafir.app/contact. SLA options are available on contract.'
                 },
                 {
                     question: 'What should we do during an incident?',
@@ -248,7 +248,7 @@ const HelpSupportScreen = () => {
                 },
                 {
                     question: 'Do I need an account or password?',
-                    answer: 'No. You join with the organiser’s link or QR. No password is required.'
+                    answer: 'Yes. You join with the organiser’s link or QR.'
                 },
                 {
                     question: 'What information is required to join?',
@@ -361,7 +361,7 @@ const HelpSupportScreen = () => {
             items: [
                 {
                     question: 'How do I get help?',
-                    answer: 'Use Help & Support in the app or visit gomusafir.app/contact. Include your device type and a brief description of the issue.'
+                    answer: 'Use Help & Support in the app or visit app.gomusafir.app/contact. Include your device type and a brief description of the issue.'
                 },
             ],
         },
@@ -375,18 +375,18 @@ const HelpSupportScreen = () => {
     // Transformation logic based on role
     const getDisplayData = () => {
         const sourceData = isAdmin ? adminFaqData : participantFaqData;
-        
+
         if (isAdmin) {
             return sourceData.map(section => ({
                 ...section,
-                items: section.items.filter(item => 
+                items: section.items.filter(item =>
                     item.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
                     item.answer.toLowerCase().includes(searchQuery.toLowerCase())
                 )
             })).filter(section => section.items.length > 0);
         } else {
             // Flatten everything for participants
-            const allItems = sourceData.flatMap(section => section.items).filter(item => 
+            const allItems = sourceData.flatMap(section => section.items).filter(item =>
                 item.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 item.answer.toLowerCase().includes(searchQuery.toLowerCase())
             );
@@ -422,10 +422,10 @@ const HelpSupportScreen = () => {
 
                 <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                     {filteredSections.map((section, index) => (
-                        <SupportSection 
-                            key={index} 
-                            title={section.title} 
-                            items={section.items} 
+                        <SupportSection
+                            key={index}
+                            title={section.title}
+                            items={section.items}
                             expandedId={expandedId}
                             onToggleItem={toggleItem}
                             showTitle={isAdmin} // Only show section titles for admins

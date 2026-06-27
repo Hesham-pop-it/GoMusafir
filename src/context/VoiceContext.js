@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ref, onValue, update, get } from 'firebase/database';
+import { ref, onValue, update, get, onDisconnect } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
-import { Audio } from 'expo-av';
+import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { 
     AudioSession, 
     AndroidAudioTypePresets,
@@ -15,6 +15,22 @@ import { Room } from 'livekit-client';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const VoiceContext = createContext();
+
+const stringToUint8Array = (str) => {
+    const arr = [];
+    for (let i = 0; i < str.length; i++) {
+        arr.push(str.charCodeAt(i));
+    }
+    return new Uint8Array(arr);
+};
+
+const uint8ArrayToString = (arr) => {
+    let str = '';
+    for (let i = 0; i < arr.length; i++) {
+        str += String.fromCharCode(arr[i]);
+    }
+    return str;
+};
 
 export const VoiceProvider = ({ children }) => {
     const [connectionDetails, setConnectionDetails] = useState(null);
@@ -41,12 +57,15 @@ export const VoiceProvider = ({ children }) => {
 
         const onDataReceived = (payload, participant) => {
             try {
-                const decoder = new TextDecoder();
-                const str = decoder.decode(payload);
+                const str = uint8ArrayToString(payload);
                 const data = JSON.parse(str);
                 
-                if (data.type === 'mute' && data.targetIdentity === auth.currentUser?.uid) {
-                    setIsMuted(true);
+                if (data.targetIdentity === auth.currentUser?.uid) {
+                    if (data.type === 'mute') {
+                        setIsMuted(true);
+                    } else if (data.type === 'unmute') {
+                        setIsMuted(false);
+                    }
                 }
             } catch (e) {
                 // Silently fail on non-JSON or malformed data
@@ -98,15 +117,17 @@ export const VoiceProvider = ({ children }) => {
 
     const prevGlobalMute = useRef(null);
 
-    // Force mute/unmute when global mute state changes
+    // Force mute/unmute when global mute state changes (only for participants, not admin/organizers)
     useEffect(() => {
+        if (isAdmin) return; // Admins are never force-muted globally
+
         if (prevGlobalMute.current !== null && prevGlobalMute.current !== isGlobalMuteActive) {
             setIsMuted(isGlobalMuteActive);
         } else if (prevGlobalMute.current === null && isGlobalMuteActive) {
             setIsMuted(true);
         }
         prevGlobalMute.current = isGlobalMuteActive;
-    }, [isGlobalMuteActive]);
+    }, [isGlobalMuteActive, isAdmin]);
 
     // Sync local mute state with hardware
     useEffect(() => {
@@ -203,6 +224,8 @@ export const VoiceProvider = ({ children }) => {
                     playsInSilentModeIOS: true,
                     staysActiveInBackground: true,
                     shouldRouteThroughEarpieceAndroid: false,
+                    interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
+                    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
                 });
                 await AudioSession.configureAudio({
                     android: { audioTypeOptions: AndroidAudioTypePresets.communication },
@@ -213,6 +236,13 @@ export const VoiceProvider = ({ children }) => {
                         categoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP']
                     },
                 });
+                if (Platform.OS === 'ios') {
+                    await AudioSession.setAppleAudioConfiguration({
+                        audioCategory: 'playAndRecord',
+                        audioMode: 'voiceChat',
+                        audioCategoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP', 'mixWithOthers']
+                    });
+                }
                 await AudioSession.startAudioSession();
                 await AudioSession.setDefaultRemoteAudioTrackVolume(1.0);
             } catch (e) {
@@ -243,6 +273,15 @@ export const VoiceProvider = ({ children }) => {
                 // Connect the persistent room object
                 await room.connect(data.url, data.token);
                 setIsConnected(true);
+
+                // If staff (host), register presence in active_hosts
+                if (isStaff && auth.currentUser) {
+                    const myHostRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/active_hosts/${auth.currentUser.uid}`);
+                    onDisconnect(myHostRef).remove();
+                    await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/active_hosts`), {
+                        [auth.currentUser.uid]: true
+                    });
+                }
 
                 // Persist session
                 await AsyncStorage.setItem('@voice_session', JSON.stringify({
@@ -277,6 +316,16 @@ export const VoiceProvider = ({ children }) => {
             await AsyncStorage.removeItem('@voice_session');
             setIsConnected(false);
             setConnectionDetails(null);
+
+            // Clean up presence in database if we are host
+            if (activeTripId && activeOrgId && auth.currentUser && isAdmin) {
+                const myHostRef = ref(database, `trips_active/${activeOrgId}/${activeTripId}/voice_channel/active_hosts/${auth.currentUser.uid}`);
+                await onDisconnect(myHostRef).cancel();
+                await update(ref(database, `trips_active/${activeOrgId}/${activeTripId}/voice_channel/active_hosts`), {
+                    [auth.currentUser.uid]: null
+                });
+            }
+
             await room.disconnect();
             await AudioSession.stopAudioSession();
         } catch (e) {
@@ -324,20 +373,19 @@ export const VoiceProvider = ({ children }) => {
             activeTripId,
             activeOrgId,
             room, // Expose the room object if needed
-            sendMuteCommand: async (targetIdentity) => {
+            sendMuteCommand: async (targetIdentity, muteState = true) => {
                 if (!room || !isConnected) return;
                 try {
-                    const encoder = new TextEncoder();
-                    const data = encoder.encode(JSON.stringify({
-                        type: 'mute',
+                    const data = stringToUint8Array(JSON.stringify({
+                        type: muteState ? 'mute' : 'unmute',
                         targetIdentity: targetIdentity
                     }));
                     await room.localParticipant.publishData(data, {
                         destinationIdentities: [targetIdentity]
                     });
                 } catch (e) {
-                    console.log("Error sending mute command:", e);
-                    Alert.alert("Mute Failed", "Could not send mute command. Please check your connection.");
+                    console.log("Error sending mute/unmute command:", e);
+                    Alert.alert("Action Failed", `Could not send ${muteState ? 'mute' : 'unmute'} command. Please check your connection.`);
                 }
             }
         }}>

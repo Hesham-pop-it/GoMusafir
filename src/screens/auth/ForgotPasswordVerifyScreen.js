@@ -13,9 +13,35 @@ import { useNavigation } from '@react-navigation/native';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { responsiveFontSize } from '../../utils/responsive';
+import { auth } from '../../config/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { Alert } from 'react-native';
+import { useRoute } from '@react-navigation/native';
+import { useState } from 'react';
 
 const ForgotPasswordVerifyScreen = () => {
     const navigation = useNavigation();
+    const route = useRoute();
+    const email = route.params?.email;
+    const [resendLoading, setResendLoading] = useState(false);
+
+    const handleResend = async () => {
+        if (!email) {
+            Alert.alert("Error", "No email address found to resend to.");
+            return;
+        }
+        if (resendLoading) return;
+        setResendLoading(true);
+        try {
+            await sendPasswordResetEmail(auth, email);
+            Alert.alert("Link Resent", `A new password reset link has been sent to ${email}.`);
+        } catch (error) {
+            console.warn("Password reset resend error:", error);
+            Alert.alert("Resend Failed", "Failed to resend the reset email. Please try again later.");
+        } finally {
+            setResendLoading(false);
+        }
+    };
 
     return (
         <GlowBackground>
@@ -36,10 +62,11 @@ const ForgotPasswordVerifyScreen = () => {
 
                 <View style={styles.footer}>
                     <GradientBorderButton
-                        text="Resend Code"
-                        onPress={() => { }}
+                        text={resendLoading ? "Resending..." : "Resend Link"}
+                        onPress={handleResend}
                         innerBg="#1A1E21"
                         style={styles.resendButton}
+                        disabled={resendLoading}
                     />
 
                     <TouchableOpacity

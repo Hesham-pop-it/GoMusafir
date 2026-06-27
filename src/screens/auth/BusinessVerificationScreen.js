@@ -9,7 +9,8 @@ import {
     ScrollView,
     TextInput,
     Pressable,
-    Keyboard
+    Keyboard,
+    Alert
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -196,9 +197,15 @@ const BusinessVerificationScreen = ({ route }) => {
                 uid: userUid,
                 isMobile: true
             });
-            // Show toast or alert that it was sent
+            Alert.alert("Code Sent", "A new verification code has been sent to your business email.");
         } catch (error) {
             console.warn("OTP Resend Error:", error);
+            const errMsg = error.message || "";
+            if (error.code === 'resource-exhausted' || errMsg.includes('too-many-requests') || errMsg.includes('resource-exhausted')) {
+                Alert.alert("Rate Limit Exceeded", "Please wait a minute before requesting another code.");
+            } else {
+                Alert.alert("Error", error.message || "Failed to resend code. Please check your internet connection.");
+            }
         } finally {
             setResendLoading(false);
         }

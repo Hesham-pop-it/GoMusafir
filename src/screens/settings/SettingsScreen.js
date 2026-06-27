@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
     },
     deleteButtonText: {
         color: '#FF383C',
-        fontSize: 14,
+        fontSize: 16,
         letterSpacing: 0.2,
         fontFamily: Typography.sans.semiBold,
     },

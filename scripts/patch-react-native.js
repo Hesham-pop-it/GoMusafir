@@ -49,3 +49,38 @@ if (fs.existsSync(livekitPkg)) {
     console.log('@livekit/react-native patch applied successfully.');
 }
 
+// --- Patch 3: Metro packages exports fix for @expo/cli compatibility ---
+console.log('Scanning and patching Metro packages for Expo CLI compatibility...');
+function findAndPatchMetro(dir) {
+    if (!fs.existsSync(dir)) return;
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+        const fullPath = path.join(dir, file);
+        const stat = fs.statSync(fullPath);
+        if (stat.isDirectory()) {
+            if (file === 'metro' || file.startsWith('metro-')) {
+                const pkgJsonPath = path.join(fullPath, 'package.json');
+                if (fs.existsSync(pkgJsonPath)) {
+                    try {
+                        let pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+                        if (pkg.exports && !pkg.exports['./src/*']) {
+                            console.log(`Patching exports in ${pkgJsonPath} (${pkg.name}@${pkg.version})...`);
+                            pkg.exports['./src/*'] = './src/*.js';
+                            pkg.exports['./src/*.js'] = './src/*.js';
+                            pkg.exports['./src'] = './src/index.js';
+                            fs.writeFileSync(pkgJsonPath, JSON.stringify(pkg, null, 2), 'utf8');
+                        }
+                    } catch (e) {
+                        console.error(`Failed to patch ${pkgJsonPath}:`, e);
+                    }
+                }
+            }
+            findAndPatchMetro(fullPath);
+        }
+    }
+}
+
+findAndPatchMetro(path.join(__dirname, '../node_modules'));
+console.log('Metro exports patching completed.');
+
+

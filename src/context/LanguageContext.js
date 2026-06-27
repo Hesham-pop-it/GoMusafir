@@ -35,7 +35,7 @@ export const LanguageProvider = ({ children }) => {
         I18nManager.forceRTL(shouldBeRTL);
         I18nManager.allowRTL(shouldBeRTL);
         // Force app restart to apply RTL changes
-        if (NativeModules.DevSettings) {
+        if (NativeModules.DevSettings && typeof NativeModules.DevSettings.reload === 'function') {
           NativeModules.DevSettings.reload();
         } else {
           // Fallback if DevSettings is not available (e.g. production without expo-updates)
@@ -50,7 +50,8 @@ export const LanguageProvider = ({ children }) => {
   };
 
   const t = (key) => {
-    return translations[language][key] || key;
+    const langDict = translations[language] || translations['en'];
+    return langDict[key] || translations['en'][key] || key;
   };
 
   return (

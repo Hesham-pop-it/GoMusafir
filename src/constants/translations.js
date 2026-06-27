@@ -9,7 +9,7 @@ export const translations = {
     phone: "Phone Number",
     trip_history: "Trip History",
     total_likes: "Total Likes",
-    remove_participant: "Remove Participant",
+    remove_participant: "Delete Participant",
     confirm_delete: "Are you sure you want to remove this participant?",
     cancel: "Cancel",
     delete: "Delete",
@@ -31,7 +31,9 @@ export const translations = {
     az: "A-Z",
     za: "Z-A",
     newest: "Newest",
-    oldest: "Oldest"
+    oldest: "Oldest",
+    no_trips_title: "No trips planned yet.",
+    no_trips_subtitle: "Tap the plus button below to create your first trip."
   },
   nl: {
     participants: "Deelnemers",
@@ -65,7 +67,9 @@ export const translations = {
     az: "A-Z",
     za: "Z-A",
     newest: "Nieuwste",
-    oldest: "Oudste"
+    oldest: "Oudste",
+    no_trips_title: "Nog geen reizen gepland.",
+    no_trips_subtitle: "Tik op de plusknop hieronder om je eerste reis te maken."
   },
   ar: {
     participants: "المشاركون",
@@ -99,6 +103,8 @@ export const translations = {
     az: "أ-ي",
     za: "ي-أ",
     newest: "الأحدث",
-    oldest: "الأقدم"
+    oldest: "الأقدم",
+    no_trips_title: "لا توجد رحلات مخططة بعد.",
+    no_trips_subtitle: "انقر على زر زائد أدناه لإنشاء رحلتك الأولى."
   }
 };

@@ -17,6 +17,7 @@
         }
     },
     "orgs": {
+        ".indexOn": ["stripe_customer_id"],
         "$orgId": {
            "trips": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
@@ -96,8 +97,15 @@
               },
               "voice_channel": {
                   ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())",
-                  ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() )"
+                  ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() )",
+                  "activeSpeaker": {
+                      ".write": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+                  }
                },
+                "pinned_location": {
+                   ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                   ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
+                },
                "safety_point": {
                   ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                   ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"

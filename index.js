@@ -20,14 +20,18 @@ import App from './App';
 messaging().setBackgroundMessageHandler(async remoteMessage => {
     console.log('Message handled in the background!', remoteMessage);
     
-    await notifee.displayNotification({
-        title: remoteMessage.notification?.title || 'GoMusafir Update',
-        body: remoteMessage.notification?.body || 'New message received.',
-        android: {
-            channelId: 'default',
-            importance: AndroidImportance.HIGH,
-        },
-    });
+    // Only display manual notification if the message does not contain a notification payload
+    // (i.e. it is a data-only message). If it has a notification payload, FCM handles displaying it natively.
+    if (!remoteMessage.notification) {
+        await notifee.displayNotification({
+            title: remoteMessage.data?.title || 'GoMusafir Update',
+            body: remoteMessage.data?.body || 'New message received.',
+            android: {
+                channelId: 'default',
+                importance: AndroidImportance.HIGH,
+            },
+        });
+    }
 });
 
 // 4. Register the Main Component

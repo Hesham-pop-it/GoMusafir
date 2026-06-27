@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onValueWritten } = require("firebase-functions/v2/database");
 const { AccessToken } = require("livekit-server-sdk");
 const { db } = require("../admin");
 
@@ -83,3 +84,31 @@ exports.toggleChannelStatus = onCall({ region: "europe-west1" }, async (request)
     throw new HttpsError("internal", "Toggle failed.");
   }
 });
+
+exports.onActiveHostsUpdated = onValueWritten({
+  ref: "trips_active/{orgId}/{tripId}/voice_channel/active_hosts",
+  region: "europe-west1"
+}, async (event) => {
+  const activeHosts = event.data.after.val() || {};
+  const { orgId, tripId } = event.params;
+
+  // Filter to find all active hosts
+  const activeHostUids = Object.keys(activeHosts).filter(uid => activeHosts[uid] === true);
+
+  if (activeHostUids.length === 0) {
+    try {
+      const voiceChannelSnap = await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).once("value");
+      const voiceChannel = voiceChannelSnap.val() || {};
+      if (voiceChannel.isChannelStarted === true) {
+        console.log(`No active hosts left in trip ${tripId}. Stopping the channel.`);
+        await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(false);
+        await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).update({
+          isChannelStarted: false
+        });
+      }
+    } catch (error) {
+      console.error("Error in onActiveHostsUpdated trigger:", error);
+    }
+  }
+});
+
