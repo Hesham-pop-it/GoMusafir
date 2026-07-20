@@ -13,7 +13,7 @@ import {
     PanResponder,
     Animated,
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
@@ -23,7 +23,8 @@ import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useTracks } from '@livekit/react-native';
-import { Track } from 'livekit-client';
+import { Track, RoomEvent } from 'livekit-client';
+import { useVoice } from '../../context/VoiceContext';
 import { database, auth, functions } from '../../config/firebase';
 import { ref, onValue, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
@@ -57,14 +58,40 @@ const ParticipantsScreen = () => {
     const [userRole, setUserRole] = useState('participant');
     const [isAdminState, setIsAdminState] = useState(isAdmin);
     const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
+    const { room } = useVoice();
+    const [speakingUids, setSpeakingUids] = useState([]);
+
+    React.useEffect(() => {
+        if (!room) return;
+
+        const handleActiveSpeakersChanged = (speakers) => {
+            setSpeakingUids((speakers || []).map(s => s.identity));
+        };
+
+        room.on(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        
+        if (room.activeSpeakers) {
+            setSpeakingUids(room.activeSpeakers.map(s => s.identity));
+        } else {
+            setSpeakingUids([]);
+        }
+
+        return () => {
+            room.off(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        };
+    }, [room]);
 
     React.useEffect(() => {
         const fetchRole = async () => {
-            if (auth.currentUser) {
-                const token = await auth.currentUser.getIdTokenResult();
-                const role = token.claims.role || 'participant';
-                setUserRole(role);
-                setIsAdminState(role === 'admin' || role === 'co-host' || role === 'manager');
+            try {
+                if (auth.currentUser) {
+                    const token = await auth.currentUser.getIdTokenResult();
+                    const role = token.claims.role || 'participant';
+                    setUserRole(role);
+                    setIsAdminState(role === 'admin' || role === 'co-host' || role === 'manager');
+                }
+            } catch (error) {
+                console.warn("[ParticipantsScreen] Error fetching role:", error);
             }
         };
         fetchRole();
@@ -243,7 +270,7 @@ const ParticipantsScreen = () => {
     const mappedParticipants = filteredParticipants.map(p => {
         const track = voiceTracks.find(t => t.participant.identity === p.id);
         if (track) {
-            const isSpeaking = track.participant.isSpeaking;
+            const isSpeaking = speakingUids.includes(p.id);
             const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
             return {
                 ...p,

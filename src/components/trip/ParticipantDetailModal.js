@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator } from 'react-native';
-import Modal from 'react-native-modal';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator, Animated, PanResponder } from 'react-native';
+import Modal from '../CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path } from 'react-native-svg';
@@ -22,8 +22,6 @@ const ParticipantDetailModal = ({
     isDecrypting,
     tripId
 }) => {
-    if (!participant) return null;
-
     const navigation = useNavigation();
     const [scrollOffset, setScrollOffset] = useState(0);
     const scrollViewRef = useRef(null);
@@ -38,15 +36,64 @@ const ParticipantDetailModal = ({
         }
     };
 
+    const panY = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        if (isVisible) {
+            panY.setValue(0);
+        }
+    }, [isVisible]);
+
+    const panResponder = useRef(
+        PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onMoveShouldSetPanResponder: (_, gestureState) => {
+                const { dy, dx } = gestureState;
+                return dy > 5 && dy > Math.abs(dx) && scrollOffset <= 0;
+            },
+            onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+                const { dy, dx } = gestureState;
+                return dy > 10 && dy > Math.abs(dx) && scrollOffset <= 0;
+            },
+            onPanResponderMove: (_, gestureState) => {
+                if (gestureState.dy > 0) {
+                    panY.setValue(gestureState.dy);
+                }
+            },
+            onPanResponderRelease: (_, gestureState) => {
+                if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
+                    Animated.timing(panY, {
+                        toValue: Dimensions.get('window').height,
+                        duration: 200,
+                        useNativeDriver: true,
+                    }).start(() => {
+                        onClose();
+                        panY.setValue(0);
+                    });
+                } else {
+                    Animated.spring(panY, {
+                        toValue: 0,
+                        friction: 8,
+                        useNativeDriver: true,
+                    }).start();
+                }
+            },
+            onPanResponderTerminationRequest: () => true,
+            onShouldBlockNativeResponder: () => true,
+        })
+    ).current;
+
     const { t } = useLanguage();
-    const participantLocation = liveLocations[participant.id];
+    const participantLocation = participant ? liveLocations[participant.id] : null;
 
     const latitude = participantLocation?.lat || 21.4225;
     const longitude = participantLocation?.lng || 39.8262;
 
-    const nameParts = participant.name ? participant.name.trim().split(/\s+/) : ['Guest'];
-    const firstName = participant.firstName || nameParts[0] || 'Guest';
-    const lastName = participant.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
+    const nameParts = participant?.name ? participant.name.trim().split(/\s+/) : ['Guest'];
+    const firstName = participant?.firstName || nameParts[0] || 'Guest';
+    const lastName = participant?.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
+
+    if (!participant) return null;
 
     return (
         <Modal
@@ -66,7 +113,15 @@ const ParticipantDetailModal = ({
             animationOut="bounceOutDown"
             style={{ margin: 0, justifyContent: 'flex-end' }}
         >
-            <View style={styles.bottomSheet}>
+            <Animated.View
+                style={[
+                    styles.bottomSheet,
+                    {
+                        transform: [{ translateY: panY }]
+                    }
+                ]}
+                {...panResponder.panHandlers}
+            >
                 <View style={styles.handle} />
                 <Text style={styles.sheetTitle}>Participant Detail</Text>
                 <View style={styles.divider} />
@@ -182,7 +237,7 @@ const ParticipantDetailModal = ({
                         </>
                     )}
                 </ScrollView>
-            </View>
+            </Animated.View>
         </Modal>
     );
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -8,7 +8,7 @@ import {
     Platform,
     ScrollView,
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
@@ -21,6 +21,8 @@ import { httpsCallable } from 'firebase/functions';
 import { ref, onValue } from 'firebase/database';
 import { Alert } from 'react-native';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MyLiveActivity } from '../../components/Widget';
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
@@ -30,6 +32,37 @@ const SettingsScreen = ({ navigation }) => {
     const [isAdmin, setIsAdmin] = useState(false);
     const [userRole, setUserRole] = useState(null);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+    // Load lockscreen widget setting from AsyncStorage
+    useEffect(() => {
+        const loadSetting = async () => {
+            try {
+                const val = await AsyncStorage.getItem('@lockscreen_widget_enabled');
+                if (val !== null) {
+                    setIsWidgetEnabled(val === 'true');
+                }
+            } catch (err) {
+                console.log("Failed to load widget setting:", err);
+            }
+        };
+        loadSetting();
+    }, []);
+
+    // Save lockscreen widget setting and end active instances if disabled
+    const handleWidgetToggle = async (value) => {
+        setIsWidgetEnabled(value);
+        try {
+            await AsyncStorage.setItem('@lockscreen_widget_enabled', String(value));
+            if (!value && MyLiveActivity) {
+                const instances = MyLiveActivity.getInstances();
+                instances.forEach(instance => {
+                    instance.end('immediate');
+                });
+            }
+        } catch (err) {
+            console.log("Failed to save widget setting:", err);
+        }
+    };
 
     React.useEffect(() => {
         const user = auth.currentUser;
@@ -140,7 +173,7 @@ const SettingsScreen = ({ navigation }) => {
                             <Text style={styles.linkText}>Enable lockscreen widget</Text>
                             <CustomSwitch
                                 value={isWidgetEnabled}
-                                onValueChange={setIsWidgetEnabled}
+                                onValueChange={handleWidgetToggle}
                                 activeColor="#B99A4A"
                             />
                         </View>

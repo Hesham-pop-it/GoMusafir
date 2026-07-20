@@ -18,7 +18,7 @@ import {
     Linking,
     Platform
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt } from 'firebase/database';
@@ -37,9 +37,10 @@ import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
+import { updatePrayerWidget } from '../../utils/widgetHelper';
 import { useVoice } from '../../context/VoiceContext';
 import { useTracks } from '@livekit/react-native';
-import { Track } from 'livekit-client';
+import { Track, RoomEvent } from 'livekit-client';
 
 
 const { width, height } = Dimensions.get('window');
@@ -176,7 +177,8 @@ const TripOverviewScreen = () => {
         disconnect,
         stopChannel,
         isAdmin: isAdminContext,
-        activeTripId
+        activeTripId,
+        room
     } = useVoice();
     const isAdminRef = React.useRef(isAdmin);
     const globalVisibilityConfigRef = React.useRef({});
@@ -194,10 +196,31 @@ const TripOverviewScreen = () => {
     const [resolvedOrgId, setResolvedOrgId] = useState(passedOrgId || trip?.orgId || trip?.org_id);
     const [unreadCount, setUnreadCount] = useState(0);
     const [dismissedSosAlerts, setDismissedSosAlerts] = useState([]);
+    const [speakingUids, setSpeakingUids] = useState([]);
+
+    useEffect(() => {
+        if (!room) return;
+
+        const handleActiveSpeakersChanged = (speakers) => {
+            setSpeakingUids((speakers || []).map(s => s.identity));
+        };
+
+        room.on(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        
+        if (room.activeSpeakers) {
+            setSpeakingUids(room.activeSpeakers.map(s => s.identity));
+        } else {
+            setSpeakingUids([]);
+        }
+
+        return () => {
+            room.off(RoomEvent.ActiveSpeakersChanged, handleActiveSpeakersChanged);
+        };
+    }, [room]);
 
 
     // Stable ID resolution to avoid effect re-runs on temporary nulls
-    const tripId = passedTripId || trip?.id || trip?.trip_id || liveTripData?.id;
+    const tripId = passedTripId || trip?.id || trip?.tripId || trip?.trip_id || liveTripData?.id;
     const orgId = resolvedOrgId || passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
 
 
@@ -584,6 +607,21 @@ const TripOverviewScreen = () => {
         }
     }, [tripId, orgId]);
 
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
+        const unsubscribe = onValue(speakerRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setActiveSpeakerData(snapshot.val());
+            } else {
+                setActiveSpeakerData(null);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId]);
+
     const handleToggleMute = async () => {
         const nextState = !isMuted;
 
@@ -625,7 +663,7 @@ const TripOverviewScreen = () => {
             });
         } else {
             // If stopping, use context to stop channel globally
-            stopChannel();
+            stopChannel(true, tripId, orgId);
         }
     };
 
@@ -992,7 +1030,7 @@ const TripOverviewScreen = () => {
     const participants = sortedParticipants.map(p => {
         const track = voiceTracks.find(t => t.participant.identity === p.id);
         if (track) {
-            const isSpeaking = track.participant.isSpeaking;
+            const isSpeaking = speakingUids.includes(p.id);
             const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
             return {
                 ...p,
@@ -1168,6 +1206,7 @@ const TripOverviewScreen = () => {
                     const today = new Date().toISOString().split('T')[0];
                     if (parsed.date === today) {
                         setPrayerTimes(parsed.timings);
+                        updatePrayerWidget(parsed.timings);
                         // We still want to refresh in the background if it's the first time this session
                     }
                 }
@@ -1203,6 +1242,7 @@ const TripOverviewScreen = () => {
                             Isha: timings.Isha,
                         };
                         setPrayerTimes(newTimings);
+                        updatePrayerWidget(newTimings);
 
                         // Save to Cache
                         await AsyncStorage.setItem('cached_prayer_times', JSON.stringify({
@@ -1325,27 +1365,28 @@ const TripOverviewScreen = () => {
             <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
             {/* Background Image at the top only */}
-            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 310 }}>
-                <ImageBackground
-                    source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
-                    style={{ flex: 1 }}
-                    resizeMode="cover"
-                >
-                    <LinearGradient
-                        colors={['rgba(26, 30, 33, 0)', 'rgba(26, 30, 33, 1)']}
-                        locations={[0.25, 1]}
-                        style={styles.gradientOverlay}
-                        start={{ x: 0.5, y: 0 }}
-                        end={{ x: 0.5, y: 1 }}
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 310, overflow: 'hidden' }}>
+                {tripData?.image && (
+                    <Image
+                        source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
+                        style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
+                        resizeMode="contain"
                     />
-                    <LinearGradient
-                        colors={['#B99A4A', '#1A1E21']}
-                        locations={[0, 1]}
-                        style={[styles.gradientOverlay, { opacity: 0.5 }]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 0.1, y: 0.4 }}
-                    />
-                </ImageBackground>
+                )}
+                <LinearGradient
+                    colors={['rgba(26, 30, 33, 0)', 'rgba(26, 30, 33, 1)']}
+                    locations={[0.25, 1]}
+                    style={[styles.gradientOverlay, { height: 310, width: '100%', zIndex: 2 }]}
+                    start={{ x: 0.5, y: 0 }}
+                    end={{ x: 0.5, y: 1 }}
+                />
+                <LinearGradient
+                    colors={['#B99A4A', '#1A1E21']}
+                    locations={[0, 1]}
+                    style={[styles.gradientOverlay, { opacity: 0.5, height: 310, width: '100%', zIndex: 3 }]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 0.1, y: 0.4 }}
+                />
             </View>
 
             <View style={{ flex: 1 }}>

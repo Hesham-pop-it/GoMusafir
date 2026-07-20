@@ -15,7 +15,7 @@ import {
     ActivityIndicator,
     Alert,
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { Ionicons, Feather } from '@expo/vector-icons';

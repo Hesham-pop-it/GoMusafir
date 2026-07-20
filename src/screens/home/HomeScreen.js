@@ -18,7 +18,7 @@ import {
     ActivityIndicator
 } from 'react-native';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { Calendar } from 'react-native-calendars';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, FontAwesome, MaterialIcons, Feather } from '@expo/vector-icons';

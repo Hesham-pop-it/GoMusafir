@@ -60,6 +60,7 @@ exports.generateSeatTopupToken = paymentFunctions.generateSeatTopupToken;
 exports.previewSeatTopup      = paymentFunctions.previewSeatTopup;
 exports.verifyAndPaySeatTopup = paymentFunctions.verifyAndPaySeatTopup;
 exports.creditPrepaidSeats    = paymentFunctions.creditPrepaidSeats;
+exports.requestSeats          = paymentFunctions.requestSeats;
 
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;

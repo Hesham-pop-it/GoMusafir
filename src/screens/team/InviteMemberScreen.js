@@ -9,7 +9,7 @@ import {
     ScrollView,
     Platform
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';

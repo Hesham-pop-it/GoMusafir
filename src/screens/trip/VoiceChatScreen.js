@@ -15,7 +15,6 @@ import {
     Platform,
     Animated
 } from 'react-native';
-import { Audio } from 'expo-av';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
@@ -515,7 +514,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                 {sortedTracks.map((trackRef) => {
                                     const pData = participantMap[trackRef.participant.identity];
                                     if (!pData) return null;
-                                    const isSpeaking = trackRef.participant.isSpeaking;
+                                    const isSpeaking = speakingUids.includes(trackRef.participant.identity);
                                     return (
                                         <View key={trackRef.participant.identity} style={styles.smallAvatarWrapper}>
                                             <Image 
@@ -544,7 +543,7 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                 name: trackRef.participant.name || 'User', 
                                 avatar: 'https://randomuser.me/api/portraits/lego/1.jpg' 
                             };
-                            const isSpeaking = trackRef.participant.isSpeaking;
+                            const isSpeaking = speakingUids.includes(trackRef.participant.identity);
                             const isLocal = trackRef.participant.isLocal;
 
                             return (
@@ -552,7 +551,13 @@ const VoiceChatContent = ({ tripData, isAdmin, onDisconnect, onStopChannel, fetc
                                     <View style={styles.participantRow}>
                                         <View style={styles.avatarContainer}>
                                             {isSpeaking && <SpeakerGlow />}
-                                            <Image source={{ uri: pData.avatar }} style={styles.avatar} />
+                                            <Image 
+                                                source={{ uri: pData.avatar }} 
+                                                style={[
+                                                    styles.avatar,
+                                                    { borderColor: isSpeaking ? '#34C759' : 'transparent' }
+                                                ]} 
+                                            />
                                         </View>
 
                                         <View style={styles.participantInfo}>
@@ -1170,6 +1175,8 @@ const styles = StyleSheet.create({
         width: 48,
         height: 48,
         borderRadius: 24,
+        borderWidth: 2,
+        borderColor: 'transparent',
     },
     participantInfo: {
         flex: 1,

@@ -13,7 +13,7 @@ import {
     I18nManager,
     Alert,
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from './CompatModal';
 import { Colors } from '../constants/Colors';
 import GradientBorderButton from './GradientBorderButton';
 import { Typography } from '../constants/Typography';

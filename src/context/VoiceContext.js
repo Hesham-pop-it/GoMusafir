@@ -3,7 +3,7 @@ import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, onValue, update, get, onDisconnect } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 import { 
     AudioSession, 
     AndroidAudioTypePresets,
@@ -13,6 +13,8 @@ import { Alert, Platform, PermissionsAndroid } from 'react-native';
 
 import { Room } from 'livekit-client';
 import { onAuthStateChanged } from 'firebase/auth';
+import { MyWidget, MyLiveActivity } from '../components/Widget';
+import { addUserInteractionListener } from 'expo-widgets';
 
 const VoiceContext = createContext();
 
@@ -44,6 +46,7 @@ export const VoiceProvider = ({ children }) => {
     const [isAdmin, setIsAdmin] = useState(false);
     
     const isFetchingToken = useRef(false);
+    const activeActivity = useRef(null);
     const room = useRef(new Room({
         audioLevelInterval: 20, // More frequent updates for more responsive UI
     })).current;
@@ -176,6 +179,60 @@ export const VoiceProvider = ({ children }) => {
         autoConnect();
     }, [isChannelActive, isConnected, loading, activeTripId]);
 
+    // Widget Synchronization
+    useEffect(() => {
+        try {
+            MyWidget.updateSnapshot({
+                isAdmin,
+                isConnected,
+                isChannelActive: isChannelActive ?? false,
+                isGlobalMuteActive,
+                isMuted,
+                activeChannelName: activeTripId ? `Trip Voice Room` : "No Channel",
+            });
+        } catch (e) {
+            console.log("[VoiceContext] Failed to update widget snapshot:", e);
+        }
+    }, [isAdmin, isConnected, isChannelActive, isGlobalMuteActive, isMuted, activeTripId]);
+
+    // Listen to Widget interactions
+    useEffect(() => {
+        const subscription = addUserInteractionListener(async (event) => {
+            if (event.source !== 'MyWidget' && event.source !== 'MyLiveActivity') return;
+            console.log("[VoiceContext] Widget interaction received:", event.source, event.target);
+            
+            const target = event.target;
+            try {
+                if (target === 'join_channel') {
+                    if (activeTripId && activeOrgId) {
+                        await connect(activeTripId, activeOrgId, isAdmin);
+                    }
+                } else if (target === 'leave_channel') {
+                    await disconnect();
+                } else if (target === 'mute_myself') {
+                    setIsMuted(prev => !prev);
+                } else if (target === 'mute_channel') {
+                    if (activeTripId && activeOrgId && isAdmin) {
+                        const nextState = !isGlobalMuteActive;
+                        await update(ref(database, `trips_active/${activeOrgId}/${activeTripId}/voice_channel`), {
+                            isAllMuted: nextState
+                        });
+                    }
+                } else if (target === 'stop_channel') {
+                    if (activeTripId && activeOrgId && isAdmin) {
+                        await stopChannel(isAdmin, activeTripId, activeOrgId);
+                    }
+                } else if (target === 'hold_to_talk') {
+                    setIsMuted(prev => !prev);
+                }
+            } catch (e) {
+                console.error("[VoiceContext] Widget action failed:", e);
+            }
+        });
+
+        return () => subscription.remove();
+    }, [activeTripId, activeOrgId, isAdmin, isGlobalMuteActive, connect, disconnect, stopChannel]);
+
     const requestMicrophonePermission = async () => {
         if (Platform.OS === 'android') {
             try {
@@ -196,6 +253,12 @@ export const VoiceProvider = ({ children }) => {
     };
 
     const connect = async (tripId, orgId, isStaff) => {
+        if (!tripId || !orgId) {
+            console.error("[VoiceContext] Cannot connect: missing tripId or orgId", { tripId, orgId, isStaff });
+            Alert.alert("Voice Chat Error", "Connection parameters are missing. Please try again.");
+            return;
+        }
+
         if (isFetchingToken.current || (isConnected && activeTripId === tripId)) return;
         
         // If switching trips, disconnect first
@@ -219,13 +282,12 @@ export const VoiceProvider = ({ children }) => {
 
             // Audio Setup
             try {
-                await Audio.setAudioModeAsync({
-                    allowsRecordingIOS: true,
-                    playsInSilentModeIOS: true,
-                    staysActiveInBackground: true,
-                    shouldRouteThroughEarpieceAndroid: false,
-                    interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
-                    interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+                await setAudioModeAsync({
+                    allowsRecording: true,
+                    playsInSilentMode: true,
+                    shouldPlayInBackground: true,
+                    shouldRouteThroughEarpiece: false,
+                    interruptionMode: 'mixWithOthers',
                 });
                 await AudioSession.configureAudio({
                     android: { audioTypeOptions: AndroidAudioTypePresets.communication },
@@ -250,7 +312,9 @@ export const VoiceProvider = ({ children }) => {
             }
 
             // Admin Start Logic (Pre-emptively update DB to avoid race conditions)
+            console.log("[VoiceContext] connect called with:", { tripId, orgId, isStaff });
             if (isStaff && !isChannelActive) {
+                console.log("[VoiceContext] Toggling channel status to true for tripId:", tripId);
                 const toggle = httpsCallable(functions, 'toggleChannelStatus');
                 await toggle({ tripId, active: true });
                 
@@ -290,6 +354,39 @@ export const VoiceProvider = ({ children }) => {
                     isAdmin: isStaff,
                     autoReconnect: true
                 }));
+
+                // Start Live Activity
+                if (MyLiveActivity) {
+                    try {
+                        const widgetEnabled = await AsyncStorage.getItem('@lockscreen_widget_enabled');
+                        if (widgetEnabled !== 'false') {
+                            const instances = MyLiveActivity.getInstances();
+                            if (instances.length > 0) {
+                                activeActivity.current = instances[0];
+                                activeActivity.current.update({
+                                    tripName: `Trip Voice Room`,
+                                    status: isStaff ? "Hosting" : "Connected",
+                                    startTime: Date.now(),
+                                    isAdmin: isStaff
+                                });
+                            } else {
+                                activeActivity.current = MyLiveActivity.start({
+                                    tripName: `Trip Voice Room`,
+                                    status: isStaff ? "Hosting" : "Connected",
+                                    startTime: Date.now(),
+                                    isAdmin: isStaff
+                                }, `gomusafir://voicechat?tripId=${tripId}`);
+                            }
+                        } else {
+                            // If widget is disabled, make sure any remaining live activity is ended
+                            const instances = MyLiveActivity.getInstances();
+                            instances.forEach(instance => instance.end('immediate'));
+                            activeActivity.current = null;
+                        }
+                    } catch (e) {
+                        console.log("[VoiceContext] Live Activity start failed:", e);
+                    }
+                }
             } else {
                 throw new Error("Failed to receive connection details from server.");
             }
@@ -326,6 +423,15 @@ export const VoiceProvider = ({ children }) => {
                 });
             }
 
+            if (activeActivity.current) {
+                try {
+                    activeActivity.current.end('immediate');
+                } catch (e) {
+                    console.log("[VoiceContext] Live Activity end failed:", e);
+                }
+                activeActivity.current = null;
+            }
+
             await room.disconnect();
             await AudioSession.stopAudioSession();
         } catch (e) {
@@ -333,22 +439,29 @@ export const VoiceProvider = ({ children }) => {
         }
     };
 
-    const stopChannel = async () => {
-        const tripIdToStop = activeTripId;
-        const orgIdToStop = activeOrgId;
+    const stopChannel = async (forceAdmin = null, forceTripId = null, forceOrgId = null) => {
+        const tripIdToStop = forceTripId !== null ? forceTripId : activeTripId;
+        const orgIdToStop = forceOrgId !== null ? forceOrgId : activeOrgId;
+        const isUserAdmin = forceAdmin !== null ? forceAdmin : isAdmin;
+        console.log("[VoiceContext] stopChannel called with:", { forceAdmin, forceTripId, forceOrgId, tripIdToStop, orgIdToStop, isUserAdmin });
 
-        if (isAdmin && tripIdToStop && orgIdToStop) {
+        if (isUserAdmin && tripIdToStop && orgIdToStop) {
             try {
+                console.log("[VoiceContext] Toggling channel status to false for tripId:", tripIdToStop);
                 const toggle = httpsCallable(functions, 'toggleChannelStatus');
                 await toggle({ tripId: tripIdToStop, active: false });
                 
                 await update(ref(database, `trips_active/${orgIdToStop}/${tripIdToStop}/voice_channel`), {
                     isChannelStarted: false
                 });
+                setIsChannelActive(false);
+                setIsGlobalMuteActive(false);
             } catch (e) {
                 console.log("Stop channel error:", e);
                 Alert.alert("Error", "Failed to stop the channel. Please check your connection.");
             }
+        } else {
+            console.log("[VoiceContext] stopChannel skipping database write due to missing parameters or admin privileges:", { isUserAdmin, tripIdToStop, orgIdToStop });
         }
         await disconnect();
     };

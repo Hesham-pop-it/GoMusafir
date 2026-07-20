@@ -14,7 +14,7 @@ import {
     TouchableWithoutFeedback,
     Keyboard
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -29,7 +29,7 @@ import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, lim
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { Audio } from 'expo-av';
+import { createAudioPlayer, useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { storage } from '../../config/firebase';
 import { ActivityIndicator, Linking, Vibration } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
@@ -286,7 +286,7 @@ const TripChatScreen = () => {
     const [participantProfiles, setParticipantProfiles] = useState({});
     const [readPointers, setReadPointers] = useState({});
     const [isUploading, setIsUploading] = useState(false);
-    const [recording, setRecording] = useState(null);
+    const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const [isRecording, setIsRecording] = useState(false);
     const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
     const [replyingTo, setReplyingTo] = useState(null);
@@ -805,56 +805,43 @@ const TripChatScreen = () => {
     };
 
     const startRecording = async () => {
-        if (isRecording || recording) return;
+        if (isRecording) return;
 
         try {
-            const { status } = await Audio.requestPermissionsAsync();
+            const { status } = await requestRecordingPermissionsAsync();
             if (status !== 'granted') {
                 alert('Microphone permission is required to record voice messages.');
                 return;
             }
 
-            // Cleanup any previous recording that might be hanging
-            if (recording) {
-                try {
-                    await recording.stopAndUnloadAsync();
-                } catch (e) {
-                    // Ignore cleanup errors
-                }
-                setRecording(null);
-            }
-
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
+            await setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
             });
 
             Vibration.vibrate(50); // Haptic feedback for recording start
-            const { recording: newRecording } = await Audio.Recording.createAsync(
-                Audio.RecordingOptionsPresets.HIGH_QUALITY
-            );
-            setRecording(newRecording);
+            await recorder.prepareToRecordAsync();
+            recorder.record();
             setIsRecording(true);
         } catch (err) {
             setIsRecording(false);
-            setRecording(null);
+            console.error("Error starting recording:", err);
         }
     };
 
     const stopRecording = async () => {
-        if (!recording) return;
+        if (!isRecording) return;
 
         setIsRecording(false);
         try {
-            await recording.stopAndUnloadAsync();
-            const uri = recording.getURI();
+            await recorder.stop();
+            const uri = recorder.uri;
 
             if (uri) {
                 uploadAndSendMedia(uri, 'voice');
             }
         } catch (error) {
-        } finally {
-            setRecording(null);
+            console.error("Error stopping recording:", error);
         }
     };
 
@@ -1668,53 +1655,58 @@ export default TripChatScreen;
 
 // --- Helper Component: VoicePlayer ---
 const VoicePlayer = ({ uri, isMe }) => {
-    const [sound, setSound] = useState(null);
+    const [player, setPlayer] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [position, setPosition] = useState(0);
     const [duration, setDuration] = useState(0);
 
     useEffect(() => {
-        return sound
-            ? () => {
-                sound.unloadAsync();
+        return () => {
+            if (player) {
+                player.remove();
             }
-            : undefined;
-    }, [sound]);
+        };
+    }, [player]);
+
+    useEffect(() => {
+        if (!player) return;
+
+        const subscription = player.addListener('playbackStatusUpdate', (status) => {
+            if (status.isLoaded) {
+                setPosition(status.currentTime);
+                setDuration(status.duration);
+                setIsPlaying(status.playing);
+                if (status.didJustFinish) {
+                    setPosition(0);
+                    setIsPlaying(false);
+                }
+            }
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [player]);
 
     const handlePlayPause = async () => {
-        if (sound) {
+        if (player) {
             if (isPlaying) {
-                await sound.pauseAsync();
+                player.pause();
                 setIsPlaying(false);
             } else {
-                await sound.playAsync();
+                player.play();
                 setIsPlaying(true);
             }
         } else {
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri },
-                { shouldPlay: true },
-                onPlaybackStatusUpdate
-            );
-            setSound(newSound);
+            const newPlayer = createAudioPlayer(uri);
+            newPlayer.play();
+            setPlayer(newPlayer);
             setIsPlaying(true);
         }
     };
 
-    const onPlaybackStatusUpdate = (status) => {
-        if (status.isLoaded) {
-            setPosition(status.positionMillis);
-            setDuration(status.durationMillis);
-            setIsPlaying(status.isPlaying);
-            if (status.didJustFinish) {
-                setPosition(0);
-                setIsPlaying(false);
-            }
-        }
-    };
-
-    const formatTime = (ms) => {
-        const seconds = Math.floor(ms / 1000);
+    const formatTime = (secs) => {
+        const seconds = Math.floor(secs || 0);
         const m = Math.floor(seconds / 60);
         const s = seconds % 60;
         return `${m}:${s < 10 ? '0' : ''}${s}`;

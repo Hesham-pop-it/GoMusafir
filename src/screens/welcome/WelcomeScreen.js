@@ -9,13 +9,15 @@ import {
     TouchableWithoutFeedback,
     Animated,
     Platform,
-    AppState
+    AppState,
+    Modal,
+    Pressable,
 } from 'react-native';
 import { StatusBar } from 'react-native';
-import Modal from 'react-native-modal';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useIsFocused } from '@react-navigation/native';
 import { setAudioModeAsync } from 'expo-audio';
+import { useEventListener } from 'expo';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -224,7 +226,7 @@ const FlyingGreetings = () => {
 };
 
 const WelcomeScreen = ({ navigation }) => {
-    const player = useVideoPlayer(require('../../../assets/Login Animation - 1080p.mp4'), (player) => {
+    const player = useVideoPlayer(require('../../../assets/Login_Animation_1080p.mp4'), (player) => {
         player.muted = true;
         player.loop = true;
         player.audioMixingMode = 'mixWithOthers';
@@ -271,16 +273,10 @@ const WelcomeScreen = ({ navigation }) => {
         };
     }, [isFocused, player]);
 
-    React.useEffect(() => {
-        const subscription = player.addListener('playToEnd', () => {
-            player.replay();
-            player.play();
-        });
-
-        return () => {
-            subscription.remove();
-        };
-    }, [player]);
+    useEventListener(player, 'playToEnd', () => {
+        player.replay();
+        player.play();
+    });
 
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
@@ -304,20 +300,18 @@ const WelcomeScreen = ({ navigation }) => {
     );
 
     return (
-
         <View style={styles.container}>
-
             <VideoView
-                style={[StyleSheet.absoluteFillObject, { width: SCREEN_WIDTH, height: SCREEN_HEIGHT }]}
+                style={StyleSheet.absoluteFill}
                 player={player}
                 nativeControls={false}
                 contentFit="cover"
                 allowsPictureInPicture={false}
                 allowsFullscreen={false}
             />
-            <View style={styles.overlay}>
+            <View style={StyleSheet.absoluteFill}>
                 {/* <FlyingGreetings /> */}
-                <SafeAreaView style={styles.safeArea}>
+                <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
                     {/* Top Bar */}
                     <View style={styles.topBar}>
                         <TouchableOpacity
@@ -328,9 +322,6 @@ const WelcomeScreen = ({ navigation }) => {
                             <MaterialIcons name="keyboard-arrow-down" size={20} color="#FFF" />
                         </TouchableOpacity>
                     </View>
-
-                    {/* Logo Section Removed */}
-                    <View style={styles.spacer} />
 
                     {/* Buttons Section */}
                     <View style={styles.buttonContainer}>
@@ -364,9 +355,7 @@ const WelcomeScreen = ({ navigation }) => {
                         >
                             <Text style={{
                                 color: '#FFF',
-                                fontSize: responsiveFontSize(16), // 28 is likely too big for a button, using 18 or 20 for better fit but keeping the request in mind. 
-                                // Actually user asked for 28, I will use something closer or exactly what they asked if it fits. 
-                                // Let's try 18 which is a "large" button text.
+                                fontSize: responsiveFontSize(16),
                                 fontFamily: Typography.sans.bold
                             }}>
                                 Log In With Your Business Account
@@ -374,74 +363,80 @@ const WelcomeScreen = ({ navigation }) => {
                         </GradientBorderButton>
                     </View>
                 </SafeAreaView>
-            </View >
+            </View>
 
+            {/* Language Picker Modal */}
             <Modal
-                isVisible={modalVisible}
-                onBackdropPress={() => setModalVisible(false)}
-                onSwipeComplete={() => setModalVisible(false)}
-                swipeDirection="down"
-                backdropOpacity={0.3}
-                animationIn="fadeIn"
-                animationOut="fadeOut"
-                style={styles.modalOverlay}
-                useNativeDriver={true}
-                hideModalContentWhileAnimating={true}
+                visible={modalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setModalVisible(false)}
             >
-                <View style={styles.modalContent}>
-                    <FlatList
-                        data={LANGUAGES}
-                        renderItem={renderLanguageItem}
-                        keyExtractor={item => item.code}
-                        showsVerticalScrollIndicator={false}
-                    />
-                </View>
+                <Pressable
+                    style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.3)' }]}
+                    onPress={() => setModalVisible(false)}
+                >
+                    <Pressable
+                        style={[styles.modalOverlay, { position: 'absolute' }]}
+                        onPress={e => e.stopPropagation()}
+                    >
+                        <View style={styles.modalContent}>
+                            <FlatList
+                                data={LANGUAGES}
+                                renderItem={renderLanguageItem}
+                                keyExtractor={item => item.code}
+                                showsVerticalScrollIndicator={false}
+                            />
+                        </View>
+                    </Pressable>
+                </Pressable>
             </Modal>
 
             {/* Join Method Modal */}
             <Modal
-                isVisible={joinMethodVisible}
-                onBackdropPress={() => setJoinMethodVisible(false)}
-                onSwipeComplete={() => setJoinMethodVisible(false)}
-                swipeDirection="down"
-                backdropOpacity={0.7}
-                animationIn="fadeIn"
-                animationOut="fadeOut"
-                style={{ margin: 0, justifyContent: 'center', alignItems: 'center' }}
-                useNativeDriver={true}
-                hideModalContentWhileAnimating={true}
+                visible={joinMethodVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setJoinMethodVisible(false)}
             >
-                <View style={styles.joinModalContent}>
-                    <Text style={styles.joinModalTitle}>How would you like to join?</Text>
+                <Pressable
+                    style={[StyleSheet.absoluteFill, { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center' }]}
+                    onPress={() => setJoinMethodVisible(false)}
+                >
+                    <Pressable onPress={e => e.stopPropagation()}>
+                        <View style={styles.joinModalContent}>
+                            <Text style={styles.joinModalTitle}>How would you like to join?</Text>
 
-                    <View style={styles.joinOptionsContainer}>
-                        <GradientBorderButton
-                            style={{ flex: 1 }}
-                            innerStyle={{ flexDirection: 'row' }}
-                            innerBg="#23272A"
-                            onPress={() => {
-                                setJoinMethodVisible(false);
-                                navigation.navigate('JoinWithLink');
-                            }}
-                        >
-                            <Ionicons name="link-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
-                            <Text style={styles.joinOptionText}>Link</Text>
-                        </GradientBorderButton>
+                            <View style={styles.joinOptionsContainer}>
+                                <GradientBorderButton
+                                    style={{ flex: 1 }}
+                                    innerStyle={{ flexDirection: 'row' }}
+                                    innerBg="#23272A"
+                                    onPress={() => {
+                                        setJoinMethodVisible(false);
+                                        navigation.navigate('JoinWithLink');
+                                    }}
+                                >
+                                    <Ionicons name="link-outline" size={24} color="#FFF" style={{ marginRight: 8 }} />
+                                    <Text style={styles.joinOptionText}>Link</Text>
+                                </GradientBorderButton>
 
-                        <GradientBorderButton
-                            style={{ flex: 1 }}
-                            innerStyle={{ flexDirection: 'row' }}
-                            innerBg="#23272A"
-                            onPress={() => {
-                                setJoinMethodVisible(false);
-                                navigation.navigate('ScanQr');
-                            }}
-                        >
-                            <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFF" style={{ marginRight: 8 }} />
-                            <Text style={styles.joinOptionText}>QR</Text>
-                        </GradientBorderButton>
-                    </View>
-                </View>
+                                <GradientBorderButton
+                                    style={{ flex: 1 }}
+                                    innerStyle={{ flexDirection: 'row' }}
+                                    innerBg="#23272A"
+                                    onPress={() => {
+                                        setJoinMethodVisible(false);
+                                        navigation.navigate('ScanQr');
+                                    }}
+                                >
+                                    <MaterialCommunityIcons name="qrcode-scan" size={20} color="#FFF" style={{ marginRight: 8 }} />
+                                    <Text style={styles.joinOptionText}>QR</Text>
+                                </GradientBorderButton>
+                            </View>
+                        </View>
+                    </Pressable>
+                </Pressable>
             </Modal>
         </View >
     );
@@ -458,10 +453,15 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
     },
     overlay: {
-        flex: 1,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
     },
     safeArea: {
         flex: 1,
+        justifyContent: 'space-between',
     },
     topBar: {
         paddingHorizontal: 20,

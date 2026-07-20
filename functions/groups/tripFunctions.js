@@ -59,7 +59,7 @@ exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_A
 exports.verifyLinkToken = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   // This is a public check, but we still verify the token's existence and expiry.
-  const { token } = request.data;
+  const { token, allowPaid } = request.data;
   if (!token) throw new HttpsError("invalid-argument", "Token is required.");
 
   const tokenRef = db.ref(`temp_links/${token}`);
@@ -71,6 +71,17 @@ exports.verifyLinkToken = onCall({ region: "europe-west1" }, async (request) => 
 
   const data = snapshot.val();
   if (data.used) {
+    if (allowPaid && data.paid && data.tripId) {
+      return {
+        valid: true,
+        orgId: data.orgId,
+        email: data.email || null,
+        action: data.action,
+        prepaidSeats: 0,
+        tripId: data.tripId,
+        inviteCode: data.inviteCode || null
+      };
+    }
     throw new HttpsError("permission-denied", "This link has already been used.");
   }
   if (Date.now() > data.expiresAt) {
@@ -139,9 +150,6 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
 
     orgId = tokenData.orgId;
     uid = tokenData.uid; // Inherit identity from who requested the link
-
-    // Mark token as used to prevent replay
-    await db.ref(`temp_links/${linkToken}/used`).set(true);
   }
 
   if (!orgId) throw new HttpsError("unauthenticated", "You must be logged in or have a valid link to create a trip.");
@@ -195,6 +203,14 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
   };
 
   await db.ref().update(updates);
+
+  if (linkToken) {
+    await db.ref(`temp_links/${linkToken}`).update({
+      used: true,
+      tripId: tripId,
+      inviteCode: inviteCode
+    });
+  }
 
   // S20: Audit log
   await writeAuditLog(orgId, {

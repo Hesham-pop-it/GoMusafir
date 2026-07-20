@@ -1,5 +1,6 @@
 {
   "expo": {
+    "newArchEnabled": false,
     "name": "GoMusafir",
     "slug": "GoMusafir",
     "scheme": "gomusafir",
@@ -7,27 +8,12 @@
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#1A1E21"
-    },
     "ios": {
       "supportsTablet": true,
+      "appleTeamId": "W2G7J23TZQ",
       "googleServicesFile": "./GoogleService-Info.plist",
-      "config": {
-        "googleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
-      },
       "bundleIdentifier": "com.popit.GoMusafir",
       "associatedDomains": [
-        "applinks:app.gomusafir.app",
-        "applinks:www.app.gomusafir.app",
-        "applinks:join.gomusafir.app",
-        "applinks:www.join.gomusafir.app",
-        "webcredentials:app.gomusafir.app",
-        "webcredentials:www.app.gomusafir.app",
-        "webcredentials:join.gomusafir.app",
-        "webcredentials:www.join.gomusafir.app",
         "applinks:app.gomusafir.app",
         "applinks:www.app.gomusafir.app",
         "applinks:join.gomusafir.app",
@@ -39,14 +25,6 @@
       ],
       "entitlements": {
         "com.apple.developer.associated-domains": [
-          "applinks:app.gomusafir.app",
-          "applinks:www.app.gomusafir.app",
-          "applinks:join.gomusafir.app",
-          "applinks:www.join.gomusafir.app",
-          "webcredentials:app.gomusafir.app",
-          "webcredentials:www.app.gomusafir.app",
-          "webcredentials:join.gomusafir.app",
-          "webcredentials:www.join.gomusafir.app",
           "applinks:app.gomusafir.app",
           "applinks:www.app.gomusafir.app",
           "applinks:join.gomusafir.app",
@@ -116,14 +94,33 @@
         }
       ]
     },
-    "androidNavigationBar": {
-      "backgroundColor": "#1A1E21",
-      "barStyle": "light-content"
-    },
     "web": {
       "favicon": "./assets/logo.png"
     },
     "plugins": [
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#1A1E21"
+        }
+      ],
+      [
+        "expo-navigation-bar",
+        {
+          "visible": true,
+          "style": "light",
+          "backgroundColor": "#1A1E21"
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -131,11 +128,14 @@
             "kotlinVersion": "1.9.24"
           },
           "ios": {
-            "deploymentTarget": "15.1",
+            "deploymentTarget": "16.4",
             "useFrameworks": "static"
           }
         }
       ],
+      "@react-native-firebase/app",
+      "./plugins/withFirebaseSwiftFix",
+      "./plugins/withXcodeBuildSettings",
       "expo-font",
       [
         "expo-camera",
@@ -143,7 +143,6 @@
           "cameraPermission": "Allow GoMusafir to access your camera to scan QR codes."
         }
       ],
-      "@react-native-firebase/app",
       "@react-native-firebase/messaging",
       [
         "@livekit/react-native-expo-plugin",
@@ -155,7 +154,36 @@
       ],
       "expo-sqlite",
       "expo-secure-store",
-      "expo-audio"
+      "expo-audio",
+      [
+        "react-native-maps",
+        {
+          "iosGoogleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
+        }
+      ],
+      [
+        "expo-widgets",
+        {
+          "groupIdentifier": "group.com.popit.GoMusafir",
+          "bundleIdentifier": "com.popit.GoMusafir.ExpoWidgetsTarget",
+          "widgets": [
+            {
+              "name": "MyWidget",
+              "displayName": "My Widget",
+              "description": "A sample home screen widget",
+              "ios": {
+                "supportedFamilies": ["systemSmall", "systemMedium", "systemLarge"],
+                "contentMarginsDisabled": true
+              }
+            },
+            {
+              "name": "MyLiveActivity",
+              "displayName": "Voice Activity",
+              "description": "Shows live voice chat status and controls"
+            }
+          ]
+        }
+      ]
     ],
     "extra": {
       "eas": {

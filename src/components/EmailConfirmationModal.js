@@ -10,7 +10,7 @@ import {
     PanResponder,
     Animated,
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from './CompatModal';
 import { Typography } from '../constants/Typography';
 import GradientBorderButton from './GradientBorderButton';
 

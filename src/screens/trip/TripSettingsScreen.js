@@ -14,7 +14,7 @@ import {
     Alert,
     Linking
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -97,32 +97,36 @@ const TripSettingsScreen = () => {
         if (!uid) return;
 
         const resolveIds = async () => {
-            const user = auth.currentUser;
-            if (!user) return;
+            try {
+                const user = auth.currentUser;
+                if (!user) return;
 
-            const tokenResult = await user.getIdTokenResult();
-            const role = tokenResult.claims.role || 'participant';
-            setUserRole(role);
+                const tokenResult = await user.getIdTokenResult();
+                const role = tokenResult.claims.role || 'participant';
+                setUserRole(role);
 
-            let activeTripId = tripId || trip?.tripId || trip?.trip_id;
-            let activeOrgId = orgId || trip?.org_id;
+                let activeTripId = tripId || trip?.tripId || trip?.trip_id;
+                let activeOrgId = orgId || trip?.org_id;
 
-            // If orgId is missing, resolve it from user's joined trips
-            if (activeTripId && !activeOrgId) {
-                try {
-                    const joinedRef = ref(database, `users/${uid}/joined_trips/${activeTripId}`);
-                    const snapshot = await get(joinedRef);
-                    if (snapshot.exists()) {
-                        activeOrgId = snapshot.val().orgId || snapshot.val().org_id;
-                        console.log("[TripSettings] Resolved orgId:", activeOrgId);
+                // If orgId is missing, resolve it from user's joined trips
+                if (activeTripId && !activeOrgId) {
+                    try {
+                        const joinedRef = ref(database, `users/${uid}/joined_trips/${activeTripId}`);
+                        const snapshot = await get(joinedRef);
+                        if (snapshot.exists()) {
+                            activeOrgId = snapshot.val().orgId || snapshot.val().org_id;
+                            console.log("[TripSettings] Resolved orgId:", activeOrgId);
+                        }
+                    } catch (err) {
+                        console.warn("[TripSettings] ID Resolution Error:", err);
                     }
-                } catch (err) {
-                    console.warn("[TripSettings] ID Resolution Error:", err);
                 }
-            }
 
-            if (activeOrgId) setResolvedOrgId(activeOrgId);
-            if (activeTripId) setResolvedTripId(activeTripId);
+                if (activeOrgId) setResolvedOrgId(activeOrgId);
+                if (activeTripId) setResolvedTripId(activeTripId);
+            } catch (error) {
+                console.warn("[TripSettings] Error in resolveIds:", error);
+            }
         };
 
         resolveIds();

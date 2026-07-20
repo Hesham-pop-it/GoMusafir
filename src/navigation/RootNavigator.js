@@ -59,7 +59,7 @@ const webOnlyPaths = [
     'contact'
 ];
 
-const checkAndOpenWebUrl = (url) => {
+const checkAndOpenWebUrl = async (url) => {
     if (!url) return false;
     try {
         const parsed = Linking.parse(url);
@@ -69,7 +69,13 @@ const checkAndOpenWebUrl = (url) => {
         );
 
         if (shouldOpenInBrowser) {
-            WebBrowser.openBrowserAsync(url, {
+            // Dismiss existing browser to prevent duplicate stacked instances
+            try {
+                await WebBrowser.dismissBrowser();
+            } catch (err) {
+                // Ignore if there's no web browser to dismiss
+            }
+            await WebBrowser.openBrowserAsync(url, {
                 presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
             });
             return true;
@@ -84,17 +90,21 @@ const linking = {
     prefixes: [Linking.createURL('/'), 'https://app.gomusafir.app', 'https://www.app.gomusafir.app', 'gomusafir://'],
     async getInitialURL() {
         const url = await Linking.getInitialURL();
-        if (url && checkAndOpenWebUrl(url)) {
+        if (url && await checkAndOpenWebUrl(url)) {
             return null;
         }
         return url;
     },
     subscribe(listener) {
-        const onReceiveURL = ({ url }) => {
-            if (url && checkAndOpenWebUrl(url)) {
+        const onReceiveURL = async ({ url }) => {
+            if (url && await checkAndOpenWebUrl(url)) {
                 return;
             }
-            WebBrowser.dismissBrowser();
+            try {
+                await WebBrowser.dismissBrowser();
+            } catch (err) {
+                // Ignore if there's no web browser to dismiss
+            }
             listener(url);
         };
 

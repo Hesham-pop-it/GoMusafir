@@ -60,7 +60,8 @@ export default function App() {
 
   useEffect(() => {
     let unsubscribeAuth;
-    let deviceRef = null;
+    let unsubscribeDevice = null;
+    let unsubscribeUser = null;
     let currentDeviceId = null;
 
     const getDeviceId = async () => {
@@ -78,16 +79,20 @@ export default function App() {
 
         if (auth) {
           unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-            if (deviceRef) {
-              off(deviceRef);
-              deviceRef = null;
+            if (unsubscribeDevice) {
+              unsubscribeDevice();
+              unsubscribeDevice = null;
+            }
+            if (unsubscribeUser) {
+              unsubscribeUser();
+              unsubscribeUser = null;
             }
 
             if (user && user.emailVerified) {
-              deviceRef = ref(database, `users/${user.uid}/active_device_id`);
+              const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
               await set(deviceRef, currentDeviceId);
 
-              onValue(deviceRef, (snapshot) => {
+              unsubscribeDevice = onValue(deviceRef, (snapshot) => {
                 const activeId = snapshot.val();
                 if (activeId && activeId !== currentDeviceId) {
                   Alert.alert("Session Ended", "This account has been logged in on another device. You have been signed out.");
@@ -98,35 +103,47 @@ export default function App() {
               registerForPushNotificationsAsync(user);
 
               const userRef = ref(database, `users/${user.uid}`);
-              onValue(userRef, async (snapshot) => {
-                const userData = snapshot.val() || {};
-                const idTokenResult = await user.getIdTokenResult(true);
-                const role = idTokenResult.claims.role || 'participant';
-                const isStaff = role === 'admin' || role === 'co-host' || role === 'manager' || !!userData.staff_org_id;
-                
-                const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
-                let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
-                const mfaLock = await AsyncStorage.getItem('mfa_lock');
-
-                const invitationCode = joinSnap.val()?.invitationCode;
-                if (isJoining && !invitationCode && !userData.mfa_pending && !mfaLock && (isStaff || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
-                  await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
-                  isJoining = false;
-                }
-
-                if (userData.mfa_pending || mfaLock) {
-                  setInitialRoute("BusinessVerification");
-                } else if (!isJoining) {
-                  if (isStaff) {
-                    setInitialRoute("Home");
-                  } else {
-                    setInitialRoute("TripOverview");
+              unsubscribeUser = onValue(userRef, async (snapshot) => {
+                try {
+                  const userData = snapshot.val() || {};
+                  
+                  // If user has been deleted or is null, exit early to avoid token actions
+                  if (!snapshot.exists()) {
+                    return;
                   }
-                }
-                
-                setTimeout(() => {
+
+                  const idTokenResult = await user.getIdTokenResult(true);
+                  const role = idTokenResult.claims.role || 'participant';
+                  const isStaff = role === 'admin' || role === 'co-host' || role === 'manager' || !!userData.staff_org_id;
+                  
+                  const joinSnap = await get(ref(database, `users/${user.uid}/join_flow_status`));
+                  let isJoining = joinSnap.exists() && joinSnap.val()?.isJoining === true;
+                  const mfaLock = await AsyncStorage.getItem('mfa_lock');
+
+                  const invitationCode = joinSnap.val()?.invitationCode;
+                  if (isJoining && !invitationCode && !userData.mfa_pending && !mfaLock && (isStaff || Object.keys(userData?.joined_trips ?? {}).length > 0)) {
+                    await set(ref(database, `users/${user.uid}/join_flow_status/isJoining`), false);
+                    isJoining = false;
+                  }
+
+                  if (userData.mfa_pending || mfaLock) {
+                    setInitialRoute("BusinessVerification");
+                  } else if (!isJoining) {
+                    if (isStaff) {
+                      setInitialRoute("Home");
+                    } else {
+                      setInitialRoute("TripOverview");
+                    }
+                  }
+                  
+                  setTimeout(() => {
+                    setAppIsReady(true);
+                  }, 300);
+                } catch (error) {
+                  console.warn("[App] Error in user data listener:", error);
+                  // Ensure the app doesn't hang in ready state on auth/token errors
                   setAppIsReady(true);
-                }, 300);
+                }
               });
 
             } else {
@@ -149,7 +166,8 @@ export default function App() {
     
     return () => {
         if (unsubscribeAuth) unsubscribeAuth();
-        if (deviceRef) off(deviceRef);
+        if (unsubscribeDevice) unsubscribeDevice();
+        if (unsubscribeUser) unsubscribeUser();
     };
   }, []);
 

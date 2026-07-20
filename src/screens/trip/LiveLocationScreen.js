@@ -14,8 +14,9 @@ import {
     Alert,
     ActivityIndicator,
     Share,
+    Platform
 } from 'react-native';
-import Modal from 'react-native-modal';
+import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -689,7 +690,11 @@ const LiveLocationScreen = () => {
 
     const handleMapPress = async (e) => {
         const coordinate = e.nativeEvent.coordinate;
-        if (!coordinate) return;
+        if (!coordinate) {
+            console.log("[LiveLocation] handleMapPress: No coordinate in event");
+            return;
+        }
+        console.log("[LiveLocation] handleMapPress: Tapped coordinate:", coordinate);
 
         setDroppedPin({
             latitude: coordinate.latitude,
@@ -804,28 +809,33 @@ const LiveLocationScreen = () => {
                 ) : (
                 <MapView
                     ref={mapRef}
-                    provider={PROVIDER_GOOGLE}
+                    provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined}
                     style={styles.map}
                     initialRegion={mapRegion}
-                    customMapStyle={darkMapStyle}
-                        onPress={handleMapPress}
-                        onLongPress={handleMapPress}
-                        moveOnMarkerPress={false}
-                        showsUserLocation={true}
-                        showsMyLocationButton={false}
-                    >
+                    customMapStyle={Platform.OS === 'android' ? darkMapStyle : undefined}
+                    onPress={handleMapPress}
+                    onLongPress={handleMapPress}
+                    moveOnMarkerPress={false}
+                    showsUserLocation={true}
+                    showsMyLocationButton={false}
+                >
                         {/* Dropped Pin Marker (Only for local unsaved pins) */}
                         {droppedPin && !droppedPin.isShared && (
                             <Marker
+                                key={`dropped-pin-${droppedPin.latitude}-${droppedPin.longitude}`}
                                 coordinate={{ latitude: droppedPin.latitude, longitude: droppedPin.longitude }}
+                                style={{ width: 46, height: 46 }}
                                 anchor={{ x: 0.5, y: 0.5 }}
+                                centerOffset={{ x: 0, y: 0 }}
                                 onPress={(e) => {
                                     e.stopPropagation();
                                 }}
+                                zIndex={200}
+                                tracksViewChanges={true}
                             >
-                                <View style={styles.droppedPinMarkerContainer}>
+                                <View style={{ width: 46, height: 46, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' }}>
                                     <View style={styles.droppedPinCircle}>
-                                        <Ionicons name="pin" size={22} color="#EF4444" />
+                                        <LocationPinIcon color="#EF4444" size={24} />
                                     </View>
                                 </View>
                             </Marker>
@@ -834,7 +844,9 @@ const LiveLocationScreen = () => {
                         {/* Pinned Location Marker (Shared, persisted pin) */}
                         {pinnedLocation && (
                             <Marker
+                                key={`pinned-location-${pinnedLocation.latitude}-${pinnedLocation.longitude}`}
                                 coordinate={{ latitude: pinnedLocation.latitude, longitude: pinnedLocation.longitude }}
+                                style={{ width: 46, height: 46 }}
                                 anchor={{ x: 0.5, y: 0.5 }}
                                 onPress={(e) => {
                                     e.stopPropagation();
@@ -861,10 +873,12 @@ const LiveLocationScreen = () => {
                                         });
                                     }
                                 }}
+                                zIndex={200}
+                                tracksViewChanges={true}
                             >
-                                <View style={styles.droppedPinMarkerContainer}>
+                                <View style={{ width: 46, height: 46, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' }}>
                                     <View style={[styles.droppedPinCircle, { backgroundColor: '#B99A4A' }]}>
-                                        <Ionicons name="pin" size={22} color="#FFF" />
+                                        <LocationPinIcon color="#FFF" size={24} />
                                     </View>
                                 </View>
                             </Marker>
@@ -873,15 +887,18 @@ const LiveLocationScreen = () => {
                         {/* Public Safety Point Marker */}
                         {safetyPoint && (
                             <Marker
+                                key={`safety-point-${safetyPoint.lat}-${safetyPoint.lng}`}
                                 coordinate={{ latitude: safetyPoint.lat, longitude: safetyPoint.lng }}
+                                style={{ width: 64, height: 64 }}
                                 title="Safe Point"
                                 onPress={() => {
                                     const url = `https://www.google.com/maps/dir/?api=1&destination=${safetyPoint.lat},${safetyPoint.lng}`;
                                     Linking.openURL(url);
                                 }}
-                                tracksViewChanges={false}
+                                zIndex={150}
+                                tracksViewChanges={true}
                             >
-                                <View style={[styles.participantMarker, { backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }]}>
+                                <View style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }}>
                                     <View style={[styles.markerCircle, { borderColor: '#942F31' }]}>
                                         <SafetyIcon color="#942F31" size={30} />
                                     </View>
@@ -896,18 +913,22 @@ const LiveLocationScreen = () => {
                                 if (!loc.lat || !loc.lng) return false;
                                 
                                 const isMe = uid === auth.currentUser?.uid;
-                                if (isLocationHiddenGlobally && !isMe) {
+                                if (isMe) return true;
+
+                                const hasExplicitPermission = locationPermissions[uid] === true;
+
+                                if (isLocationHiddenGlobally && !hasExplicitPermission) {
                                     return false;
                                 }
 
                                 // NEW: Filter by active participant list
-                                if (!isMe && activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
+                                if (activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
                                     return false;
                                 }
 
                                 const profile = profileCache.current[uid];
-                                // If PII for location is blocked, hide the marker
-                                if (uid !== auth.currentUser?.uid && profile && profile.canSeeLocation === false) {
+                                // If PII for location is blocked, hide the marker unless we have explicit permission
+                                if (profile && profile.canSeeLocation === false && !hasExplicitPermission) {
                                     return false;
                                 }
                                 return true;
@@ -926,68 +947,18 @@ const LiveLocationScreen = () => {
                                 }
 
                                 return (
-                                    <Marker
+                                    <ParticipantMarker
                                         key={`participant-${uid}`}
-                                        identifier={uid}
-                                        coordinate={{
-                                            latitude: loc.lat,
-                                            longitude: loc.lng,
-                                        }}
-                                        zIndex={isSelected ? 100 : (isMe ? 50 : 10)}
-                                        anchor={{ x: 0.5, y: 0.5 }}
-                                        tracksViewChanges={tracksViewChanges}
-                                        onSelect={() => {
-                                            setSelectedMarker({ id: uid, latitude: loc.lat, longitude: loc.lng });
-                                            setDroppedPin(null);
-                                        }}
-                                        onDeselect={() => {
-                                            setSelectedMarker(null);
-                                        }}
-                                        title={p?.name || "Participant"}
-                                    >
-
-
-
-                                        <View
-                                            style={[
-                                                styles.participantMarker,
-                                                isSelected && styles.selectedMarkerGlow,
-                                                isMe && { borderColor: '#FFF' }
-                                            ]}
-                                        >
-                                            <View style={styles.markerCircle}>
-                                                {avatarUri && !avatarUri.includes('ui-avatars.com') ? (
-                                                    <Image
-                                                        source={{ uri: avatarUri }}
-                                                        style={styles.markerAvatar}
-                                                        resizeMode="cover"
-                                                    />
-                                                ) : (
-                                                    <View style={styles.markerInitialsContainer}>
-                                                        <Text style={styles.markerInitialsText}>
-                                                            {p?.name?.[0]?.toUpperCase() || userName?.[0]?.toUpperCase() || 'U'}
-                                                        </Text>
-                                                    </View>
-                                                )}
-                                            </View>
-                                        </View>
-
-                                        {/* {!isMe && (
-                                            <Callout
-                                                tooltip
-                                                onPress={() => handleQuestionPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                            >
-                                                <View style={styles.calloutContainer}>
-                                                    <View style={styles.calloutContent}>
-                                                        <View style={styles.requestBtn}>
-                                                            <Text style={styles.requestBtnText}>Request Location</Text>
-                                                        </View>
-                                                    </View>
-                                                    <View style={styles.calloutPointer} />
-                                                </View>
-                                            </Callout>
-                                        )} */}
-                                    </Marker>
+                                        uid={uid}
+                                        loc={loc}
+                                        isMe={isMe}
+                                        isSelected={isSelected}
+                                        p={p}
+                                        avatarUri={avatarUri}
+                                        setSelectedMarker={setSelectedMarker}
+                                        setDroppedPin={setDroppedPin}
+                                        userName={userName}
+                                    />
                                 );
                         })}
                     </MapView>
@@ -1179,13 +1150,13 @@ const LiveLocationScreen = () => {
                                                 style={styles.participantItem}
                                                 onPress={() => {
                                                     if (hasLocation) {
-                                                        const activePart = { id: uid, latitude: loc.lat, longitude: loc.lng };
+                                                        const activePart = { id: uid, latitude: Number(loc.lat), longitude: Number(loc.lng) };
                                                         setSelectedMarker(activePart);
                                                         setShowParticipantsList(false);
                                                         if (mapRef.current) {
                                                             mapRef.current.animateToRegion({
-                                                                latitude: loc.lat,
-                                                                longitude: loc.lng,
+                                                                latitude: Number(loc.lat),
+                                                                longitude: Number(loc.lng),
                                                                 latitudeDelta: 0.01,
                                                                 longitudeDelta: 0.01,
                                                             }, 1000);
@@ -1416,6 +1387,7 @@ const styles = StyleSheet.create({
         height: 64,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: 'transparent',
     },
 
     selectedMarkerGlow: {
@@ -1729,6 +1701,7 @@ const styles = StyleSheet.create({
         height: 46,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: 'transparent',
     },
     droppedPinCircle: {
         width: 40,
@@ -1905,5 +1878,74 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
 });
+
+const ParticipantMarker = ({
+    uid,
+    loc,
+    isMe,
+    isSelected,
+    p,
+    avatarUri,
+    setSelectedMarker,
+    setDroppedPin,
+    userName
+}) => {
+    return (
+        <Marker
+            key={`participant-${uid}`}
+            identifier={uid}
+            coordinate={{
+                latitude: Number(loc.lat),
+                longitude: Number(loc.lng),
+            }}
+            style={{ width: 64, height: 64 }}
+            zIndex={isSelected ? 100 : (isMe ? 50 : 10)}
+            anchor={{ x: 0.5, y: 0.5 }}
+            tracksViewChanges={true}
+            onSelect={() => {
+                setSelectedMarker({ id: uid, latitude: Number(loc.lat), longitude: Number(loc.lng) });
+                setDroppedPin(null);
+            }}
+            onDeselect={() => {
+                setSelectedMarker(null);
+            }}
+            title={p?.name || "Participant"}
+        >
+            <View
+                style={{
+                    width: 64,
+                    height: 64,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'transparent',
+                    ...(isSelected ? {
+                        shadowColor: '#B99A4A',
+                        shadowOffset: { width: 0, height: 0 },
+                        shadowOpacity: 0.8,
+                        shadowRadius: 20,
+                        elevation: 20,
+                    } : {})
+                }}
+            >
+                <View style={styles.markerCircle}>
+                    {avatarUri && !avatarUri.includes('ui-avatars.com') ? (
+                        <Image
+                            source={{ uri: avatarUri }}
+                            style={styles.markerAvatar}
+                            resizeMode="cover"
+                            fadeDuration={0}
+                        />
+                    ) : (
+                        <View style={styles.markerInitialsContainer}>
+                            <Text style={styles.markerInitialsText}>
+                                {p?.name?.[0]?.toUpperCase() || userName?.[0]?.toUpperCase() || 'U'}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+            </View>
+        </Marker>
+    );
+};
 
 export default LiveLocationScreen;

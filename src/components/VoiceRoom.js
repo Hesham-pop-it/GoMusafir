@@ -24,7 +24,7 @@ import { Track } from 'livekit-client';
 import { Mic, MicOff, PhoneOff, Users, Volume2 } from 'lucide-react-native';
 import { Colors } from '../constants/Colors';
 import { BlurView } from 'expo-blur';
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -171,13 +171,12 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
   useEffect(() => {
     const setupAudio = async () => {
       try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: true,
-          shouldRouteThroughEarpieceAndroid: false,
-          interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
-          interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          shouldRouteThroughEarpiece: false,
+          interruptionMode: 'mixWithOthers',
         });
 
         await AudioSession.configureAudio({
