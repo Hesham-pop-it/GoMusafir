@@ -65,6 +65,7 @@ export const handleAuthHandoffUrl = async (url) => {
         console.log('[AuthHandoff] Already handling a handoff request, skipping duplicate.');
         return false;
     }
+    isHandlingHandoff = true;
 
     try {
         let token = null;
@@ -95,10 +96,9 @@ export const handleAuthHandoffUrl = async (url) => {
 
         if (!token) {
             console.warn('[AuthHandoff] No token found in handoff URL:', url);
+            isHandlingHandoff = false;
             return false;
         }
-
-        isHandlingHandoff = true;
 
         const isCreateBusiness = source === 'create_business' || source === 'create-business' || source === 'create_account';
 
@@ -136,6 +136,20 @@ export const handleAuthHandoffUrl = async (url) => {
             
             const userCredential = await signInWithCustomToken(auth, customToken);
             console.log('[AuthHandoff] ✅ Successfully authenticated via session handoff for UID:', userCredential.user?.uid);
+
+            // Sync user data & reload to ensure emailVerified status is reflected locally
+            await userCredential.user?.reload().catch(() => {});
+            await AsyncStorage.multiRemove(['mfa_lock']).catch(() => {});
+
+            // Direct auto-navigation to Home screen for business account creation
+            const { navigationRef } = require('../navigation/RootNavigator');
+            if (navigationRef?.isReady()) {
+                navigationRef.reset({
+                    index: 0,
+                    routes: [{ name: 'Home' }]
+                });
+            }
+
             return true;
         } else {
             console.warn('[AuthHandoff] Response did not contain a custom token:', response.data);

@@ -10,6 +10,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "appleTeamId": "W2G7J23TZQ",
       "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "com.popit.GoMusafir",
@@ -36,6 +37,7 @@
         ]
       },
       "infoPlist": {
+        "UIRequiresFullScreen": true,
         "NSLocationWhenInUseUsageDescription": "Allow GoMusafir to access your location to show nearby places and provide navigation.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "NSLocationAlwaysUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",

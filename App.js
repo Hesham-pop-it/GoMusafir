@@ -109,7 +109,18 @@ export default function App() {
               unsubscribeUser = null;
             }
 
-            if (user && user.emailVerified) {
+            if (user && !user.emailVerified) {
+              try {
+                await user.reload();
+              } catch (reloadErr) {
+                console.log("[App] user.reload error:", reloadErr?.message);
+              }
+            }
+
+            const idTokenResultInitial = user ? await user.getIdTokenResult().catch(() => null) : null;
+            const isVerifiedUser = user && (user.emailVerified || idTokenResultInitial?.claims?.email_verified || idTokenResultInitial?.claims?.handoff);
+
+            if (isVerifiedUser) {
               const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
               await set(deviceRef, currentDeviceId);
 
@@ -196,7 +207,7 @@ export default function App() {
                   // If navigation container is already mounted and user was on auth screens, smoothly transition
                   if (navigationRef.isReady()) {
                     const currentRoute = navigationRef.getCurrentRoute()?.name;
-                    if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "BusinessLogin" || currentRoute === "Signup") {
+                    if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "Signup") {
                       navigationRef.reset({
                         index: 0,
                         routes: [{ name: targetScreen }]

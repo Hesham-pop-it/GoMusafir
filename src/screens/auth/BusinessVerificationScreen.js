@@ -138,7 +138,7 @@ const BusinessVerificationScreen = ({ route }) => {
                             index: 0,
                             routes: [{ name: 'Home' }],
                         });
-                    } else {
+                    } else if (activeParams.invitationCode) {
                         // S22: Accelerated path for existing users - Join trip immediately
                         const redeemInvite = httpsCallable(functions, 'redeemInvitation');
                         const result = await redeemInvite({
@@ -175,6 +175,21 @@ const BusinessVerificationScreen = ({ route }) => {
                                     isAdmin: false
                                 }
                             }],
+                        });
+                    } else {
+                        // Standard business login flow (no invite code to redeem)
+                        const cleanupUpdates = {};
+                        cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
+                        cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
+                        await update(ref(database), cleanupUpdates);
+
+                        // S2: Clear local security lock
+                        await AsyncStorage.removeItem('mfa_lock');
+
+                        // Navigate to Home / targetScreen
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: activeParams.targetScreen || targetScreen || 'Home', params: { ...activeParams } }],
                         });
                     }
                 } else {

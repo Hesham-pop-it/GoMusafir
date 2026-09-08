@@ -466,12 +466,16 @@ exports.exchangeAuthHandoffToken = onCall({ region: "europe-west1" }, async (req
   // Clear any mfa_pending flag in database so the mobile app doesn't ask for MFA again
   await db.ref(`users/${uid}/mfa_pending`).set(false).catch(() => {});
 
+  // Ensure emailVerified is true in Firebase Auth since OTP was already verified on the website
+  await auth.updateUser(uid, { emailVerified: true }).catch(() => {});
+
   // Fetch the user's custom claims (which include role and orgId)
   const existingClaims = userRecord.customClaims || {};
 
   // Generate custom token for mobile app sign-in, preserving all existing custom claims
   const customToken = await auth.createCustomToken(uid, {
     ...existingClaims,
+    email_verified: true,
     handoff: true,
   });
 

@@ -59,11 +59,15 @@ const BusinessLoginScreen = () => {
         if (!isFormValid) return;
         setIsLoading(true);
         try {
+            // S2: Set local lock BEFORE signing in so background auth listeners in App.js never auto-route to Home
+            await AsyncStorage.setItem('mfa_lock', 'true');
+
             // Pre-check: Verify if account is a business/staff account before signing in
             try {
                 const checkUser = httpsCallable(functions, 'checkUserExistence');
                 const result = await checkUser({ email: email.trim().toLowerCase() });
                 if (result.data?.exists && result.data?.isStaff === false) {
+                    await AsyncStorage.removeItem('mfa_lock').catch(() => {});
                     Alert.alert("Access Denied", "This account is registered as a participant. Please log in using the 'Join as Participant' flow.");
                     setIsLoading(false);
                     return;
