@@ -79,6 +79,86 @@ const ALLOWED_SHIPPING_COUNTRIES = [
   "BH", "OM", "JO", "LB", "IQ",
 ];
 
+// ── Notify Staff Of Seat Update Helper ────────────────────────────────────────
+async function notifyStaffOfSeatUpdate({ orgId, tripId = null, title = "Seat Update", message, diff = 0, totalSeats = null }) {
+  try {
+    const staffSnap = await db.ref(`orgs/${orgId}/staff`).once("value");
+    const staffObj = staffSnap.val() || {};
+
+    const relevantStaffUids = Object.keys(staffObj).filter(sUid => {
+      const role = typeof staffObj[sUid] === "string" ? staffObj[sUid] : staffObj[sUid]?.role;
+      if (!role) return true;
+      const normalized = role.toLowerCase().trim();
+      return ["admin", "co-host", "cohost", "manager"].includes(normalized);
+    });
+
+    if (relevantStaffUids.length === 0) return;
+
+    const timestamp = Date.now();
+    const payload = {
+      type: "seat_update",
+      orgId,
+      ...(tripId ? { tripId } : {}),
+      ...(totalSeats !== null ? { totalSeats: String(totalSeats) } : {}),
+      diff: String(diff),
+      timestamp: String(timestamp)
+    };
+
+    const options = {
+      ...(tripId ? { tripId } : {}),
+      interruptionLevel: "active",
+      androidChannelId: "Admin",
+      eventId: `seat_${tripId || orgId}_${Math.floor(timestamp / 15000)}`
+    };
+
+    const promises = [];
+
+    relevantStaffUids.forEach(staffUid => {
+      // 1. If tripId present, push under trips_active/${orgId}/${tripId}/notifications/${staffUid}
+      if (tripId) {
+        promises.push(
+          db.ref(`trips_active/${orgId}/${tripId}/notifications/${staffUid}`).push().set({
+            type: "seat_update",
+            title,
+            message,
+            name: "Seat Update",
+            tripId,
+            orgId,
+            timestamp,
+            read: false,
+            seen: false,
+            ...(totalSeats !== null ? { totalSeats } : {}),
+            diff
+          })
+        );
+      }
+
+      // 2. Direct user-level notification push
+      promises.push(
+        db.ref(`users/${staffUid}/notifications`).push().set({
+          type: "seat_update",
+          title,
+          message,
+          tripId: tripId || null,
+          orgId,
+          timestamp,
+          read: false,
+          seen: false
+        })
+      );
+
+      // 3. FCM Push notification
+      promises.push(
+        sendPushNotification(staffUid, title, message, payload, options)
+      );
+    });
+
+    await Promise.all(promises);
+  } catch (err) {
+    console.error("Failed to notify staff of seat update:", err);
+  }
+}
+
 // ── Get Regional Pricing (lightweight, no auth needed) ───────────────────────
 exports.getRegionalPricing = onCall({ region: "europe-west1" }, async (request) => {
   const countryCode = request.data?.countryCode || "DEFAULT";
@@ -208,6 +288,11 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
     { idempotencyKey }
   );
 
+  await db.ref(`orgs/${orgId}/checkout_sessions/${session.id}`).set({
+    status: "pending",
+    created_at: admin.database.ServerValue.TIMESTAMP
+  });
+
   return { url: session.url };
 });
 
@@ -270,6 +355,11 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
     cancel_url: `https://app.gomusafir.app/payment-cancel`,
   });
 
+  await db.ref(`orgs/${orgId}/checkout_sessions/${session.id}`).set({
+    status: "pending",
+    created_at: admin.database.ServerValue.TIMESTAMP
+  });
+
   // Send Email
   const htmlContent = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
@@ -296,6 +386,191 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
   return { success: true, url: session.url };
 });
 
+// ── Process Paid Checkout Session Helper ──────────────────────────────────────
+async function processPaidCheckoutSession(session) {
+  const metadata = session.metadata || {};
+  const { orgId, action, seatsToIncr, uid, countryCode, linkToken, planId, tripDetailsJson, tripId, prepaidSeatsDedueted } = metadata;
+
+  // Align naming with Stripe metadata
+  const prepaidSeatsDeducted = metadata.prepaidSeatsDedueted || metadata.prepaidSeatsDeducted || prepaidSeatsDedueted;
+
+  if (!orgId) {
+    console.warn(`⚠️ No orgId found in session metadata for session ${session.id}.`);
+    return;
+  }
+
+  // Idempotency Check (using atomic transaction)
+  const processedRef = db.ref(`processed_payments/${session.id}`);
+  let alreadyProcessed = false;
+  await processedRef.transaction((current) => {
+    if (current !== null) {
+      alreadyProcessed = true;
+      return current;
+    }
+    return {
+      orgId,
+      processed_at: admin.database.ServerValue.TIMESTAMP
+    };
+  });
+
+  if (alreadyProcessed) {
+    console.log(`⚠️ Payment already processed for session ${session.id}. Skipping.`);
+    return;
+  }
+
+  // Mark checkout session as completed
+  await db.ref(`orgs/${orgId}/checkout_sessions/${session.id}`).update({
+    status: "completed",
+    completed_at: admin.database.ServerValue.TIMESTAMP
+  });
+
+  const seatsNum = parseInt(seatsToIncr || "0");
+  const prepaidDeductedNum = parseInt(prepaidSeatsDeducted || "0");
+  const totalSeatsRequested = seatsNum + prepaidDeductedNum;
+
+  // Deduct prepaid seats if hybrid checkout
+  if (prepaidDeductedNum > 0) {
+    await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
+      return Math.max(0, (current || 0) - prepaidDeductedNum);
+    });
+    console.log(`💳 Hybrid checkout: Deducted ${prepaidDeductedNum} prepaid seats from Org ${orgId}`);
+  }
+
+  let finalTripId = tripId;
+
+  if (action === "CREATE_TRIP") {
+    if (!tripDetailsJson) {
+      throw new Error("Missing tripDetailsJson in metadata for CREATE_TRIP.");
+    }
+    const tripDetails = JSON.parse(tripDetailsJson);
+
+    // Create the trip record
+    const created = await createTripRecord({
+      orgId,
+      uid,
+      title: tripDetails.t,
+      destination: tripDetails.d,
+      startDate: parseInt(tripDetails.s),
+      endDate: parseInt(tripDetails.e),
+      image: tripDetails.i,
+      totalSeats: totalSeatsRequested
+    });
+    finalTripId = created.tripId;
+
+    // Mark the link token as used and paid
+    if (linkToken) {
+      await db.ref(`temp_links/${linkToken}`).update({
+        paid: true,
+        used: true,
+        tripId: finalTripId,
+        inviteCode: created.inviteCode,
+        seats: totalSeatsRequested,
+        planId: planId || "seat_only"
+      });
+    }
+
+    // Write to seatTransactions audit log
+    await db.ref(`seatTransactions`).push({
+      orgId,
+      userId: uid || "unknown",
+      tripId: finalTripId,
+      action: "CREATE_TRIP",
+      source: "stripe",
+      seats: seatsNum, // Record only paid seats count as Stripe additions
+      timestamp: admin.database.ServerValue.TIMESTAMP
+    });
+
+    console.log(`🚀 Automated Task: TRIP ${finalTripId} CREATED via Stripe completion`);
+
+    await notifyStaffOfSeatUpdate({
+      orgId,
+      tripId: finalTripId,
+      title: "New Journey Created",
+      message: `New journey "${tripDetails.t}" created with ${totalSeatsRequested} seats.`,
+      diff: totalSeatsRequested,
+      totalSeats: totalSeatsRequested
+    });
+
+  } else if (action === "SEAT_TOPUP") {
+    let resolvedTripId = tripId;
+    if (!resolvedTripId && linkToken) {
+      console.log(`ℹ️ Fetching tripId from temp_links/${linkToken} as fallback...`);
+      const linkSnap = await db.ref(`temp_links/${linkToken}`).get();
+      if (linkSnap.exists()) {
+        resolvedTripId = linkSnap.val().tripId;
+      }
+    }
+
+    if (!resolvedTripId) throw new Error("Missing tripId in metadata for SEAT_TOPUP.");
+
+    // Increment trip total_seats capacity
+    const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${resolvedTripId}/total_seats`);
+    await totalSeatsRef.transaction((current) => {
+      return (current || 0) + totalSeatsRequested;
+    });
+
+    // Mark the link token as used
+    if (linkToken) {
+      await db.ref(`temp_links/${linkToken}`).update({
+        paid: true,
+        used: true,
+        seats: totalSeatsRequested,
+        planId: planId || "seat_only"
+      });
+    }
+
+    // Write to seatTransactions audit log
+    await db.ref(`seatTransactions`).push({
+      orgId,
+      userId: uid || "unknown",
+      tripId: resolvedTripId,
+      action: "SEAT_TOPUP",
+      source: "stripe",
+      seats: seatsNum, // Record only paid seats count as Stripe additions
+      timestamp: admin.database.ServerValue.TIMESTAMP
+    });
+
+    console.log(`🚀 Automated Task: TRIP ${resolvedTripId} capacity increased by ${totalSeatsRequested}`);
+
+    let tripTitle = metadata.journeyName || "Your Trip";
+    try {
+      const tripSnap = await db.ref(`orgs/${orgId}/trips/${resolvedTripId}/title`).get();
+      if (tripSnap.exists() && tripSnap.val()) tripTitle = tripSnap.val();
+    } catch (e) {}
+
+    await notifyStaffOfSeatUpdate({
+      orgId,
+      tripId: resolvedTripId,
+      title: "Seat Update",
+      message: `Seat capacity for "${tripTitle}" increased by ${totalSeatsRequested} seats.`,
+      diff: totalSeatsRequested
+    });
+  }
+
+  // Save payment record under payments
+  const paymentsRef = db.ref(`orgs/${orgId}/payments`);
+  const paymentId = paymentsRef.push().key;
+  await paymentsRef.child(paymentId).set({
+    stripeSessionId: session.id || null,
+    stripeCustomerId: session.customer || null,
+    planId: planId || "unknown",
+    seats: seatsNum || 0,
+    amount: session.amount_total || 0,
+    currency: session.currency || null,
+    gateway: "stripe",
+    paymentMethod: "stripe",
+    journeyName: action === "CREATE_TRIP" ? "Journey Creation" : "Extra Seats",
+    countryCode: countryCode || "unknown",
+    created_at: admin.database.ServerValue.TIMESTAMP,
+    action: action || "INITIAL_PAYMENT",
+    prepaidSeatsDeducted: prepaidDeductedNum || 0
+  });
+
+  if (session.customer) {
+    await db.ref(`orgs/${orgId}/stripe_customer_id`).set(session.customer);
+  }
+}
+
 // ── Stripe Webhook ────────────────────────────────────────────────────────────
 // S29: Signature verified with stripe.webhooks.constructEvent before any action.
 exports.stripeWebhookHandler = onRequest(
@@ -313,26 +588,59 @@ exports.stripeWebhookHandler = onRequest(
         return res.status(400).send(`Webhook Error: ${err.message}`);
       }
 
-      if (event.type === "invoice.paid") {
+      if (event.type === "invoice.paid" || event.type === "invoice.payment_succeeded") {
         const invoice = event.data.object;
 
-        // Skip invoices generated by Stripe Checkout sessions (which either lack orgId, or have linkToken)
-        const isCheckoutInvoice = (invoice.metadata && invoice.metadata.linkToken) || (!invoice.metadata || !invoice.metadata.orgId);
+        // Skip invoices generated by Stripe Checkout sessions (which either lack orgId, or have linkToken, or have billing_reason === "single_payment")
+        const isCheckoutInvoice = (invoice.metadata && invoice.metadata.linkToken) ||
+                                  (invoice.billing_reason === "single_payment") ||
+                                  (!invoice.metadata || (!invoice.metadata.orgId && !invoice.customer));
+
         if (isCheckoutInvoice) {
           console.log(`ℹ️ Skipping checkout session invoice ${invoice.id}.`);
           return res.json({ received: true });
         }
 
-        const orgId = invoice.metadata.orgId;
-        const seats = invoice.metadata.seats;
-        const seatCount = parseInt(seats) || 0;
+        let orgId = invoice.metadata && invoice.metadata.orgId;
+
+        // Fallback: If orgId is not present on invoice metadata, look up the Customer object
+        if (!orgId && typeof invoice.customer === "string") {
+          try {
+            const customerObj = await stripe.customers.retrieve(invoice.customer);
+            orgId = customerObj && customerObj.metadata && customerObj.metadata.orgId;
+          } catch (custErr) {
+            console.warn(`⚠️ Failed to retrieve Stripe customer metadata for invoice ${invoice.id}:`, custErr.message);
+          }
+        }
+
+        const seats = invoice.metadata && invoice.metadata.seats;
+        let seatCount = parseInt(seats) || 0;
+
+        // Fallback: If seat count is not present in metadata, sum quantities of the line items
+        if (!seatCount && invoice.lines && Array.isArray(invoice.lines.data)) {
+          seatCount = invoice.lines.data.reduce((acc, line) => acc + (line.quantity || 0), 0);
+        }
 
         if (orgId && seatCount > 0) {
           try {
-            // Idempotency: check if this invoice was already processed
+            // Idempotency: check if this invoice was already processed (using atomic transaction)
             const invoiceRef = db.ref(`processed_invoices/${invoice.id}`);
-            const invoiceSnap = await invoiceRef.get();
-            if (invoiceSnap.exists()) {
+            let alreadyProcessed = false;
+            await invoiceRef.transaction((current) => {
+              if (current !== null) {
+                alreadyProcessed = true;
+                return current;
+              }
+              return {
+                orgId,
+                amountPaid: invoice.amount_paid,
+                currency: invoice.currency,
+                seats: seatCount,
+                processed_at: admin.database.ServerValue.TIMESTAMP
+              };
+            });
+
+            if (alreadyProcessed) {
               console.log(`⚠️ Invoice ${invoice.id} already processed. Skipping.`);
               return res.json({ received: true, already_processed: true });
             }
@@ -340,15 +648,6 @@ exports.stripeWebhookHandler = onRequest(
             // Add seats to organization's prepaid balance
             await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
                return (current || 0) + seatCount;
-            });
-
-            // Mark invoice as processed
-            await invoiceRef.set({
-              orgId,
-              amountPaid: invoice.amount_paid,
-              currency: invoice.currency,
-              seats: seatCount,
-              processed_at: admin.database.ServerValue.TIMESTAMP
             });
 
             // Write to seatTransactions audit log
@@ -363,150 +662,35 @@ exports.stripeWebhookHandler = onRequest(
             });
 
             console.log(`✅ Invoice paid: Org ${orgId} credited with ${seatCount} prepaid seats.`);
+
+            await notifyStaffOfSeatUpdate({
+              orgId,
+              title: "Prepaid Seats Added",
+              message: `${seatCount} seat(s) credited to your organisation prepaid balance via invoice payment.`,
+              diff: seatCount
+            });
           } catch (invoiceErr) {
             console.warn("❌ Invoice webhook processing failed:", invoiceErr);
             return res.status(500).json({ error: "Failed to process invoice webhook" });
           }
+        } else {
+          console.warn(`⚠️ Invoice paid webhook received but orgId (${orgId}) or seatCount (${seatCount}) could not be resolved.`);
         }
       }
 
-      if (event.type === "checkout.session.completed") {
+      if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
         const session = event.data.object;
 
         if (session.payment_status === "paid") {
-          const { orgId, action, seatsToIncr, uid, countryCode, linkToken, planId, tripDetailsJson, tripId, prepaidSeatsDedueted } = session.metadata;
-
-          // Align naming with Stripe metadata
-          const prepaidSeatsDeducted = session.metadata.prepaidSeatsDeducted || prepaidSeatsDedueted;
-
           try {
-            if (orgId) {
-              // Idempotency Check
-              const processedRef = db.ref(`processed_payments/${session.id}`);
-              const processedSnap = await processedRef.get();
-              if (processedSnap.exists()) {
-                console.log(`⚠️ Webhook already processed for session ${session.id}. Skipping.`);
-                return res.json({ received: true, already_processed: true });
-              }
-
-              const seatsNum = parseInt(seatsToIncr || "0");
-              const prepaidDeductedNum = parseInt(prepaidSeatsDeducted || "0");
-              const totalSeatsRequested = seatsNum + prepaidDeductedNum;
-
-              // Deduct prepaid seats if hybrid checkout
-              if (prepaidDeductedNum > 0) {
-                await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
-                  return Math.max(0, (current || 0) - prepaidDeductedNum);
-                });
-                console.log(`💳 Hybrid checkout: Deducted ${prepaidDeductedNum} prepaid seats from Org ${orgId}`);
-              }
-
-              let finalTripId = tripId;
-
-              if (action === "CREATE_TRIP") {
-                if (!tripDetailsJson) {
-                  throw new Error("Missing tripDetailsJson in metadata for CREATE_TRIP.");
-                }
-                const tripDetails = JSON.parse(tripDetailsJson);
-
-                // Create the trip record
-                const created = await createTripRecord({
-                  orgId,
-                  uid,
-                  title: tripDetails.t,
-                  destination: tripDetails.d,
-                  startDate: parseInt(tripDetails.s),
-                  endDate: parseInt(tripDetails.e),
-                  image: tripDetails.i,
-                  totalSeats: totalSeatsRequested
-                });
-                finalTripId = created.tripId;
-
-                // Mark the link token as used and paid
-                if (linkToken) {
-                  await db.ref(`temp_links/${linkToken}`).update({
-                    paid: true,
-                    used: true,
-                    tripId: finalTripId,
-                    inviteCode: created.inviteCode,
-                    seats: totalSeatsRequested,
-                    planId: planId || "seat_only"
-                  });
-                }
-
-                // Write to seatTransactions audit log
-                await db.ref(`seatTransactions`).push({
-                  orgId,
-                  userId: uid || "unknown",
-                  tripId: finalTripId,
-                  action: "CREATE_TRIP",
-                  source: "stripe",
-                  seats: seatsNum, // Record only paid seats count as Stripe additions
-                  timestamp: admin.database.ServerValue.TIMESTAMP
-                });
-
-                console.log(`🚀 Automated Task: TRIP ${finalTripId} CREATED via Stripe completion webhook`);
-
-              } else if (action === "SEAT_TOPUP") {
-                if (!tripId) throw new Error("Missing tripId in metadata for SEAT_TOPUP.");
-
-                // Increment trip total_seats capacity
-                const tripRef = db.ref(`orgs/${orgId}/trips/${tripId}`);
-                await tripRef.transaction((currentData) => {
-                  if (currentData) {
-                    currentData.total_seats = (currentData.total_seats || 0) + totalSeatsRequested;
-                  }
-                  return currentData;
-                });
-
-                // Mark the link token as used
-                if (linkToken) {
-                  await db.ref(`temp_links/${linkToken}`).update({
-                    paid: true,
-                    used: true,
-                    seats: totalSeatsRequested,
-                    planId: planId || "seat_only"
-                  });
-                }
-
-                // Write to seatTransactions audit log
-                await db.ref(`seatTransactions`).push({
-                  orgId,
-                  userId: uid || "unknown",
-                  tripId,
-                  action: "SEAT_TOPUP",
-                  source: "stripe",
-                  seats: seatsNum, // Record only paid seats count as Stripe additions
-                  timestamp: admin.database.ServerValue.TIMESTAMP
-                });
-
-                console.log(`🚀 Automated Task: TRIP ${tripId} capacity increased by ${totalSeatsRequested}`);
-              }
-
-              // Save payment record under payments
-              const paymentsRef = db.ref(`orgs/${orgId}/payments`);
-              const paymentId = paymentsRef.push().key;
-              await paymentsRef.child(paymentId).set({
-                stripeSessionId: session.id,
-                stripeCustomerId: session.customer || null,
-                planId: planId || "unknown",
-                seats: seatsNum,
-                amount: session.amount_total,
-                currency: session.currency,
-                journeyName: action === "CREATE_TRIP" ? "Journey Creation" : "Extra Seats",
-                countryCode: countryCode || "unknown",
-                created_at: admin.database.ServerValue.TIMESTAMP,
-                action: action || "INITIAL_PAYMENT",
-                prepaidSeatsDeducted: prepaidDeductedNum
-              });
-
-              if (session.customer) {
-                await db.ref(`orgs/${orgId}/stripe_customer_id`).set(session.customer);
-              }
-            }
+            await processPaidCheckoutSession(session);
           } catch (dbErr) {
             console.warn("DB update failed during webhook:", dbErr);
-            return res.status(500).json({ error: "Database update failed" });
+            return res.status(500).json({ 
+              error: "Database update failed",
+              message: dbErr.message || String(dbErr),
+              stack: dbErr.stack || null
+            });
           }
         }
       }
@@ -536,6 +720,16 @@ exports.verifyPayment = onCall({ region: "europe-west1" }, async (request) => {
   if (!sessionId) throw new HttpsError("invalid-argument", "sessionId is required.");
 
   const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+  if (session.payment_status === "paid") {
+    try {
+      await processPaidCheckoutSession(session);
+    } catch (dbErr) {
+      console.warn("DB update failed during payment verification:", dbErr);
+      throw new HttpsError("internal", `Database update failed: ${dbErr.message || String(dbErr)}`);
+    }
+  }
+
   return {
     verified: session.payment_status === "paid",
     status: session.status,
@@ -712,12 +906,9 @@ exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (reques
     });
 
     // 2. Increment trip total_seats capacity
-    const tripRef = db.ref(`orgs/${orgId}/trips/${tripId}`);
-    await tripRef.transaction((currentData) => {
-      if (currentData) {
-        currentData.total_seats = (currentData.total_seats || 0) + prepaidDeducted;
-      }
-      return currentData;
+    const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${tripId}/total_seats`);
+    await totalSeatsRef.transaction((current) => {
+      return (current || 0) + prepaidDeducted;
     });
 
     // 3. Mark the link token as used and paid
@@ -737,6 +928,15 @@ exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (reques
     });
 
     console.log(`✅ Instant Prepaid Seat Top-up: TRIP ${tripId} capacity increased by ${prepaidDeducted}`);
+
+    await notifyStaffOfSeatUpdate({
+      orgId,
+      tripId,
+      title: "Seat Update",
+      message: `Seat capacity for "${trip.title}" increased by ${prepaidDeducted} seats.`,
+      diff: prepaidDeducted
+    });
+
     return { instant: true };
   }
 
@@ -823,6 +1023,14 @@ exports.creditPrepaidSeats = onCall({ region: "europe-west1" }, async (request) 
     });
 
     console.log(`✅ Admin ${request.auth.uid} manually credited ${amount} seats to Org ${orgId}. Reason: ${reason}`);
+
+    await notifyStaffOfSeatUpdate({
+      orgId,
+      title: "Prepaid Seats Credited",
+      message: `${amount} prepaid seat(s) credited to your organisation balance. Reason: ${reason || "Enterprise deal"}`,
+      diff: parseInt(amount)
+    });
+
     return { success: true };
   } catch (error) {
     console.error("Manual seat credit failed:", error);
@@ -926,18 +1134,25 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
       });
 
       console.log(`✅ Instant Prepaid Trip Created: Org ${orgId}, Trip ${finalTripId}`);
+
+      await notifyStaffOfSeatUpdate({
+        orgId,
+        tripId: finalTripId,
+        title: "New Journey Created",
+        message: `New journey "${tripData.title}" created with ${requestedSeatsNum} prepaid seats.`,
+        diff: requestedSeatsNum,
+        totalSeats: requestedSeatsNum
+      });
+
       return { instant: true, tripId: finalTripId };
 
     } else if (action === "SEAT_TOPUP") {
       if (!tripId) throw new HttpsError("invalid-argument", "Missing tripId for top-up.");
 
       // Increment trip total_seats capacity
-      const tripRef = db.ref(`orgs/${orgId}/trips/${tripId}`);
-      await tripRef.transaction((currentData) => {
-        if (currentData) {
-          currentData.total_seats = (currentData.total_seats || 0) + requestedSeatsNum;
-        }
-        return currentData;
+      const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${tripId}/total_seats`);
+      await totalSeatsRef.transaction((current) => {
+        return (current || 0) + requestedSeatsNum;
       });
 
       // Mark the link token as used
@@ -960,6 +1175,21 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
       });
 
       console.log(`✅ Instant Prepaid Seat Top-up: Org ${orgId}, Trip ${tripId} incremented by ${requestedSeatsNum}`);
+
+      let tripTitle = "Your Trip";
+      try {
+        const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}/title`).get();
+        if (tripSnap.exists() && tripSnap.val()) tripTitle = tripSnap.val();
+      } catch (e) {}
+
+      await notifyStaffOfSeatUpdate({
+        orgId,
+        tripId,
+        title: "Seat Update",
+        message: `Seat capacity for "${tripTitle}" increased by ${requestedSeatsNum} seats.`,
+        diff: requestedSeatsNum
+      });
+
       return { instant: true };
     }
   }
@@ -1047,3 +1277,147 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
   const session = await stripe.checkout.sessions.create(sessionData);
   return { url: session.url };
 });
+
+// ── Verify Apple In-App Purchase Receipt ──────────────────────────────────────
+exports.verifyAppleIAPReceipt = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
+  verifyAppCheck(request);
+  const { auth: requestAuth, data } = request;
+  if (!requestAuth) throw new HttpsError("unauthenticated", "Authentication required.");
+
+  const { productId, transactionId, quantity } = data;
+  if (!productId) throw new HttpsError("invalid-argument", "Product ID required.");
+
+  const orgId = requestAuth.token.orgId;
+  if (!orgId) throw new HttpsError("failed-precondition", "No organization linked to account.");
+
+  const qty = parseInt(quantity) || 1;
+
+  let seatAmount = 1;
+  if (productId.includes("seat.10")) seatAmount = 10;
+  else if (productId.includes("seat.5")) seatAmount = 5;
+  else if (productId.includes("seat.1")) seatAmount = 1;
+  else if (productId.includes("seat_only")) seatAmount = 1;
+  else if (productId.includes("basic_pack")) seatAmount = 1;
+  else if (productId.includes("plus_pack")) seatAmount = 1;
+  else if (productId.includes("elite_wireless")) seatAmount = 1;
+
+  const totalSeatsToAdd = seatAmount * qty;
+
+  const orgRef = db.ref(`orgs/${orgId}/prepaid_seats`);
+  await orgRef.transaction((current) => (current || 0) + totalSeatsToAdd);
+
+  await writeAuditLog(orgId, {
+    action: "IAP_SEATS_PURCHASED",
+    seatsAdded: totalSeatsToAdd,
+    productId,
+    transactionId: transactionId || null,
+    byUid: requestAuth.uid
+  });
+
+  await notifyStaffOfSeatUpdate({
+    orgId,
+    title: "Seats Purchased (In-App Purchase)",
+    message: `${totalSeatsToAdd} journey seat(s) purchased and added to your organisation balance.`,
+    diff: totalSeatsToAdd
+  });
+
+  // Save payment record under payments for dashboard reporting
+  try {
+    let planId = "seat_only";
+    if (productId.includes("basic_pack")) planId = "basic_pack";
+    else if (productId.includes("plus_pack")) planId = "plus_pack";
+    else if (productId.includes("elite_wireless")) planId = "elite_wireless";
+
+    let countryCode = "DEFAULT";
+    if (requestAuth.uid) {
+      const countrySnap = await db.ref(`users/${requestAuth.uid}/country`).get();
+      if (countrySnap.exists()) {
+        const countryVal = countrySnap.val();
+        countryCode = typeof countryVal === "object" ? countryVal.code : countryVal;
+      }
+    }
+    const currencyCode = COUNTRY_TO_CURRENCY[countryCode?.toUpperCase()] || "EUR";
+    const planInfo = PRICING_PLANS[planId][currencyCode] || PRICING_PLANS[planId]["EUR"];
+    const singlePrice = planInfo.price || 9.99;
+    const iapAmountCents = Math.round(singlePrice * 100 * totalSeatsToAdd);
+
+    const paymentsRef = db.ref(`orgs/${orgId}/payments`);
+    const paymentId = paymentsRef.push().key;
+    await paymentsRef.child(paymentId).set({
+      appleProductId: productId || null,
+      appleTransactionId: transactionId || null,
+      planId: planId || "unknown",
+      seats: totalSeatsToAdd || 0,
+      amount: iapAmountCents || 0,
+      currency: currencyCode.toLowerCase(),
+      gateway: "apple_iap",
+      paymentMethod: "apple_iap",
+      journeyName: planId === "seat_only" ? "Extra Seats (IAP)" : "Journey Creation (IAP)",
+      countryCode: countryCode || "unknown",
+      created_at: admin.database.ServerValue.TIMESTAMP,
+      action: "IAP_SEATS_PURCHASED",
+      prepaidSeatsDeducted: 0
+    });
+  } catch (err) {
+    console.error("⚠️ Failed to write payment record for Apple IAP purchase:", err);
+  }
+
+  // Generate secure token for the trip creation link
+  const crypto = require("crypto");
+  const linkToken = crypto.randomBytes(32).toString("hex");
+  const expiry = Date.now() + 1 * 60 * 60 * 1000; // 1 hour expiry
+
+  let email = requestAuth.token.email;
+  if (!email) {
+    try {
+      const userRecord = await admin.auth().getUser(requestAuth.uid);
+      email = userRecord.email;
+    } catch (e) {
+      console.warn("Failed to get email from user profile:", e);
+    }
+  }
+
+  await db.ref(`temp_links/${linkToken}`).set({
+    orgId: orgId,
+    uid: requestAuth.uid,
+    email: email || null,
+    expiresAt: expiry,
+    used: false,
+    action: "CREATE_TRIP"
+  });
+
+  const webLink = `https://app.gomusafir.app/create-journey?token=${linkToken}`;
+
+  if (email) {
+    const { sendEmail } = require("../services/emailService");
+    const htmlContent = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+        <h2 style="color: #B99A4A; text-align: center;">Your Journey Begins Here</h2>
+        <p>Assalamu Alaikum,</p>
+        <p>Your organisation now has <strong>${totalSeatsToAdd} journey seat(s)</strong> ready to use.</p>
+        <p>You're now ready to create your new journey. Click the button below to continue securely on the GoMusāfir Business Portal. This secure link will remain valid for 1 hour.</p>
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${webLink}" style="background-color: #B99A4A; color: white; padding: 15px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">Continue to Journey Setup</a>
+        </div>
+        <p style="word-break: break-all; color: #666; font-size: 11px;">Secure Journey Link: ${webLink}</p>
+        <p>May your journey be safe, organised and blessed. If you need any assistance, our support team is here to help.</p>
+      </div>
+    `;
+
+    try {
+      await sendEmail({
+        to: email,
+        subject: "Payment Successful - Create Your GoMusafir Journey",
+        html: htmlContent
+      });
+      console.log(`Payment success email sent to ${email}`);
+    } catch (err) {
+      console.error("Failed to send payment success email:", err);
+    }
+  } else {
+    console.warn("No email address found; skipping payment success email.");
+  }
+
+  return { success: true, seatsAdded: totalSeatsToAdd, linkToken, webLink };
+});
+

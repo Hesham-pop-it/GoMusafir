@@ -33,7 +33,9 @@ export const translations = {
     newest: "Newest",
     oldest: "Oldest",
     no_trips_title: "No trips planned yet.",
-    no_trips_subtitle: "Tap the plus button below to create your first trip."
+    no_trips_subtitle: "Tap the plus button below to create your first trip.",
+    no_participants_title: "No participants yet.",
+    no_participants_subtitle: "There are currently no participants to display."
   },
   nl: {
     participants: "Deelnemers",
@@ -69,7 +71,9 @@ export const translations = {
     newest: "Nieuwste",
     oldest: "Oudste",
     no_trips_title: "Nog geen reizen gepland.",
-    no_trips_subtitle: "Tik op de plusknop hieronder om je eerste reis te maken."
+    no_trips_subtitle: "Tik op de plusknop hieronder om je eerste reis te maken.",
+    no_participants_title: "Nog geen deelnemers.",
+    no_participants_subtitle: "Er zijn momenteel geen deelnemers om weer te geven."
   },
   ar: {
     participants: "المشاركون",
@@ -105,6 +109,8 @@ export const translations = {
     newest: "الأحدث",
     oldest: "الأقدم",
     no_trips_title: "لا توجد رحلات مخططة بعد.",
-    no_trips_subtitle: "انقر على زر زائد أدناه لإنشاء رحلتك الأولى."
+    no_trips_subtitle: "انقر على زر زائد أدناه لإنشاء رحلتك الأولى.",
+    no_participants_title: "لا يوجد مشاركون بعد.",
+    no_participants_subtitle: "لا يوجد مشاركون لعرضهم حالياً."
   }
 };

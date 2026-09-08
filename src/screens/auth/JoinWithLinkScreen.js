@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
@@ -22,6 +23,32 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { functions, auth } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
+
+const ErrorIcon = () => (
+    <Svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <Path
+            d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
+        <Path
+            d="M12 8V12"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
+        <Path
+            d="M12 16H12.01"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
+    </Svg>
+);
 
 const JoinWithLinkScreen = ({ navigation, route }) => {
     const [invitationLink, setInvitationLink] = useState('');
@@ -99,9 +126,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = async () => {
-
         if (invitationLink.trim().length === 0) {
-            setErrorMsg('Invalid link. Please check the link and try again');
+            setErrorMsg('Please enter your invitation link.');
             setIsValid(false);
             return;
         }
@@ -171,7 +197,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
             navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
 
         } catch (error) {
-            console.log(error)
+            console.log(error);
             setErrorMsg('Invalid link. Please check the link and try again');
             setIsValid(false);
         } finally {
@@ -197,7 +223,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
 
                     <View style={styles.inputContainer}>
                         <Text style={styles.label}>Invitation Link</Text>
-                        <View style={styles.inputWrapper}>
+                        <View style={[styles.inputWrapper, !isValid && styles.inputWrapperError]}>
                             <TextInput
                                 style={styles.input}
                                 placeholder="Paste your invitation link here"
@@ -207,6 +233,11 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
                                 autoCapitalize="none"
                                 autoCorrect={false}
                             />
+                            {!isValid && (
+                                <View style={styles.errorIconWrapper}>
+                                    <ErrorIcon />
+                                </View>
+                            )}
                         </View>
                         {!isValid && (
                             <Text style={styles.errorText}>{errorMsg}</Text>
@@ -219,8 +250,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
                     <GradientBorderButton
                         text={isLoading ? "Validating..." : "Continue"}
                         onPress={handleContinue}
-                        disabled={invitationLink.trim().length === 0 || isLoading}
-                        style={{ marginBottom: isKeyboardVisible ? 20 : 100 }}
+                        disabled={isLoading}
+                        style={{ marginBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36) }}
                     />
                 </KeyboardAvoidingView>
             </SafeAreaView>
@@ -273,6 +304,14 @@ const styles = StyleSheet.create({
         height: 56,
         paddingHorizontal: 16,
     },
+    inputWrapperError: {
+        borderColor: '#EF4444',
+    },
+    errorIconWrapper: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
     input: {
         flex: 1,
         color: '#FFF',
@@ -283,10 +322,11 @@ const styles = StyleSheet.create({
         padding: 5,
     },
     errorText: {
-        color: '#FF4B4B',
+        color: '#EF4444',
         fontSize: responsiveFontSize(12),
         fontFamily: Typography.sans.regular,
         marginTop: 8,
+        marginLeft: 4,
     },
 });
 

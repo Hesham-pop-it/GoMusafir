@@ -24,6 +24,8 @@ import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { ref, get, set } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 const BusinessLoginScreen = () => {
     const navigation = useNavigation();
     const [email, setEmail] = useState('');
@@ -57,14 +59,26 @@ const BusinessLoginScreen = () => {
         if (!isFormValid) return;
         setIsLoading(true);
         try {
-            // S2: Set a local lock to prevent App.js from flickering to Home screen
-            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-            await AsyncStorage.setItem('mfa_lock', 'true');
+            // Pre-check: Verify if account is a business/staff account before signing in
+            try {
+                const checkUser = httpsCallable(functions, 'checkUserExistence');
+                const result = await checkUser({ email: email.trim().toLowerCase() });
+                if (result.data?.exists && result.data?.isStaff === false) {
+                    Alert.alert("Access Denied", "This account is registered as a participant. Please log in using the 'Join as Participant' flow.");
+                    setIsLoading(false);
+                    return;
+                }
+            } catch (checkErr) {
+                // If cloud pre-check is unavailable, fallback to post-sign-in RBAC verification below
+                console.log("[BusinessLogin] Pre-check fallback:", checkErr?.message);
+            }
 
             const userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
             const user = userCredential.user;
 
             if (!user.emailVerified) {
+                await signOut(auth);
+                await AsyncStorage.removeItem('mfa_lock').catch(() => {});
                 Alert.alert("Email Not Verified", "Please verify your email address before logging in.");
                 setIsLoading(false);
                 return;
@@ -82,6 +96,7 @@ const BusinessLoginScreen = () => {
 
             if (!hasStaffAccess) {
                 await signOut(auth);
+                await AsyncStorage.removeItem('mfa_lock').catch(() => {});
                 Alert.alert("Access Denied", "This account is registered as a participant. Please log in using the 'Join as Participant' flow.");
                 setIsLoading(false);
                 return;
@@ -90,6 +105,8 @@ const BusinessLoginScreen = () => {
             // MFA: Trigger OTP for every business login
             // S2: Mandatory Multi-Factor Authentication
             try {
+                // S2: Set a local lock to prevent App.js from flickering to Home screen
+                await AsyncStorage.setItem('mfa_lock', 'true');
                 // Set MFA pending flag to prevent App.js from auto-routing to Home
                 await set(ref(database, `users/${user.uid}/mfa_pending`), true);
 
@@ -107,9 +124,11 @@ const BusinessLoginScreen = () => {
             } catch (otpError) {
                 Alert.alert("Verification Failed", "Could not send verification code. Please try again.");
                 await signOut(auth);
+                await AsyncStorage.removeItem('mfa_lock').catch(() => {});
             }
 
         } catch (error) {
+            await AsyncStorage.removeItem('mfa_lock').catch(() => {});
             let message = "Invalid email or password.";
             switch (error.code) {
                 case 'auth/invalid-email':
@@ -173,7 +192,13 @@ const BusinessLoginScreen = () => {
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     style={styles.content}
                 >
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView 
+                        style={styles.scrollView}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="interactive"
+                        showsVerticalScrollIndicator={false}
+                    >
                         {/* Title */}
                         <Text style={styles.title}>Log in with your business account</Text>
 
@@ -229,22 +254,28 @@ const BusinessLoginScreen = () => {
                             </TouchableOpacity>
                         </View>
                     </ScrollView>
-                </KeyboardAvoidingView>
 
-                {/* Login Button - Outside KeyboardAvoidingView to stay fixed if desired */}
-                <View style={[styles.footer,]}>
-                    <TouchableOpacity
-                        style={[styles.loginButton, (!isFormValid || isLoading) && { opacity: 0.5 }, { marginBottom: isKeyboardVisible ? 20 : 100 }]}
-                        onPress={handleLogin}
-                        disabled={!isFormValid || isLoading}
-                    >
-                        {isLoading ? (
-                            <ActivityIndicator color="#FFF" />
-                        ) : (
-                            <Text style={styles.loginButtonText}>Log in</Text>
-                        )}
-                    </TouchableOpacity>
-                </View>
+                    {/* Login Button - Inside KeyboardAvoidingView to stay fixed above keyboard */}
+                    <View style={[
+                        styles.footer,
+                        {
+                            paddingBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36),
+                        }
+                    ]}>
+                        <TouchableOpacity
+                            style={[styles.loginButton, (!isFormValid || isLoading) && { opacity: 0.5 }]}
+                            onPress={handleLogin}
+                            disabled={!isFormValid || isLoading}
+                            activeOpacity={0.8}
+                        >
+                            {isLoading ? (
+                                <ActivityIndicator color="#FFF" />
+                            ) : (
+                                <Text style={styles.loginButtonText}>Log in</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                </KeyboardAvoidingView>
             </SafeAreaView>
         </GlowBackground>
     );
@@ -268,9 +299,14 @@ const styles = StyleSheet.create({
     content: {
         flex: 1,
     },
+    scrollView: {
+        flex: 1,
+    },
     scrollContent: {
+        flexGrow: 1,
         paddingHorizontal: 24,
         paddingTop: 20,
+        paddingBottom: 20,
     },
     title: {
         fontSize: responsiveFontSize(28),
@@ -304,7 +340,6 @@ const styles = StyleSheet.create({
     input: {
         flex: 1,
         color: '#FFF',
-        
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
     },
@@ -321,8 +356,8 @@ const styles = StyleSheet.create({
     },
     footer: {
         paddingHorizontal: 24,
-        // paddingBottom: 40,
-        backgroundColor: 'transparent', // Ensure it doesn't block background
+        paddingTop: 8,
+        backgroundColor: 'transparent',
     },
     loginButton: {
         backgroundColor: '#B99A4A',

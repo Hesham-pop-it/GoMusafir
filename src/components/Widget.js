@@ -1,163 +1,189 @@
 'widget'; // <- required directive at the top
 
-import { Text, VStack, HStack, Spacer, Button } from '@expo/ui/swift-ui';
-import { font, foregroundColor, padding, background, cornerRadius, frame, containerBackground, buttonStyle, controlSize, tint } from '@expo/ui/swift-ui/modifiers';
+import { Text, VStack, HStack, Spacer, Button, Image, Link, ZStack } from '@expo/ui/swift-ui';
+import { font, foregroundColor, padding, background, cornerRadius, frame, containerBackground, buttonStyle, controlSize, tint, shadow, symbolEffect, border, resizable, aspectRatio, clipped, foregroundStyle, widgetURL, clipShape } from '@expo/ui/swift-ui/modifiers';
 import { createWidget, createLiveActivity } from 'expo-widgets';
+import { connectStorageEmulator } from 'firebase/storage';
 
 function MyWidgetView(props) {
-  'widget'; // also required inside the function
+  'widget';
 
-  const isAdmin = props?.isAdmin ?? false;
-  const isConnected = props?.isConnected ?? false;
-  const isChannelActive = props?.isChannelActive ?? false;
-  const isGlobalMuteActive = props?.isGlobalMuteActive ?? false;
-  const isMuted = props?.isMuted ?? false;
-  const activeChannelName = props?.activeChannelName ?? "Voice Room";
+  const isAdmin = props?.isAdmin === true || props?.isAdmin === 'true';
+  const isConnected = props?.isConnected === true || props?.isConnected === 'true';
+  const isChannelActive = props?.isChannelActive === true || props?.isChannelActive === 'true';
+  const activeChannelName = props?.activeChannelName ?? "Umrah Tour";
+  const activeChannelImageURL = props?.activeChannelImageURL ?? null;
+  const rawSpeakerName = props?.activeSpeakerName;
+  const isSpeaking = (props?.isSpeaking === true || props?.isSpeaking === 'true') && !!rawSpeakerName && rawSpeakerName !== "No Active Speaker" && rawSpeakerName !== "No active speaker";
+  const activeSpeakerName = isSpeaking ? rawSpeakerName : "Listening...";
+  const activeSpeakerAvatar = props?.activeSpeakerAvatar ?? null;
+  const participantCount = props?.participantCount ?? 0;
+  const tripId = props?.tripId ?? null;
+  const orgId = props?.orgId ?? null;
+  const widgetLogoURL = props?.widgetLogoURL ?? null;
 
   return (
-    <VStack
-      alignment="leading"
-      spacing={5}
+    <HStack
+      alignment="top"
+      spacing={12}
       modifiers={[
-        frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: 'topLeading' }),
-        padding({ all: 14 }),
+        frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: 'leading' }),
+        padding({ all: 12 }),
         containerBackground('#1A1E21', 'widget'),
       ]}
     >
-      {/* Header Stack */}
-      <VStack alignment="leading" spacing={1}>
-        <Text
-          modifiers={[
-            font({ size: 13, weight: 'bold' }),
-            foregroundColor('#B99A4A'),
-          ]}
-        >
-          GoMusafir Voice
-        </Text>
-        <Text
-          modifiers={[
-            font({ size: 10, weight: 'semibold' }),
-            foregroundColor(isConnected ? '#30D158' : (isChannelActive ? '#34C759' : '#8E8E93')),
-          ]}
-        >
-          {isConnected ? "Connected" : (isChannelActive ? "Active" : "Offline")}
-        </Text>
-      </VStack>
-
-      <Text
+      {/* Left Column - Photo Card */}
+      <VStack
+        spacing={0}
+        alignment="leading"
         modifiers={[
-          font({ size: 11, weight: 'semibold' }),
-          foregroundColor('#E5E5EA'),
+          frame({ width: 130 }),
+          background('#24262A'),
+          cornerRadius(14),
+          clipped(),
         ]}
       >
-        {activeChannelName}
-      </Text>
-
-      {isAdmin ? (
-        // Admin controls
-        <VStack spacing={4}>
-          <Button
-            label={isGlobalMuteActive ? "Unmute Channel" : "Mute Channel"}
-            target="mute_channel"
-            onPress={() => {
-              return { ...props, isGlobalMuteActive: !isGlobalMuteActive };
-            }}
-            modifiers={[
-              buttonStyle('bordered'),
-              controlSize('small'),
-              tint(isGlobalMuteActive ? '#FF9F0A' : '#AEAEB2'),
-            ]}
+        {activeChannelImageURL && activeChannelImageURL !== '' ? (
+          <Image
+            uiImage={activeChannelImageURL}
+            modifiers={[frame({ width: 130, height: 70 }), resizable(), aspectRatio({ contentMode: 'fill' }), clipped()]}
           />
-          <Button
-            label="Stop Channel"
-            target="stop_channel"
-            role="destructive"
-            onPress={() => {
-              return { ...props, isChannelActive: false, isConnected: false };
-            }}
-            modifiers={[
-              buttonStyle('borderedProminent'),
-              controlSize('small'),
-              tint('#FF3B30'),
-            ]}
-          />
-        </VStack>
-      ) : (
-        // Participant controls
-        <VStack spacing={4}>
-          {!isConnected ? (
-            // Not joined
-            <VStack spacing={4}>
-              <Text
-                modifiers={[
-                  font({ size: 10 }),
-                  foregroundColor('#AEAEB2'),
-                ]}
-              >
-                {isChannelActive ? "Voice channel is active" : "Voice channel is offline"}
-              </Text>
-              {isChannelActive && (
-                <Button
-                  label="Join Channel"
-                  target="join_channel"
-                  onPress={() => {
-                    return { ...props, isConnected: true };
-                  }}
-                  modifiers={[
-                    buttonStyle('borderedProminent'),
-                    controlSize('small'),
-                    tint('#34C759'),
-                  ]}
-                />
-              )}
-            </VStack>
-          ) : (
-            // Joined controls
-            <VStack spacing={4}>
-              <HStack spacing={4}>
-                <Button
-                  label={isMuted ? "Tap to Talk" : "Talking..."}
-                  target="hold_to_talk"
-                  onPress={() => {
-                    return { ...props, isMuted: !isMuted };
-                  }}
-                  modifiers={[
-                    buttonStyle(isMuted ? 'bordered' : 'borderedProminent'),
-                    controlSize('small'),
-                    tint(isMuted ? '#AEAEB2' : '#30D158'),
-                  ]}
-                />
-                <Button
-                  label={isMuted ? "Unmute" : "Mute"}
-                  target="mute_myself"
-                  onPress={() => {
-                    return { ...props, isMuted: !isMuted };
-                  }}
-                  modifiers={[
-                    buttonStyle('bordered'),
-                    controlSize('small'),
-                    tint(isMuted ? '#FF453A' : '#34C759'),
-                  ]}
-                />
-              </HStack>
-              <Button
-                label="Leave Channel"
-                target="leave_channel"
-                role="destructive"
-                onPress={() => {
-                  return { ...props, isConnected: false };
-                }}
-                modifiers={[
-                  buttonStyle('bordered'),
-                  controlSize('small'),
-                  tint('#FF3B30'),
-                ]}
-              />
-            </VStack>
-          )}
-        </VStack>
-      )}
+        ) : (
+          <VStack alignment="center" modifiers={[frame({ width: 110, height: 70 }), background('#2E3034')]}>
+            <Image systemName="photo.fill" modifiers={[font({ size: 22 }), foregroundColor('#CBA052')]} />
+          </VStack>
+        )}
+        <VStack spacing={6} alignment="leading" modifiers={[padding({ all: 8 })]}>
+          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
+            {activeChannelName}
+          </Text>
+          <HStack alignment="center" spacing={4}>
+            <HStack
+              alignment="center"
+              spacing={3}
+              modifiers={[padding({ horizontal: 6, vertical: 2 }), border({ color: isChannelActive ? '#34C759' : '#6C737F', width: 1 }), background(isChannelActive ? 'rgba(52, 199, 89, 0.15)' : '#23272A'), cornerRadius(16)]}
+            >
+              <Text modifiers={[font({ size: 7 }), foregroundColor(isChannelActive ? '#34C759' : '#6C737F')]}>●</Text>
+              <Text modifiers={[font({ size: 9, weight: 'medium' }), foregroundColor(isChannelActive ? '#34C759' : '#6C737F')]}>
+              {isChannelActive ? "Online" : "Offline"}
+            </Text>
+          </HStack>
+          <Spacer />
+          <HStack spacing={3} alignment="center" modifiers={[padding({ horizontal: 6, vertical: 2 }), background('#2E3034'), cornerRadius(16)]}>
+            <Image systemName="person.3" modifiers={[font({ size: 8 }), foregroundColor('#D4AF37')]} />
+            <Text modifiers={[font({ size: 10, weight: 'bold' }), foregroundColor('#FFF')]}>{participantCount}</Text>
+          </HStack>
+        </HStack>
+      </VStack>
     </VStack>
+
+      {/* Right Column */}
+  <VStack spacing={4} alignment="leading" modifiers={[frame({ maxWidth: Infinity, maxHeight: Infinity })]}>
+    {widgetLogoURL && widgetLogoURL !== '' ? (
+      <Image
+        uiImage={widgetLogoURL}
+        modifiers={[
+          resizable(),
+          aspectRatio({ contentMode: 'fit' }),
+          frame({ height: 20, alignment: 'leading' }),
+        ]}
+      />
+    ) : (
+      <HStack alignment="center" spacing={4}>
+        <Image systemName="squareshape.split.2x2" modifiers={[foregroundColor('#D4AF37'), font({ size: 12 })]} />
+        <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#D4AF37')]}>GoMusāfir</Text>
+      </HStack>
+    )}
+
+    <Spacer />
+
+    <VStack spacing={2} alignment="leading">
+      <Text modifiers={[font({ size: 10 }), foregroundColor('#8E8E93')]}>Active speaker:</Text>
+      <HStack alignment="center" spacing={6}>
+        <ZStack alignment="center">
+          <VStack
+            modifiers={[
+              frame({ width: 22, height: 22 }),
+              background(isSpeaking ? '#30D158' : '#34C759'),
+              clipShape('circle'),
+              ...(isSpeaking ? [shadow({ color: '#30D158', radius: 3 })] : []),
+            ]}
+          />
+          <VStack
+            modifiers={[
+              frame({ width: 18, height: 18 }),
+              background('#24262A'),
+              clipShape('circle'),
+            ]}
+          />
+          {activeSpeakerAvatar && activeSpeakerAvatar !== '' ? (
+            <Image
+              uiImage={activeSpeakerAvatar}
+              modifiers={[
+                frame({ width: 18, height: 18 }),
+                resizable(),
+                aspectRatio({ contentMode: 'fill' }),
+                clipShape('circle'),
+              ]}
+            />
+          ) : (
+            <Text
+              modifiers={[
+                font({ size: 9, weight: 'bold' }),
+                foregroundColor('#FFF'),
+              ]}
+            >
+              {activeSpeakerName && activeSpeakerName[0] ? activeSpeakerName[0].toUpperCase() : 'H'}
+            </Text>
+          )}
+        </ZStack>
+        <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
+          {activeSpeakerName || 'Hesham'}
+        </Text>
+        {isSpeaking && (
+          <Image
+            systemName="waveform"
+            modifiers={[font({ size: 12 }), foregroundColor('#D4AF37')]}
+          />
+        )}
+      </HStack>
+    </VStack>
+
+    <Spacer />
+
+    {/* Buttons - side by side to save vertical space */}
+    <VStack spacing={8} modifiers={[frame({ maxWidth: Infinity })]}>
+      <Link
+        destination={`gomusafir://voicechat${tripId ? `?tripId=${tripId}&orgId=${orgId}&isAdmin=${isAdmin}` : ''}`}
+        modifiers={[
+          frame({ maxWidth: Infinity, height: 30, width: 130 }),
+          background('#1C1C1E'),
+          cornerRadius(15),
+          clipped(),
+        ]}
+      >
+        <HStack alignment="center" spacing={6}>
+          <Image systemName="mic" modifiers={[foregroundColor('#FFFFFF'), font({ size: 12 })]} />
+          <Text modifiers={[foregroundColor('#FFFFFF'), font({ size: 12, weight: 'bold' })]}>Open Voice</Text>
+        </HStack>
+      </Link>
+      <Link
+        destination={`gomusafir://livelocation${tripId ? `?tripId=${tripId}&orgId=${orgId}` : ''}`}
+        modifiers={[
+          frame({ maxWidth: Infinity, height: 34, width: 130 }),
+          background('#1C1C1E'),
+          cornerRadius(17),
+          clipped(),
+        ]}
+      >
+        <HStack alignment="center" spacing={6}>
+          <Image systemName="map" modifiers={[foregroundColor('#FFFFFF'), font({ size: 12 })]} />
+          <Text modifiers={[foregroundColor('#FFFFFF'), font({ size: 12, weight: 'bold' })]}>Open Map</Text>
+        </HStack>
+      </Link>
+    </VStack>
+  </VStack>
+    </HStack >
   );
 }
 
@@ -166,10 +192,25 @@ export const MyWidget = createWidget('MyWidget', MyWidgetView);
 function MyLiveActivityView(props) {
   'widget';
 
-  const tripName = props?.tripName ?? "Trip Voice Room";
-  const status = props?.status ?? "Voice Live";
   const startTime = props?.startTime ?? Date.now();
-  const isAdmin = props?.isAdmin ?? false;
+  const isAdmin = props?.isAdmin === true || props?.isAdmin === 'true';
+  const isConnected = props?.isConnected === true || props?.isConnected === 'true';
+  const isSpeaking = props?.isSpeaking === true || props?.isSpeaking === 'true';
+  const isChannelActive = props?.isChannelActive === true || props?.isChannelActive === 'true';
+  const isGlobalMuteActive = props?.isGlobalMuteActive === true || props?.isGlobalMuteActive === 'true';
+  const isMuted = props?.isMuted === true || props?.isMuted === 'true';
+  const activeChannelName = props?.activeChannelName ?? "Voice Room";
+  const participantCount = props?.participantCount ?? 0;
+  const widgetLogoURL = props?.widgetLogoURL ?? null;
+
+  // Speaker resolution: always show a clean speaker name and avatar/monogram
+  const rawSpeakerName = props?.activeSpeakerName;
+  const displayName = (rawSpeakerName && rawSpeakerName.trim() !== '' && rawSpeakerName !== 'No Active Speaker')
+    ? rawSpeakerName.trim()
+    : 'Hesham';
+  const firstName = displayName.split(' ')[0] || displayName;
+  const initial = (firstName[0] || 'H').toUpperCase();
+  const activeSpeakerAvatar = props?.activeSpeakerAvatar ?? null;
 
   // For the timer, we count up from startTime (default to now)
   const lowerDate = new Date(startTime);
@@ -181,160 +222,355 @@ function MyLiveActivityView(props) {
   };
 
   const bannerLayout = (
-    <HStack
-      alignment="center"
-      spacing={10}
+    <VStack
+      alignment="leading"
+      spacing={12}
       modifiers={[
-        padding({ horizontal: 14, vertical: 10 }),
+        padding({ all: 16 }),
         background('#1A1E21'),
       ]}
     >
-      <VStack alignment="leading" spacing={2}>
-        <HStack spacing={6} alignment="center">
-          <Text
+      {/* Top Section: Speaker Avatar, Name, and Status */}
+      <HStack alignment="center" spacing={10}>
+        <ZStack alignment="center">
+          <VStack
             modifiers={[
-              font({ size: 13, weight: 'bold' }),
-              foregroundColor('#B99A4A'),
+              frame({ width: 44, height: 44 }),
+              background(isSpeaking ? '#30D158' : '#34C759'),
+              clipShape('circle'),
+              ...(isSpeaking ? [shadow({ color: '#30D158', radius: 4 })] : []),
             ]}
-          >
-            {tripName}
+          />
+          <VStack
+            modifiers={[
+              frame({ width: 40, height: 40 }),
+              background('#24262A'),
+              clipShape('circle'),
+            ]}
+          />
+          {activeSpeakerAvatar && activeSpeakerAvatar !== '' ? (
+            <Image
+              uiImage={activeSpeakerAvatar}
+              modifiers={[
+                frame({ width: 40, height: 40 }),
+                resizable(),
+                aspectRatio({ contentMode: 'fill' }),
+                clipShape('circle'),
+              ]}
+            />
+          ) : (
+            <Text
+              modifiers={[
+                font({ size: 18, weight: 'bold' }),
+                foregroundColor('#FFF'),
+              ]}
+            >
+              {initial}
+            </Text>
+          )}
+        </ZStack>
+        <VStack alignment="leading" spacing={2}>
+          <Text modifiers={[font({ size: 12 }), foregroundColor('#8E8E93')]}>
+            {isSpeaking ? "Active speaker:" : "Voice chat:"}
           </Text>
-          <Text
+          <Text modifiers={[font({ size: 18, weight: 'bold' }), foregroundColor('#FFF')]}>
+            {displayName}
+          </Text>
+        </VStack>
+        <Spacer />
+        {widgetLogoURL && widgetLogoURL !== '' ? (
+          <Image
+            uiImage={widgetLogoURL}
             modifiers={[
-              font({ size: 9, weight: 'semibold' }),
-              foregroundColor('#30D158'),
-              padding({ horizontal: 5, vertical: 1 }),
-              background('#30D1581A'),
-              cornerRadius(4),
+              resizable(),
+              aspectRatio({ contentMode: 'fit' }),
+              frame({ height: 26, alignment: 'trailing' }),
             ]}
-          >
-            {status}
+          />
+        ) : (
+          <Image
+            systemName="waveform"
+            modifiers={[foregroundColor('#D4AF37'), font({ size: 22 })]}
+          />
+        )}
+      </HStack>
+
+      {/* Middle Section: Channel Status & Participants */}
+      <HStack
+        alignment="center"
+        spacing={8}
+        modifiers={[
+          padding({ horizontal: 12, vertical: 10 }),
+          background('#24262A'),
+          cornerRadius(12),
+        ]}
+      >
+        <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]}>{activeChannelName}</Text>
+
+        <HStack
+          spacing={4}
+          alignment="center"
+          modifiers={[
+            padding({ horizontal: 6, vertical: 2 }),
+            background(isChannelActive ? 'rgba(52, 199, 89, 0.15)' : '#1A1E21'),
+            border({ color: isChannelActive ? '#34C759' : '#6C737F', width: 1 }),
+            cornerRadius(8),
+          ]}
+        >
+          <Text modifiers={[font({ size: 8 }), foregroundColor(isChannelActive ? '#34C759' : '#8E8E93')]}>●</Text>
+          <Text modifiers={[font({ size: 10, weight: 'medium' }), foregroundColor(isChannelActive ? '#34C759' : '#8E8E93')]}>
+            {isChannelActive ? "Live" : "Offline"}
           </Text>
         </HStack>
 
-        {/* Live Timer */}
-        <Text
-          timerInterval={timerInterval}
-          countsDown={false}
-          modifiers={[
-            font({ size: 18, weight: 'bold' }),
-            foregroundColor('#FFF'),
-          ]}
-        />
-      </VStack>
+        <Text modifiers={[font({ size: 12 }), foregroundColor('#4A4C50')]}>|</Text>
 
-      <Spacer />
+        <Text modifiers={[font({ size: 12 }), foregroundColor('#8E8E93')]}>Participants : </Text>
+        <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]}>{participantCount}</Text>
 
-      {/* Stop Channel Button for Admin, otherwise empty */}
-      {isAdmin && (
+        <Spacer />
+
+        <HStack spacing={-6}>
+          {participantCount > 0 && <Text modifiers={[font({ size: 16 })]}>👩🏽</Text>}
+          {participantCount > 1 && <Text modifiers={[font({ size: 16 })]}>👨🏻</Text>}
+          {participantCount > 2 && (
+            <Text
+              modifiers={[
+                font({ size: 9, weight: 'bold' }),
+                foregroundColor('#FFF'),
+                padding({ all: 4 }),
+                background('#4A4C50'),
+                cornerRadius(10),
+              ]}
+            >
+              +{participantCount - 2}
+            </Text>
+          )}
+        </HStack>
+      </HStack>
+
+      {/* Bottom Section: Action Buttons */}
+      <HStack spacing={8} alignment="center">
         <Button
-          label="Stop"
-          target="stop_channel"
-          role="destructive"
+          label={isConnected ? (isAdmin ? "Stop Channel" : "Leave") : "Start Voice"}
+          target={isConnected ? (isAdmin ? "stop_channel" : "leave_channel") : "join_channel"}
+          systemImage={isConnected ? "phone.down.fill" : "play.circle"}
           onPress={() => {
-            return { ...props, isChannelActive: false };
+            return { ...props, isConnected: !isConnected };
           }}
           modifiers={[
             buttonStyle('borderedProminent'),
-            controlSize('small'),
-            tint('#FF3B30'),
-            cornerRadius(10),
+            controlSize('regular'),
+            tint('#CBA052'),
           ]}
         />
-      )}
-    </HStack>
+
+        <Button
+          label={isMuted ? "Unmute" : "Mute Myself"}
+          target="mute_myself"
+          systemImage={isMuted ? "mic.slash.fill" : "mic.slash"}
+          onPress={() => {
+            return { ...props, isMuted: !isMuted };
+          }}
+          modifiers={[
+            buttonStyle('bordered'),
+            controlSize('regular'),
+            tint('#8E8E93'),
+          ]}
+        />
+
+        {isAdmin && (
+          <Button
+            label={isGlobalMuteActive ? "Unmute All" : "Mute All"}
+            target="mute_channel"
+            systemImage="mic.slash"
+            onPress={() => {
+              return { ...props, isGlobalMuteActive: !isGlobalMuteActive };
+            }}
+            modifiers={[
+              buttonStyle('bordered'),
+              controlSize('regular'),
+              tint('#8E8E93'),
+            ]}
+          />
+        )}
+      </HStack>
+    </VStack>
   );
 
   return {
     banner: bannerLayout,
     compactLeading: (
-      <Text
-        modifiers={[
-          font({ size: 12, weight: 'bold' }),
-          foregroundColor('#B99A4A'),
-        ]}
-      >
-        Live
-      </Text>
+      <HStack alignment="center" spacing={6}>
+        <ZStack alignment="center">
+          <VStack
+            modifiers={[
+              frame({ width: 26, height: 26 }),
+              background(isSpeaking ? '#30D158' : '#34C759'),
+              clipShape('circle'),
+              ...(isSpeaking ? [shadow({ color: '#30D158', radius: 4 })] : []),
+            ]}
+          />
+          <VStack
+            modifiers={[
+              frame({ width: 22, height: 22 }),
+              background('#24262A'),
+              clipShape('circle'),
+            ]}
+          />
+          {activeSpeakerAvatar && activeSpeakerAvatar !== '' ? (
+            <Image
+              uiImage={activeSpeakerAvatar}
+              modifiers={[
+                frame({ width: 22, height: 22 }),
+                resizable(),
+                aspectRatio({ contentMode: 'fill' }),
+                clipShape('circle'),
+              ]}
+            />
+          ) : (
+            <Text
+              modifiers={[
+                font({ size: 11, weight: 'bold' }),
+                foregroundColor('#FFF'),
+              ]}
+            >
+              {initial}
+            </Text>
+          )}
+        </ZStack>
+        <Text
+          modifiers={[
+            font({ size: 14, weight: 'semibold' }),
+            foregroundColor('#FFF'),
+          ]}
+        >
+          {firstName}
+        </Text>
+      </HStack>
     ),
-    compactTrailing: (
-      <Text
-        timerInterval={timerInterval}
-        countsDown={false}
+    compactTrailing: isSpeaking ? (
+      <Image
+        systemName="waveform"
         modifiers={[
-          font({ size: 12, weight: 'semibold' }),
-          foregroundColor('#30D158'),
+          font({ size: 16 }),
+          foregroundColor('#D4AF37'),
+        ]}
+      />
+    ) : (
+      <Image
+        systemName={isMuted ? "mic.slash.fill" : "mic.fill"}
+        modifiers={[
+          font({ size: 13 }),
+          foregroundColor(isMuted ? '#8E8E93' : '#30D158'),
         ]}
       />
     ),
     minimal: (
-      <Text
-        modifiers={[
-          font({ size: 12 }),
-          foregroundColor('#B99A4A'),
-        ]}
-      >
-        🎙️
-      </Text>
-    ),
-    expandedLeading: (
-      <Text
-        modifiers={[
-          font({ size: 12, weight: 'bold' }),
-          foregroundColor('#B99A4A'),
-        ]}
-      >
-        GoMusafir
-      </Text>
-    ),
-    expandedTrailing: (
-      <Text
-        modifiers={[
-          font({ size: 10, weight: 'semibold' }),
-          foregroundColor('#30D158'),
-        ]}
-      >
-        {status}
-      </Text>
-    ),
-    expandedCenter: (
-      <Text
-        modifiers={[
-          font({ size: 14, weight: 'semibold' }),
-          foregroundColor('#FFF'),
-        ]}
-      >
-        {tripName}
-      </Text>
-    ),
-    expandedBottom: (
-      <HStack alignment="center">
-        <Text
-          timerInterval={timerInterval}
-          countsDown={false}
+      <ZStack alignment="center">
+        <VStack
           modifiers={[
-            font({ size: 22, weight: 'bold' }),
-            foregroundColor('#FFF'),
+            frame({ width: 22, height: 22 }),
+            background(isSpeaking ? '#30D158' : '#34C759'),
+            clipShape('circle'),
+            ...(isSpeaking ? [shadow({ color: '#30D158', radius: 3 })] : []),
           ]}
         />
-        <Spacer />
-        {isAdmin && (
-          <Button
-            label="Stop Channel"
-            target="stop_channel"
-            role="destructive"
-            onPress={() => {
-              return { ...props, isChannelActive: false };
-            }}
+        <VStack
+          modifiers={[
+            frame({ width: 18, height: 18 }),
+            background('#24262A'),
+            clipShape('circle'),
+          ]}
+        />
+        {activeSpeakerAvatar && activeSpeakerAvatar !== '' ? (
+          <Image
+            uiImage={activeSpeakerAvatar}
             modifiers={[
-              buttonStyle('borderedProminent'),
-              controlSize('small'),
-              tint('#FF3B30'),
+              frame({ width: 18, height: 18 }),
+              resizable(),
+              aspectRatio({ contentMode: 'fill' }),
+              clipShape('circle'),
             ]}
           />
+        ) : (
+          <Text
+            modifiers={[
+              font({ size: 10, weight: 'bold' }),
+              foregroundColor('#FFF'),
+            ]}
+          >
+            {initial}
+          </Text>
         )}
+      </ZStack>
+    ),
+    expandedLeading: (
+      <HStack alignment="center" spacing={8} modifiers={[padding({ leading: 8 })]}>
+        <ZStack alignment="center">
+          <VStack
+            modifiers={[
+              frame({ width: 36, height: 36 }),
+              background(isSpeaking ? '#30D158' : '#34C759'),
+              clipShape('circle'),
+              ...(isSpeaking ? [shadow({ color: '#30D158', radius: 4 })] : []),
+            ]}
+          />
+          <VStack
+            modifiers={[
+              frame({ width: 32, height: 32 }),
+              background('#24262A'),
+              clipShape('circle'),
+            ]}
+          />
+          {activeSpeakerAvatar && activeSpeakerAvatar !== '' ? (
+            <Image
+              uiImage={activeSpeakerAvatar}
+              modifiers={[
+                frame({ width: 32, height: 32 }),
+                resizable(),
+                aspectRatio({ contentMode: 'fill' }),
+                clipShape('circle'),
+              ]}
+            />
+          ) : (
+            <Text
+              modifiers={[
+                font({ size: 14, weight: 'bold' }),
+                foregroundColor('#FFF'),
+              ]}
+            >
+              {initial}
+            </Text>
+          )}
+        </ZStack>
+        <VStack alignment="leading" spacing={1}>
+          <Text modifiers={[font({ size: 10 }), foregroundColor('#8E8E93')]}>
+            {isSpeaking ? "Speaking" : "Channel"}
+          </Text>
+          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
+            {displayName}
+          </Text>
+        </VStack>
       </HStack>
     ),
+    expandedTrailing: (
+      <VStack alignment="trailing" spacing={1} modifiers={[padding({ trailing: 8 })]}>
+        <Text modifiers={[font({ size: 10 }), foregroundColor('#8E8E93')]}>
+          Mic
+        </Text>
+        <HStack alignment="center" spacing={4}>
+          <Image
+            systemName={isMuted ? "mic.slash.fill" : "mic.fill"}
+            modifiers={[font({ size: 12 }), foregroundColor(isMuted ? '#8E8E93' : '#30D158')]}
+          />
+          <Text modifiers={[font({ size: 12, weight: 'semibold' }), foregroundColor(isMuted ? '#8E8E93' : '#30D158')]}>
+            {isMuted ? "Muted" : "Live"}
+          </Text>
+        </HStack>
+      </VStack>
+    ),
+    expandedBottom: bannerLayout,
   };
 }
 

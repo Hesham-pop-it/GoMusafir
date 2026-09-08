@@ -12,7 +12,8 @@ import {
     Animated,
     ActivityIndicator,
     Alert,
-    Linking
+    Linking,
+    Platform
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,10 +28,32 @@ import { responsiveFontSize } from '../../utils/responsive';
 import { auth, database } from '../../config/firebase';
 import { signOut } from 'firebase/auth';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
-import { ref, onValue, update, get } from 'firebase/database';
+import { stopLiveLocationTracking } from '../../services/locationTrackingService';
+import { ref, onValue, update, get, set, push } from 'firebase/database';
+import { safeSignOut } from '../../utils/authUtils';
 
 
 const { width } = Dimensions.get('window');
+
+const calculateActualIAPPrice = (seatCount) => {
+    let total = 0;
+    let tempSeats = seatCount;
+
+    const num10 = Math.floor(tempSeats / 10);
+    total += num10 * 99.99;
+    tempSeats %= 10;
+
+    const num5 = Math.floor(tempSeats / 5);
+    total += num5 * 49.99;
+    tempSeats %= 5;
+
+    total += tempSeats * 9.99;
+    return total;
+};
+
+const PLANS = [
+    { id: 'seat_only', label: 'Journey Seat', fallbackPrice: 9.99 },
+];
 
 const TripSettingsScreen = () => {
     const navigation = useNavigation();
@@ -44,6 +67,7 @@ const TripSettingsScreen = () => {
     const [userRole, setUserRole] = useState(isAdmin ? 'admin' : 'participant');
 
     const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+    const [isDeletingTrip, setIsDeletingTrip] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
     const [isDeletingAccount, setIsDeletingAccount] = useState(false);
@@ -57,12 +81,14 @@ const TripSettingsScreen = () => {
     const [resolvedTripId, setResolvedTripId] = useState(tripId);
     const [totalSeats, setTotalSeats] = useState(15); // Default fallback
     const [filledSeats, setFilledSeats] = useState(0);
+    const [staffData, setStaffData] = useState({});
     const [seatTopupStep, setSeatTopupStep] = useState(1); // 1: Count, 2: Plan, 3: Success
     const [selectedPlan, setSelectedPlan] = useState('seat_only');
     const [isProcessingTopup, setIsProcessingTopup] = useState(false);
     const [pricingPlans, setPricingPlans] = useState(null);
     const [topupError, setTopupError] = useState(null);
     const [topupToken, setTopupToken] = useState(null);
+    const [prepaidSeats, setPrepaidSeats] = useState(0);
     const [isScrolled, setIsScrolled] = useState(false);
 
     const [visibilitySettings, setVisibilitySettings] = useState({
@@ -132,6 +158,18 @@ const TripSettingsScreen = () => {
         resolveIds();
     }, [tripId, orgId, trip]);
 
+    // 1.1 Staff Data Sync for Seat Calculation
+    useEffect(() => {
+        if (!resolvedTripId || !resolvedOrgId) return;
+
+        const staffRef = ref(database, `orgs/${resolvedOrgId}/staff`);
+        const unsubscribeStaff = onValue(staffRef, (snapshot) => {
+            setStaffData(snapshot.val() || {});
+        });
+
+        return () => unsubscribeStaff();
+    }, [resolvedTripId, resolvedOrgId]);
+
     // 2. Real-time Seat Statistics Synchronization
     useEffect(() => {
         if (!resolvedTripId) return;
@@ -157,34 +195,23 @@ const TripSettingsScreen = () => {
 
         // B. Listen for Filled Seats (Participant Count)
         const participantsRef = ref(database, `trips_participants/${resolvedTripId}`);
-        const staffRef = resolvedOrgId ? ref(database, `orgs/${resolvedOrgId}/staff`) : null;
         let unsubscribeParticipants;
-        if (staffRef) {
+        if (resolvedOrgId) {
             unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
-                get(staffRef).then(staffSnap => {
-                    const staffList = staffSnap.val() || {};
-                    const uids = snapshot.exists()
-                        ? (Array.isArray(snapshot.val()) ? snapshot.val().filter(v => v !== null) : Object.keys(snapshot.val()))
-                        : [];
-                    const filtered = uids.filter(uid => {
-                        const role = staffList[uid];
-                        return !role || role === 'admin' || role === 'co-host' || role === 'manager';
-                    });
-                    const teamMemberUids = Object.keys(staffList).filter(uid => {
-                        const role = staffList[uid];
-                        return role === 'admin' || role === 'co-host' || role === 'manager';
-                    });
-                    const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
-                    setFilledSeats(combined.length);
-                }).catch(() => {
-                    if (snapshot.exists()) {
-                        const val = snapshot.val() || {};
-                        const count = Array.isArray(val) ? val.filter(v => v !== null).length : Object.keys(val).length;
-                        setFilledSeats(count);
-                    } else {
-                        setFilledSeats(0);
-                    }
+                const staffList = staffData;
+                const uids = snapshot.exists()
+                    ? (Array.isArray(snapshot.val()) ? snapshot.val().filter(v => v !== null) : Object.keys(snapshot.val()))
+                    : [];
+                const filtered = uids.filter(uid => {
+                    const role = staffList[uid];
+                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
                 });
+                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                    const role = staffList[uid];
+                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                });
+                const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
+                setFilledSeats(combined.length);
             });
         } else {
             unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
@@ -205,9 +232,9 @@ const TripSettingsScreen = () => {
 
         return () => {
             if (unsubscribeTrip) unsubscribeTrip();
-            unsubscribeParticipants();
+            if (unsubscribeParticipants) unsubscribeParticipants();
         };
-    }, [resolvedOrgId, resolvedTripId]);
+    }, [resolvedOrgId, resolvedTripId, staffData]);
 
     // 3. Global Visibility Configuration Sync
     useEffect(() => {
@@ -223,34 +250,175 @@ const TripSettingsScreen = () => {
         return () => unsubscribe();
     }, [resolvedOrgId, resolvedTripId]);
 
-    // 4. Fetch Pricing for Seat Top-up
+    // 4. Fetch Pricing and Prepaid Seats for Seat Top-up
     useEffect(() => {
-        if (seatModalVisible && !pricingPlans) {
-            const fetchPricing = async () => {
-                try {
-                    const { functions, database } = require('../../config/firebase');
-                    const { httpsCallable } = require('firebase/functions');
-                    const { ref, get } = require('firebase/database');
-                    
-                    // 1. Detect user country for regional pricing
-                    let countryCode = 'DEFAULT';
-                    const user = auth.currentUser;
-                    if (user) {
-                        const countrySnap = await get(ref(database, `users/${user.uid}/country`));
-                        if (countrySnap.exists()) {
-                            const cData = countrySnap.val();
-                            countryCode = typeof cData === 'object' ? (cData.code || 'DEFAULT') : (cData || 'DEFAULT');
-                        }
+        if (seatModalVisible) {
+            // Fetch current prepaid seats
+            if (resolvedOrgId) {
+                const prepaidRef = ref(database, `orgs/${resolvedOrgId}/prepaid_seats`);
+                get(prepaidRef).then((snapshot) => {
+                    if (snapshot.exists()) {
+                        setPrepaidSeats(snapshot.val() || 0);
+                    } else {
+                        setPrepaidSeats(0);
                     }
+                }).catch((err) => {
+                    console.error("Failed to fetch prepaid seats:", err);
+                });
+            }
 
-                    const getRegionalPricing = httpsCallable(functions, 'getRegionalPricing');
-                    const result = await getRegionalPricing({ countryCode });
-                    setPricingPlans(result.data.plans);
-                } catch (err) {
-                    console.warn("Failed to fetch pricing:", err);
+            if (!pricingPlans) {
+                const fetchPricing = async () => {
+                    try {
+                        const { functions, database } = require('../../config/firebase');
+                        const { httpsCallable } = require('firebase/functions');
+                        const { ref, get } = require('firebase/database');
+                        
+                        // 1. Detect user country for regional pricing
+                        let countryCode = 'DEFAULT';
+                        const user = auth.currentUser;
+                        if (user) {
+                            const countrySnap = await get(ref(database, `users/${user.uid}/country`));
+                            if (countrySnap.exists()) {
+                                const cData = countrySnap.val();
+                                countryCode = typeof cData === 'object' ? (cData.code || 'DEFAULT') : (cData || 'DEFAULT');
+                            }
+                        }
+
+                        const getRegionalPricing = httpsCallable(functions, 'getRegionalPricing');
+                        const result = await getRegionalPricing({ countryCode });
+                        setPricingPlans(result.data.plans);
+                    } catch (err) {
+                        console.warn("Failed to fetch pricing:", err);
+                    }
+                };
+                fetchPricing();
+            }
+        }
+    }, [seatModalVisible]);
+
+    const topupTokenRef = React.useRef(null);
+    const purchasesRef = React.useRef([]);
+    const currentPurchaseIndexRef = React.useRef(0);
+    const successfulSeatsRef = React.useRef(0);
+
+    useEffect(() => {
+        topupTokenRef.current = topupToken;
+    }, [topupToken]);
+
+    useEffect(() => {
+        if (seatModalVisible) {
+            setSeatCount(1);
+            setSeatTopupStep(1);
+            setSelectedPlan('seat_only');
+            setTopupToken(null);
+            setTopupError(null);
+            setIsProcessingTopup(false);
+
+            purchasesRef.current = [];
+            currentPurchaseIndexRef.current = 0;
+            successfulSeatsRef.current = 0;
+        }
+    }, [seatModalVisible]);
+
+    useEffect(() => {
+        if (seatModalVisible && Platform.OS === 'ios') {
+            console.log("[TripSettingsScreen] Modal visible, establishing IAP connection...");
+            const { connectIAP, disconnectIAP } = require('../../services/iapService');
+            connectIAP(
+                async (purchase, data) => {
+                    console.log("[TripSettingsScreen] connectIAP success callback triggered, purchase:", purchase);
+                    try {
+                        const { functions } = require('../../config/firebase');
+                        const { httpsCallable } = require('firebase/functions');
+                        const verifyAndPaySeatTopup = httpsCallable(functions, 'verifyAndPaySeatTopup');
+
+                        const currentPurchase = purchasesRef.current[currentPurchaseIndexRef.current];
+                        if (currentPurchase) {
+                            successfulSeatsRef.current += currentPurchase.seatCount;
+                        }
+
+                        currentPurchaseIndexRef.current += 1;
+
+                        if (currentPurchaseIndexRef.current < purchasesRef.current.length) {
+                            const nextPurchase = purchasesRef.current[currentPurchaseIndexRef.current];
+                            console.log(`[TripSettingsScreen] Next purchase in sequence: ${nextPurchase.productId} x ${nextPurchase.qty}`);
+                            const { purchaseSeatProduct } = require('../../services/iapService');
+                            await purchaseSeatProduct(nextPurchase.productId, nextPurchase.qty);
+                        } else {
+                            if (topupTokenRef.current) {
+                                console.log("[TripSettingsScreen] Calling verifyAndPaySeatTopup with token...");
+                                await verifyAndPaySeatTopup({
+                                    token: topupTokenRef.current,
+                                    planId: selectedPlan
+                                });
+                                console.log("[TripSettingsScreen] verifyAndPaySeatTopup success!");
+                                const addedSeats = successfulSeatsRef.current || seatCount;
+                                if (auth.currentUser) {
+                                    const notifPayload = {
+                                        type: 'seat_update',
+                                        title: 'Seat Update',
+                                        message: `Seat capacity for "${trip?.title || 'your trip'}" increased by ${addedSeats} seats.`,
+                                        tripId: resolvedTripId || trip?.id,
+                                        orgId: resolvedOrgId,
+                                        timestamp: Date.now(),
+                                        read: false,
+                                        seen: false,
+                                        diff: addedSeats
+                                    };
+                                    push(ref(database, `users/${auth.currentUser.uid}/notifications`), notifPayload).catch(() => {});
+                                    if (resolvedOrgId && (resolvedTripId || trip?.id)) {
+                                        push(ref(database, `trips_active/${resolvedOrgId}/${resolvedTripId || trip?.id}/notifications/${auth.currentUser.uid}`), notifPayload).catch(() => {});
+                                    }
+                                }
+                                Alert.alert("Success", "Seats increased successfully!");
+                            } else {
+                                console.warn("[TripSettingsScreen] Purchase success, but no topupToken found!");
+                                if (auth.currentUser) {
+                                    const notifPayload = {
+                                        type: 'seat_update',
+                                        title: 'Prepaid Seats Added',
+                                        message: `${successfulSeatsRef.current || seatCount} seat(s) purchased and added to your organisation balance.`,
+                                        orgId: resolvedOrgId,
+                                        timestamp: Date.now(),
+                                        read: false,
+                                        seen: false,
+                                        diff: successfulSeatsRef.current || seatCount
+                                    };
+                                    push(ref(database, `users/${auth.currentUser.uid}/notifications`), notifPayload).catch(() => {});
+                                }
+                                Alert.alert("Success", "Purchase successful! Prepaid seats added.");
+                            }
+                            setIsProcessingTopup(false);
+                            setSeatModalVisible(false);
+                        }
+                    } catch (err) {
+                        console.error("[TripSettingsScreen] verifyAndPaySeatTopup failed:", err);
+                        Alert.alert("Partial Success", "Purchase succeeded but updating the trip failed. Please contact support.");
+                        setIsProcessingTopup(false);
+                        setSeatModalVisible(false);
+                    }
+                },
+                (err) => {
+                    console.warn("[TripSettingsScreen] connectIAP error callback triggered:", err);
+                    setIsProcessingTopup(false);
+                    setSeatModalVisible(false);
+
+                    const isCancel = err.message?.toLowerCase().includes('cancel') || err.code === 'E_USER_CANCELLED';
+                    if (successfulSeatsRef.current > 0) {
+                        Alert.alert(
+                            "Purchase Failed",
+                            `Successfully purchased ${successfulSeatsRef.current} seats, but failed to complete the remaining seats: ${isCancel ? 'User cancelled' : (err.message || 'User cancelled')}.`
+                        );
+                    } else {
+                        Alert.alert("Purchase Failed", err.message || "Could not complete In-App Purchase.");
+                    }
                 }
+            );
+            return () => {
+                console.log("[TripSettingsScreen] Cleaning up IAP connection...");
+                disconnectIAP();
             };
-            fetchPricing();
         }
     }, [seatModalVisible]);
 
@@ -308,7 +476,8 @@ const TripSettingsScreen = () => {
 
 
     const handleDeleteTrip = async () => {
-        setDeleteModalVisible(false);
+        if (isDeletingTrip) return;
+        setIsDeletingTrip(true);
         try {
             const { functions } = require('../../config/firebase');
             const { httpsCallable } = require('firebase/functions');
@@ -316,6 +485,8 @@ const TripSettingsScreen = () => {
 
             await deleteTrip({ tripId: resolvedTripId });
 
+            setIsDeletingTrip(false);
+            setDeleteModalVisible(false);
             Alert.alert("Success", "Journey has been successfully deleted.", [
                 {
                     text: "OK",
@@ -329,6 +500,7 @@ const TripSettingsScreen = () => {
             ]);
         } catch (error) {
             console.error("Delete Trip Error:", error);
+            setIsDeletingTrip(false);
             Alert.alert("Error", "Failed to delete the journey. " + error.message);
         }
     };
@@ -340,37 +512,140 @@ const TripSettingsScreen = () => {
         setTopupError(null);
 
         try {
-            const { functions } = require('../../config/firebase');
+            const { functions, database } = require('../../config/firebase');
             const { httpsCallable } = require('firebase/functions');
+            const { ref, get } = require('firebase/database');
             const generateSeatTopupToken = httpsCallable(functions, 'generateSeatTopupToken');
 
+            console.log("[TripSettingsScreen] Calling generateSeatTopupToken for seats:", seatCount);
             const result = await generateSeatTopupToken({
                 tripId: resolvedTripId,
                 seatsToIncr: seatCount
             });
 
-            setTopupToken(result.data.token);
-            setSeatModalVisible(false);
-            setTimeout(() => {
-                setRequestSentVisible(true);
-            }, 600);
+            const token = result.data.token;
+            console.log("[TripSettingsScreen] generateSeatTopupToken success, token:", token);
+            setTopupToken(token);
+
+            // Fetch current prepaid seats
+            let prepaidSeats = 0;
+            if (resolvedOrgId) {
+                const orgSnap = await get(ref(database, `orgs/${resolvedOrgId}/prepaid_seats`));
+                prepaidSeats = orgSnap.val() || 0;
+            }
+
+            if (prepaidSeats >= seatCount) {
+                // Instantly topup without IAP or prompt!
+                const verifyAndPaySeatTopup = httpsCallable(functions, 'verifyAndPaySeatTopup');
+                console.log("[TripSettingsScreen] Prepaid balance covers all seats. Calling verifyAndPaySeatTopup instantly...");
+                await verifyAndPaySeatTopup({
+                    token: token,
+                    planId: selectedPlan
+                });
+                console.log("[TripSettingsScreen] verifyAndPaySeatTopup success (instant prepaid)!");
+                if (auth.currentUser) {
+                    const notifPayload = {
+                        type: 'seat_update',
+                        title: 'Seat Update',
+                        message: `Seat capacity for "${trip?.title || 'your trip'}" increased by ${seatCount} seats.`,
+                        tripId: resolvedTripId || trip?.id,
+                        orgId: resolvedOrgId,
+                        timestamp: Date.now(),
+                        read: false,
+                        seen: false,
+                        diff: seatCount
+                    };
+                    push(ref(database, `users/${auth.currentUser.uid}/notifications`), notifPayload).catch(() => {});
+                    if (resolvedOrgId && (resolvedTripId || trip?.id)) {
+                        push(ref(database, `trips_active/${resolvedOrgId}/${resolvedTripId || trip?.id}/notifications/${auth.currentUser.uid}`), notifPayload).catch(() => {});
+                    }
+                }
+                Alert.alert("Success", "Seats increased successfully!");
+                setSeatModalVisible(false);
+                setIsProcessingTopup(false);
+                return;
+            }
+
+            if (Platform.OS === 'ios') {
+                const unpaidSeats = seatCount - prepaidSeats;
+
+                // Decompose unpaidSeats into product purchases
+                const purchases = [];
+                let tempSeats = unpaidSeats;
+
+                const num10 = Math.floor(tempSeats / 10);
+                for (let i = 0; i < num10; i++) {
+                    purchases.push({ productId: 'com.gomusafir.plan.seat.10', qty: 1, seatCount: 10 });
+                }
+                tempSeats %= 10;
+
+                const num5 = Math.floor(tempSeats / 5);
+                for (let i = 0; i < num5; i++) {
+                    purchases.push({ productId: 'com.gomusafir.plan.seat.5', qty: 1, seatCount: 5 });
+                }
+                tempSeats %= 5;
+
+                if (tempSeats > 0) {
+                    purchases.push({ productId: 'com.gomusafir.plan.seat_only', qty: tempSeats, seatCount: tempSeats });
+                }
+
+                purchasesRef.current = purchases;
+                currentPurchaseIndexRef.current = 0;
+                successfulSeatsRef.current = 0;
+
+                if (purchases.length > 0) {
+                    try {
+                        const { purchaseSeatProduct } = require('../../services/iapService');
+                        const firstPurchase = purchases[0];
+                        console.log("[TripSettingsScreen] Triggering first IAP purchase for product ID:", firstPurchase.productId, "quantity:", firstPurchase.qty);
+                        await purchaseSeatProduct(firstPurchase.productId, firstPurchase.qty);
+                        console.log("[TripSettingsScreen] purchaseSeatProduct call complete.");
+                    } catch (iapErr) {
+                        console.warn("[TripSettingsScreen] purchaseSeatProduct threw error:", iapErr);
+                        setIsProcessingTopup(false);
+                    }
+                } else {
+                    console.warn("[TripSettingsScreen] purchases array is empty!");
+                    setIsProcessingTopup(false);
+                }
+            } else {
+                setSeatModalVisible(false);
+                setTimeout(() => {
+                    setRequestSentVisible(true);
+                }, 600);
+            }
         } catch (err) {
-            console.log("Token generation failed:", err);
+            console.error("[TripSettingsScreen] generateSeatTopupToken failed:", err);
             setTopupError("Failed to generate payment link. Please try again.");
-        } finally {
             setIsProcessingTopup(false);
+        } finally {
+            if (Platform.OS !== 'ios') {
+                setIsProcessingTopup(false);
+            }
         }
     };
 
-
     const handleLogout = async () => {
         setLogoutModalVisible(false);
+        
+        // 1. Clear active device ID
         try {
-            await unregisterForPushNotificationsAsync();
-            await signOut(auth);
+            const user = auth.currentUser;
+            if (user) {
+                const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
+                await set(deviceRef, null);
+            }
+        } catch (err) {
+            console.warn("Failed to clear active device ID:", err);
+        }
+
+        // 2. Safe Sign out (clears RTDB presence, stops location/notifications, then signs out)
+        try {
+            await safeSignOut(auth, { tripId, orgId });
             // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
         } catch (error) {
             console.warn("Logout failed:", error);
+            Alert.alert("Error", "Failed to log out. Please try again.");
         }
     };
 
@@ -382,7 +657,7 @@ const TripSettingsScreen = () => {
             const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
             await deleteMyAccount();
             setDeleteAccountModalVisible(false);
-            await signOut(auth);
+            await safeSignOut(auth, { tripId, orgId });
         } catch (error) {
             setDeleteAccountModalVisible(false);
             if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
@@ -662,9 +937,9 @@ const TripSettingsScreen = () => {
                 {/* Delete Confirmation Modal */}
                 <Modal
                     isVisible={deleteModalVisible}
-                    onBackdropPress={() => setDeleteModalVisible(false)}
-                    onSwipeComplete={() => setDeleteModalVisible(false)}
-                    swipeDirection="down"
+                    onBackdropPress={() => { if (!isDeletingTrip) setDeleteModalVisible(false); }}
+                    onSwipeComplete={() => { if (!isDeletingTrip) setDeleteModalVisible(false); }}
+                    swipeDirection={isDeletingTrip ? undefined : "down"}
                     backdropOpacity={0.7}
                     style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
                     useNativeDriver={true}
@@ -686,15 +961,21 @@ const TripSettingsScreen = () => {
                         </Text>
 
                         <TouchableOpacity
-                            style={styles.deleteConfirmButton}
+                            style={[styles.deleteConfirmButton, isDeletingTrip && { opacity: 0.7 }]}
                             onPress={handleDeleteTrip}
+                            disabled={isDeletingTrip}
                         >
-                            <Text style={styles.deleteConfirmButtonText}>Delete Trip</Text>
+                            {isDeletingTrip ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                            ) : (
+                                <Text style={styles.deleteConfirmButtonText}>Delete Trip</Text>
+                            )}
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={styles.cancelButtonWrapper}
+                            style={[styles.cancelButtonWrapper, isDeletingTrip && { opacity: 0.4 }]}
                             onPress={() => setDeleteModalVisible(false)}
+                            disabled={isDeletingTrip}
                         >
                             <LinearGradient
                                 colors={['#B99A4A', 'rgba(185, 154, 74, 0.44)']}
@@ -839,7 +1120,8 @@ const TripSettingsScreen = () => {
 
                         {seatTopupStep === 1 && (
                             <>
-                                <Text style={styles.seatModalTitle}>How many more seats do you need?</Text>
+                                <Text style={styles.seatModalTitle}>Add Pilgrims to Your Journey</Text>
+
                                 <View style={styles.counterRow}>
                                     <TouchableOpacity
                                         style={styles.counterBtn}
@@ -857,6 +1139,65 @@ const TripSettingsScreen = () => {
                                         <Ionicons name="add" size={14} color="#fff" />
                                     </TouchableOpacity>
                                 </View>
+
+                                {Platform.OS !== 'ios' && !pricingPlans ? (
+                                    <ActivityIndicator color="#B99A4A" size="small" style={{ marginVertical: 15 }} />
+                                ) : (
+                                    <View style={{ width: '100%', marginVertical: 10 }}>
+                                        {PLANS.map((plan) => {
+                                            const isSelected = selectedPlan === plan.id;
+                                            let priceText = '';
+
+                                            if (Platform.OS === 'ios') {
+                                                const unpaidSeats = Math.max(0, seatCount - prepaidSeats);
+                                                const price = calculateActualIAPPrice(unpaidSeats);
+                                                priceText = `€${price.toFixed(2)} ${unpaidSeats > 1 ? 'total' : 'per pilgrim'}`;
+                                                if (prepaidSeats > 0 && unpaidSeats === 0) {
+                                                    priceText = `€0.00 (Prepaid Balance)`;
+                                                }
+                                            } else {
+                                                const { symbol, price } = pricingPlans[plan.id];
+                                                priceText = `${symbol}${(price * seatCount).toFixed(2)} per pilgrim`;
+                                            }
+
+                                            return (
+                                                <TouchableOpacity
+                                                    key={plan.id}
+                                                    style={[
+                                                        styles.planCard,
+                                                        isSelected && styles.planCardSelected
+                                                    ]}
+                                                    onPress={() => setSelectedPlan(plan.id)}
+                                                >
+                                                    <View style={{ flex: 1, paddingRight: 10 }}>
+                                                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                                            <Text style={styles.planName}>{plan.label}</Text>
+                                                            {plan.popular && (
+                                                                <Text style={{
+                                                                    fontSize: 9,
+                                                                    color: '#B99A4A',
+                                                                    backgroundColor: 'rgba(185, 154, 74, 0.15)',
+                                                                    paddingHorizontal: 6,
+                                                                    paddingVertical: 1,
+                                                                    borderRadius: 8,
+                                                                    marginLeft: 6,
+                                                                    overflow: 'hidden',
+                                                                    fontFamily: Typography.sans.regular
+                                                                }}>Popular</Text>
+                                                            )}
+                                                        </View>
+                                                        <Text style={styles.planPrice}>{priceText}</Text>
+                                                    </View>
+                                                    <Ionicons 
+                                                        name={isSelected ? "radio-button-on" : "radio-button-off"} 
+                                                        size={20} 
+                                                        color="#B99A4A" 
+                                                    />
+                                                </TouchableOpacity>
+                                            );
+                                        })}
+                                    </View>
+                                )}
 
                                 {topupError && <Text style={{ color: '#F43F5E', textAlign: 'center', marginTop: 10, marginBottom: 5 }}>{topupError}</Text>}
 
@@ -876,7 +1217,9 @@ const TripSettingsScreen = () => {
                                             {isProcessingTopup ? (
                                                 <ActivityIndicator color="#fff" size="small" />
                                             ) : (
-                                                <Text style={styles.modalPrimaryBtnText}>Request More Seats</Text>
+                                                <Text style={styles.modalPrimaryBtnText}>
+                                                    {Platform.OS === 'ios' ? 'Continue with Apple' : 'Request More Seats'}
+                                                </Text>
                                             )}
                                         </View>
                                     </LinearGradient>

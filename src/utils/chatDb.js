@@ -32,11 +32,19 @@ class ChatDatabase {
                     encrypted_text TEXT,
                     encrypted_media_url TEXT,
                     timestamp INTEGER,
-                    reply_to_json TEXT
+                    reply_to_json TEXT,
+                    encrypted_thumbnail_url TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_trip_id ON messages (trip_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);
             `);
+
+            // Migration for existing table
+            try {
+                await this.db.execAsync(`ALTER TABLE messages ADD COLUMN encrypted_thumbnail_url TEXT;`);
+            } catch (e) {
+                // Column already exists
+            }
 
             // console.log('Chat Database initialized successfully');
         } catch (error) {
@@ -52,14 +60,16 @@ class ChatDatabase {
 
         try {
             const encryptedText = ChatEncryption.encrypt(msg.text || '');
-            const mediaUrl = msg.image_url || msg.audio_url || msg.media_url || '';
+            const mediaUrl = msg.video_url || msg.image_url || msg.audio_url || msg.media_url || '';
             const encryptedMediaUrl = ChatEncryption.encrypt(mediaUrl);
+            const thumbnailUrl = msg.thumbnail_url || '';
+            const encryptedThumbnailUrl = ChatEncryption.encrypt(thumbnailUrl);
             const replyToJson = msg.replyTo ? JSON.stringify(msg.replyTo) : null;
 
             await this.db.runAsync(
                 `INSERT OR REPLACE INTO messages 
-                (id, trip_id, type, sender_id, sender_name, avatar, encrypted_text, encrypted_media_url, timestamp, reply_to_json) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                (id, trip_id, type, sender_id, sender_name, avatar, encrypted_text, encrypted_media_url, timestamp, reply_to_json, encrypted_thumbnail_url) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     msg.id,
                     tripId,
@@ -70,7 +80,8 @@ class ChatDatabase {
                     encryptedText,
                     encryptedMediaUrl,
                     msg.timestamp || Date.now(),
-                    replyToJson
+                    replyToJson,
+                    encryptedThumbnailUrl
                 ]
             );
         } catch (error) {
@@ -92,6 +103,7 @@ class ChatDatabase {
 
             return rows.map(row => {
                 const mediaUrl = ChatEncryption.decrypt(row.encrypted_media_url);
+                const thumbnailUrl = row.encrypted_thumbnail_url ? ChatEncryption.decrypt(row.encrypted_thumbnail_url) : null;
                 const msg = {
                     id: row.id,
                     type: row.type,
@@ -103,10 +115,24 @@ class ChatDatabase {
                     replyTo: row.reply_to_json ? JSON.parse(row.reply_to_json) : null,
                 };
 
-                // Restore media field based on type
-                if (row.type === 'image') msg.image_url = mediaUrl;
-                else if (row.type === 'voice') msg.audio_url = mediaUrl;
-                else if (mediaUrl) msg.media_url = mediaUrl;
+                // Restore media fields based on type
+                if (row.type === 'image') {
+                    msg.image_url = mediaUrl;
+                    msg.media_url = mediaUrl;
+                } else if (row.type === 'voice') {
+                    msg.audio_url = mediaUrl;
+                    msg.media_url = mediaUrl;
+                } else if (row.type === 'video') {
+                    msg.video_url = mediaUrl;
+                    msg.media_url = mediaUrl;
+                    if (thumbnailUrl) msg.thumbnail_url = thumbnailUrl;
+                } else if (mediaUrl) {
+                    msg.media_url = mediaUrl;
+                }
+
+                if (thumbnailUrl && !msg.thumbnail_url) {
+                    msg.thumbnail_url = thumbnailUrl;
+                }
 
                 return msg;
             });

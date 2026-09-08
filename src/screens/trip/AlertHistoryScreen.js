@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { ref, get } from 'firebase/database';
-import { database } from '../../config/firebase';
+import { ref, get, onValue } from 'firebase/database';
+import { database, auth } from '../../config/firebase';
 import {
     View,
     Text,
@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Typography } from '../../constants/Typography';
+import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
 
 const { width } = Dimensions.get('window');
 
@@ -52,10 +53,73 @@ const AlertHistoryScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
     const passedAlerts = route.params?.alerts;
+    const tripId = route.params?.tripId;
+    const orgId = route.params?.orgId;
 
-    // Use passedAlerts if available (even if empty), otherwise fallback to ALERT_DATA. Filter only emergency alerts.
-    const rawAlerts = passedAlerts !== undefined ? passedAlerts : ALERT_DATA;
-    const alertsToDisplay = rawAlerts.filter(item => item.type === 'emergency');
+    const [liveAlerts, setLiveAlerts] = useState(passedAlerts || []);
+
+    // Real-time synchronization of emergency alerts from RTDB
+    useEffect(() => {
+        const myUid = auth.currentUser?.uid;
+        if (!myUid) return;
+
+        let unsubTrip = null;
+        let unsubUser = null;
+
+        if (tripId && orgId) {
+            const tripNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}`);
+            unsubTrip = onValue(tripNotifRef, (snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.val() || {};
+                    const list = Object.entries(data)
+                        .map(([id, val]) => ({ id, ...(val || {}) }))
+                        .filter(n => n.type === 'emergency');
+                    
+                    setLiveAlerts(prev => {
+                        const existingMap = new Map();
+                        [...list, ...prev].forEach(item => {
+                            if (item.id) existingMap.set(item.id, item);
+                        });
+                        return Array.from(existingMap.values());
+                    });
+                }
+            });
+        }
+
+        const userNotifRef = ref(database, `users/${myUid}/notifications`);
+        unsubUser = onValue(userNotifRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val() || {};
+                const list = Object.entries(data)
+                    .map(([id, val]) => ({ id, ...(val || {}) }))
+                    .filter(n => n.type === 'emergency' && (!tripId || n.tripId === tripId));
+
+                setLiveAlerts(prev => {
+                    const existingMap = new Map();
+                    [...list, ...prev].forEach(item => {
+                        if (item.id) existingMap.set(item.id, item);
+                    });
+                    return Array.from(existingMap.values());
+                });
+            }
+        });
+
+        return () => {
+            if (unsubTrip) unsubTrip();
+            if (unsubUser) unsubUser();
+        };
+    }, [tripId, orgId]);
+
+    // Use liveAlerts if available, otherwise fallback to passedAlerts or ALERT_DATA. Filter only emergency alerts.
+    const rawAlerts = liveAlerts.length > 0 ? liveAlerts : (passedAlerts !== undefined ? passedAlerts : ALERT_DATA);
+    const alertsToDisplay = [...rawAlerts]
+        .filter(item => item.type === 'emergency')
+        .sort((a, b) => {
+            const timeA = extractNotificationTimestamp(a, a.id);
+            const timeB = extractNotificationTimestamp(b, b.id);
+            if (timeB !== timeA) return timeB - timeA;
+            return String(b.id || '').localeCompare(String(a.id || ''));
+        });
 
     const [profileImages, setProfileImages] = useState({});
 
@@ -142,30 +206,35 @@ const AlertHistoryScreen = () => {
                     </View>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                         <Text style={styles.timeText}>{time}</Text>
-                        {item.latitude && item.longitude && (
-                            <TouchableOpacity
-                                style={{
-                                    backgroundColor: '#FF3B30',
-                                    paddingHorizontal: 10,
-                                    paddingVertical: 5,
-                                    borderRadius: 12,
-                                    flexDirection: 'row',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: 4
-                                }}
-                                onPress={() => {
-                                    const url = Platform.select({
-                                        ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
-                                        android: `geo:0,0?q=${item.latitude},${item.longitude}`
-                                    });
-                                    Linking.openURL(url);
-                                }}
-                            >
-                                <Ionicons name="location-outline" size={14} color="#FFF" />
-                                <Text style={{ color: '#FFF', fontSize: 11, fontFamily: Typography.sans.bold }}>Location</Text>
-                            </TouchableOpacity>
-                        )}
+                        {(() => {
+                            const lat = item.latitude ?? item.lat;
+                            const lng = item.longitude ?? item.lng;
+                            if (!lat || !lng) return null;
+                            return (
+                                <TouchableOpacity
+                                    style={{
+                                        backgroundColor: '#FF3B30',
+                                        paddingHorizontal: 10,
+                                        paddingVertical: 5,
+                                        borderRadius: 12,
+                                        flexDirection: 'row',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: 4
+                                    }}
+                                    onPress={() => {
+                                        const url = Platform.select({
+                                            ios: `maps:0,0?q=${lat},${lng}`,
+                                            android: `geo:0,0?q=${lat},${lng}`
+                                        });
+                                        Linking.openURL(url);
+                                    }}
+                                >
+                                    <Ionicons name="location-outline" size={14} color="#FFF" />
+                                    <Text style={{ color: '#FFF', fontSize: 11, fontFamily: Typography.sans.bold }}>Location</Text>
+                                </TouchableOpacity>
+                            );
+                        })()}
                     </View>
                 </View>
             </View>

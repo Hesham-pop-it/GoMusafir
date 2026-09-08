@@ -29,7 +29,7 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { functions, storage } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 const EditIcon = () => (
     <Svg width="17" height="16" viewBox="0 0 17 16" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -356,13 +356,25 @@ const EditParticipantScreen = () => {
         }
 
         setIsSaving(true);
+        let blob = null;
         try {
             let finalPhotoUrl = avatarUri;
 
-            if (avatarUri && avatarUri.startsWith('file://')) {
+            if (avatarUri && (avatarUri.startsWith('file://') || avatarUri.startsWith('content://'))) {
                 // Upload to Firebase Storage
-                const response = await fetch(avatarUri);
-                const blob = await response.blob();
+                blob = await new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.onload = function () {
+                        resolve(xhr.response);
+                    };
+                    xhr.onerror = function (e) {
+                        console.log("[EditParticipantScreen] XHR failed for URI:", avatarUri, e);
+                        reject(new TypeError("Network request failed"));
+                    };
+                    xhr.responseType = "blob";
+                    xhr.open("GET", avatarUri, true);
+                    xhr.send(null);
+                });
                 
                 // Create a unique filename
                 const filename = `participant_avatars/${participant.id || participant.uid}_${Date.now()}.jpg`;
@@ -387,6 +399,13 @@ const EditParticipantScreen = () => {
             console.error("Error updating participant profile:", error);
             Alert.alert("Error", "Failed to update participant. " + error.message);
         } finally {
+            if (blob) {
+                try {
+                    blob.close();
+                } catch (e) {
+                    console.log("[EditParticipantScreen] Error closing blob:", e);
+                }
+            }
             setIsSaving(false);
         }
     };
@@ -565,11 +584,11 @@ const EditParticipantScreen = () => {
                             )}
                         </View>
 
-                        {/* SVG Square cutout mask */}
+                        {/* SVG Circular cutout mask */}
                         <Svg height="100%" width="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
                             <Path
                                 fillRule="evenodd"
-                                d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2 - CROP_SIZE / 2} ${Dimensions.get('window').height / 2 - 40 - CROP_SIZE / 2} h ${CROP_SIZE} v ${CROP_SIZE} h -${CROP_SIZE} Z`}
+                                d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2} ${Dimensions.get('window').height / 2 - 40 - CROP_SIZE / 2} a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 0 ${CROP_SIZE} a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 0 -${CROP_SIZE} Z`}
                                 fill="rgba(26, 30, 33, 0.85)"
                             />
                         </Svg>
@@ -583,6 +602,7 @@ const EditParticipantScreen = () => {
                                     top: (Dimensions.get('window').height - CROP_SIZE) / 2 - 41,
                                     width: CROP_SIZE + 2,
                                     height: CROP_SIZE + 2,
+                                    borderRadius: (CROP_SIZE + 2) / 2,
                                 }
                             ]}
                             pointerEvents="none"

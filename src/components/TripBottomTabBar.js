@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
@@ -42,46 +42,86 @@ const SettingIcon = ({ color, size = 24 }) => (
     </Svg>
 );
 
+const TRIP_ROUTES = ['LiveLocation', 'VoiceChat', 'TripOverview', 'TripChat', 'TripSettings'];
+
 const TripBottomTabBar = ({ activeRoute, tripData }) => {
     const navigation = useNavigation();
 
     const isActive = (route) => activeRoute === route;
     const getColor = (route) => isActive(route) ? "#B99A4A" : "#9BA1A6";
 
+    const isExpired = (() => {
+        if (!tripData || !tripData.endDate) return false;
+        const endTime = typeof tripData.endDate === 'number'
+            ? tripData.endDate
+            : new Date(tripData.endDate).getTime();
+        return Date.now() > endTime;
+    })();
+
+    const currentIndex = TRIP_ROUTES.indexOf(activeRoute);
+
+    const getTransitionParams = (targetRoute) => {
+        const targetIndex = TRIP_ROUTES.indexOf(targetRoute);
+        if (currentIndex !== -1 && targetIndex !== -1 && targetIndex !== currentIndex) {
+            return {
+                animation: targetIndex < currentIndex ? 'slide_from_left' : 'slide_from_right'
+            };
+        }
+        return {};
+    };
+
     return (
         <SafeAreaView edges={['bottom']} style={styles.safeArea}>
             <View style={styles.tripBottomNav}>
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('LiveLocation', { trip: tripData })}
+                    onPress={() => {
+                        if (isExpired) {
+                            Alert.alert("Trip Expired", "Live location sharing is not available for this trip as it has expired.");
+                            return;
+                        }
+                        navigation.navigate('LiveLocation', { ...getTransitionParams('LiveLocation'), trip: tripData });
+                    }}
                 >
                     <LocationIcon color={getColor('LiveLocation')} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('VoiceChat', { trip: tripData })}
+                    onPress={() => {
+                        if (isExpired) {
+                            Alert.alert("Trip Expired", "Voice chat is not available for this trip as it has expired.");
+                            return;
+                        }
+                        navigation.navigate('VoiceChat', { ...getTransitionParams('VoiceChat'), trip: tripData });
+                    }}
                 >
                     <MicIcon color={getColor('VoiceChat')} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('TripOverview', { trip: tripData })}
+                    onPress={() => navigation.navigate('TripOverview', { ...getTransitionParams('TripOverview'), trip: tripData })}
                 >
                     <HomeIcon color={getColor('TripOverview')} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('TripChat', { trip: tripData })}
+                    onPress={() => {
+                        if (isExpired) {
+                            Alert.alert("Trip Expired", "Chat is not available for this trip as it has expired.");
+                            return;
+                        }
+                        navigation.navigate('TripChat', { ...getTransitionParams('TripChat'), trip: tripData });
+                    }}
                 >
                     <MessageIcon color={getColor('TripChat')} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('TripSettings', { trip: tripData })}
+                    onPress={() => navigation.navigate('TripSettings', { ...getTransitionParams('TripSettings'), trip: tripData })}
                 >
                     <SettingIcon color={getColor('TripSettings')} />
                 </TouchableOpacity>

@@ -12,6 +12,8 @@ import {
     Dimensions,
     PanResponder,
     Animated,
+    ActivityIndicator,
+    AppState,
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,14 +23,17 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
+import SpeakerGlow from '../../components/SpeakerGlow';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useTracks } from '@livekit/react-native';
 import { Track, RoomEvent } from 'livekit-client';
 import { useVoice } from '../../context/VoiceContext';
 import { database, auth, functions } from '../../config/firebase';
-import { ref, onValue, get } from 'firebase/database';
+import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { useLanguage } from '../../context/LanguageContext';
 
 const { width, height } = Dimensions.get('window');
 
@@ -43,12 +48,33 @@ const CustomDeleteIcon = () => (
 const ParticipantsScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
+    const { t } = useLanguage();
     const { isAdmin, trip } = route.params || {};
     const tripId = trip?.id || trip?.tripId;
     const orgId = trip?.orgId || trip?.org_id;
 
     const [participants, setParticipants] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+
+    const renderEmptyComponent = () => {
+        if (isLoading) {
+            return (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#B99A4A" />
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                    <Feather name="users" size={32} color="#B99A4A" />
+                </View>
+                <Text style={styles.emptyTitle}>{t('no_participants_title')}</Text>
+                <Text style={styles.emptySubtitle}>{t('no_participants_subtitle')}</Text>
+            </View>
+        );
+    };
     const [participantsCount, setParticipantsCount] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedParticipant, setSelectedParticipant] = useState(null);
@@ -58,8 +84,53 @@ const ParticipantsScreen = () => {
     const [userRole, setUserRole] = useState('participant');
     const [isAdminState, setIsAdminState] = useState(isAdmin);
     const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
-    const { room } = useVoice();
+    const { room, activeSpeakerData, speakingUids: contextSpeakingUids } = useVoice();
     const [speakingUids, setSpeakingUids] = useState([]);
+    const [voicePresence, setVoicePresence] = useState({});
+    const [appPresence, setAppPresence] = useState({});
+    const [participantUids, setParticipantUids] = useState([]);
+    const [staffData, setStaffData] = useState({});
+    const [organizerId, setOrganizerId] = useState(null);
+
+    React.useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const presenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`);
+        const unsubscribe = onValue(presenceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setVoicePresence(snapshot.val() || {});
+            } else {
+                setVoicePresence({});
+            }
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId]);
+
+    React.useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const appPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`);
+        const unsubscribe = onValue(appPresenceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setAppPresence(snapshot.val() || {});
+            } else {
+                setAppPresence({});
+            }
+        });
+
+        // Ensure own presence is marked online in RTDB immediately when viewing participants
+        const myUid = auth.currentUser?.uid;
+        if (myUid && AppState.currentState === 'active') {
+            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence/${myUid}`);
+            onDisconnect(itemRef).remove().catch(() => {});
+            update(appPresenceRef, {
+                [myUid]: true
+            }).catch(() => {});
+        }
+
+        return () => unsubscribe();
+    }, [tripId, orgId, auth.currentUser?.uid]);
 
     React.useEffect(() => {
         if (!room) return;
@@ -111,7 +182,18 @@ const ParticipantsScreen = () => {
         return () => unsubscribe();
     }, [orgId, tripId]);
 
-    // Fetch Participants with Privacy Masking
+    // Get organizer ID once
+    React.useEffect(() => {
+        if (!tripId || !orgId) return;
+        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
+        get(tripDataRef).then(snap => {
+            if (snap.exists()) {
+                setOrganizerId(snap.val().organizer_id);
+            }
+        });
+    }, [tripId, orgId]);
+
+    // Listen to participants and staff in real-time
     React.useEffect(() => {
         if (!tripId || !orgId) {
             setIsLoading(false);
@@ -119,18 +201,7 @@ const ParticipantsScreen = () => {
         }
 
         const participantsRef = ref(database, `trips_participants/${tripId}`);
-        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
-
-        let organizerId = null;
-
-        // Get organizer ID first
-        get(tripDataRef).then(snap => {
-            if (snap.exists()) {
-                organizerId = snap.val().organizer_id;
-            }
-        });
-
-        const unsubscribe = onValue(participantsRef, (snapshot) => {
+        const unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
             const val = snapshot.val() || {};
             let uids = [];
             if (Array.isArray(val)) {
@@ -138,148 +209,272 @@ const ParticipantsScreen = () => {
             } else {
                 uids = Object.keys(val);
             }
+            setParticipantUids(uids);
+        });
 
-            if (uids.length === 0) {
-                setParticipants([]);
-                setParticipantsCount(0);
-                setIsLoading(false);
-                return;
-            }
+        const staffRef = ref(database, `orgs/${orgId}/staff`);
+        const unsubscribeStaff = onValue(staffRef, (snapshot) => {
+            setStaffData(snapshot.val() || {});
+        });
 
-            // Get staff list for filtering
-            const staffRef = ref(database, `orgs/${orgId}/staff`);
-            get(staffRef).then(staffSnap => {
-                const staffList = staffSnap.val() || {};
-                const filteredUids = uids.filter(uid => {
-                    const role = staffList[uid];
-                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
+        return () => {
+            unsubscribeParticipants();
+            unsubscribeStaff();
+        };
+    }, [tripId, orgId]);
+
+    // Build participants list reactively
+    React.useEffect(() => {
+        if (!tripId || !orgId) {
+            setIsLoading(false);
+            return;
+        }
+
+        const filteredUids = participantUids.filter(uid => {
+            const role = staffData[uid];
+            return !role || role === 'admin' || role === 'co-host' || role === 'manager';
+        });
+
+        const teamMemberUids = Object.keys(staffData).filter(uid => {
+            const role = staffData[uid];
+            return role === 'admin' || role === 'co-host' || role === 'manager';
+        });
+
+        const combinedUids = Array.from(new Set([...filteredUids, ...teamMemberUids]));
+
+        if (combinedUids.length === 0) {
+            setParticipants([]);
+            setParticipantsCount(0);
+            setIsLoading(false);
+            return;
+        }
+
+        let isMounted = true;
+
+        const promises = combinedUids.map((uid) => {
+            const profileRef = ref(database, `users/${uid}/profile`);
+            const nameRef = ref(database, `users/${uid}/full_name`);
+            const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+
+            return Promise.all([
+                get(profileRef),
+                get(nameRef),
+                get(visibilityRef),
+                get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+            ]).then(([userSnap, nameSnap, visSnap, photoSnap]) => {
+                if (!isMounted) return null;
+                const rawProfile = userSnap.val() || {};
+                const photoUrl = photoSnap?.val();
+                const profile = {
+                    ...rawProfile,
+                    photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
+                };
+                const fullName = nameSnap.val();
+                const visibility = visSnap.val() || {};
+                const targetRole = staffData[uid];
+                const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdminState;
+
+                const displayName = getParticipantDisplayName({
+                    profile,
+                    fullName,
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
                 });
 
-                const teamMemberUids = Object.keys(staffList).filter(uid => {
-                    const role = staffList[uid];
-                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                const displayImage = getParticipantDisplayPhoto({
+                    profile,
+                    displayName,
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
                 });
 
-                const combinedUids = Array.from(new Set([...filteredUids, ...teamMemberUids]));
+                const canSeeFirstName = checkPIIVisibility({
+                    field: 'name',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
 
-                if (combinedUids.length === 0) {
-                    setParticipants([]);
-                    setParticipantsCount(0);
-                    setIsLoading(false);
-                    return;
+                const canSeeLastName = checkPIIVisibility({
+                    field: 'lastname',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
+
+                const canSeeEmail = checkPIIVisibility({
+                    field: 'email',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
+
+                const canSeePhone = checkPIIVisibility({
+                    field: 'phone',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
+
+                const canSeeLocation = checkPIIVisibility({
+                    field: 'location',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
+
+                const role = staffData[uid];
+                let status = uid === organizerId ? 'Organizer' : 'Joined';
+                if (role === 'admin') {
+                    status = 'Admin';
+                } else if (role === 'co-host') {
+                    status = 'Co-Host';
+                } else if (role === 'manager') {
+                    status = 'Manager';
                 }
 
-                combinedUids.forEach((uid) => {
-                    const profileRef = ref(database, `users/${uid}/profile`);
-                const nameRef = ref(database, `users/${uid}/full_name`);
-                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
+                let rawFirstName = profile.firstName || profile.first_name || '';
+                let rawLastName = profile.lastName || profile.last_name || '';
+                if (!rawFirstName && !rawLastName && fullName) {
+                    const parts = String(fullName).trim().split(/\s+/);
+                    rawFirstName = parts[0] || '';
+                    rawLastName = parts.slice(1).join(' ') || '';
+                }
 
-                Promise.all([get(profileRef), get(nameRef), get(visibilityRef)]).then(([userSnap, nameSnap, visSnap]) => {
-                    const profile = userSnap.val() || {};
-                    const fullName = nameSnap.val();
-                    const visibility = visSnap.val() || {};
-                    const isCurrentUser = uid === auth.currentUser?.uid;
-                    const amIAdmin = isAdminState;
-
-                    const canSeePII = (field) => {
-                        if (isCurrentUser) return true;
-
-                        // 1. Check Global Admin Config
-                        const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
-
-                        // Rule: 'Do not show' hides from EVERYONE including admin
-                        if (globalSetting === 'Do not show') return false;
-                        if (globalSetting === 'Show to organizer') return amIAdmin;
-                        if (globalSetting === 'Show to everyone') return true;
-
-                        // 2. If 'Custom choice', check personal choice
-                        if (globalSetting === 'Custom choice') {
-                            const personalSetting = visibility[field] || 'Show to organizer';
-                            if (personalSetting === 'Do not show') return false;
-                            if (personalSetting === 'Show to organizer') return amIAdmin;
-                            if (personalSetting === 'Show to everyone') return true;
-                        }
-
-                        return false;
-                    };
-
-                    let displayName = 'User';
-                    if (canSeePII('name')) {
-                        if (profile.firstName || profile.lastName) {
-                            displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                        } else if (fullName) {
-                            displayName = fullName;
-                        } else if (isCurrentUser) {
-                            displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
-                        }
-                    } else if (isCurrentUser) {
-                        displayName = 'You';
-                    }
-
-                    const displayImage = canSeePII('photo') && profile.photoURL
-                        ? profile.photoURL
-                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
-
-                    const role = staffList[uid];
-                    let status = uid === organizerId ? 'Organizer' : 'Joined';
-                    if (role === 'admin') {
-                        status = 'Admin';
-                    } else if (role === 'co-host') {
-                        status = 'Co-Host';
-                    } else if (role === 'manager') {
-                        status = 'Manager';
-                    }
-
-                    const pData = {
-                        id: uid,
-                        name: displayName,
-                        image: displayImage,
-                        status: status,
-                        isSpeaking: false,
-                        isOrganizer: uid === organizerId,
-                    };
-
-                    setParticipants(prev => {
-                        const filtered = prev.filter(p => p.id !== uid);
-                        const newList = [...filtered, pData];
-                        setParticipantsCount(newList.length);
-                        return newList;
-                    });
-                    setIsLoading(false);
-                }).catch(err => {
-                    console.warn(`Error fetching participant ${uid}:`, err);
-                });
+                return {
+                    id: uid,
+                    name: displayName,
+                    image: displayImage,
+                    status: status,
+                    isSpeaking: false,
+                    isOrganizer: uid === organizerId,
+                    email: canSeeEmail ? (profile.email || 'N/A') : '***',
+                    phone: canSeePhone ? (profile.phone || 'N/A') : '***',
+                    firstName: canSeeFirstName ? (rawFirstName || '') : '***',
+                    lastName: canSeeLastName ? (rawLastName || '') : '***',
+                    canSeeFirstName,
+                    canSeeLastName,
+                    canSeeEmail,
+                    canSeePhone,
+                    canSeeLocation: canSeeLocation,
+                    rawProfile: profile,
+                    rawFullName: fullName,
+                    rawVisibility: visibility
+                };
+            }).catch(err => {
+                console.warn(`Error fetching participant ${uid}:`, err);
+                return null;
             });
         });
-    });
 
-        return () => unsubscribe();
-    }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
+        Promise.all(promises).then((results) => {
+            if (!isMounted) return;
+            const validParticipants = results.filter(p => p !== null);
+            setParticipants(validParticipants);
+            setParticipantsCount(validParticipants.length);
+            setIsLoading(false);
+        });
 
-    const filteredParticipants = participants.filter(p =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase())
-    ).sort((a, b) => {
+        return () => {
+            isMounted = false;
+        };
+    }, [participantUids, staffData, globalVisibilityConfig, organizerId, tripId, orgId, isAdminState, userRole]);
+
+    const filteredParticipants = React.useMemo(() => {
+        const activeUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
+        const speakerData = activeSpeakerData;
         const myUid = auth.currentUser?.uid;
-        if (a.id === myUid) return -1;
-        if (b.id === myUid) return 1;
-        return a.name.localeCompare(b.name);
-    });
+
+        return participants
+            .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+            .sort((a, b) => {
+                // Rule 1: Current user (You) always first
+                if (a.id === myUid && b.id !== myUid) return -1;
+                if (b.id === myUid && a.id !== myUid) return 1;
+
+                const aIsSpeaking = activeUids.includes(a.id) || (speakerData && speakerData.uid === a.id && speakerData.speaking !== false);
+                const bIsSpeaking = activeUids.includes(b.id) || (speakerData && speakerData.uid === b.id && speakerData.speaking !== false);
+
+                const aIndex = activeUids.indexOf(a.id);
+                const bIndex = activeUids.indexOf(b.id);
+
+                // Rule 2: Active speakers directly below current user
+                if (aIsSpeaking && bIsSpeaking) {
+                    if (aIndex !== -1 && bIndex !== -1 && aIndex !== bIndex) {
+                        return aIndex - bIndex;
+                    }
+                }
+                if (aIsSpeaking && !bIsSpeaking) return -1;
+                if (!aIsSpeaking && bIsSpeaking) return 1;
+
+                // Rule 3: Rest of participants in consistent alphabetical order
+                const aName = (a.name || '').trim();
+                const bName = (b.name || '').trim();
+                const nameDiff = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+                if (nameDiff !== 0) return nameDiff;
+                return (a.id || '').localeCompare(b.id || '');
+            });
+    }, [participants, searchQuery, speakingUids, contextSpeakingUids, activeSpeakerData, auth.currentUser?.uid]);
 
     const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
 
     const mappedParticipants = filteredParticipants.map(p => {
+        const isInVoice = voicePresence[p.id] === true;
+        const isCurrentUser = p.id === auth.currentUser?.uid;
+        const isOnline = appPresence[p.id] === true || (isCurrentUser && AppState.currentState === 'active');
         const track = voiceTracks.find(t => t.participant.identity === p.id);
+        const currentSpeakingUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
+        const isSpeaking = currentSpeakingUids.includes(p.id) || (activeSpeakerData && activeSpeakerData.uid === p.id && activeSpeakerData.speaking !== false);
+        
+        let voiceStatus = null;
         if (track) {
-            const isSpeaking = speakingUids.includes(p.id);
             const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
-            return {
-                ...p,
-                isSpeaking,
-                isMicrophoneEnabled,
-                voiceStatus: isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted')
-            };
+            voiceStatus = isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted');
+        } else if (isInVoice) {
+            voiceStatus = isSpeaking ? 'Speaking' : 'joined';
+        } else if (isOnline) {
+            if (p.status === 'Joined') {
+                voiceStatus = 'online';
+            } else {
+                voiceStatus = `${p.status} (online)`;
+            }
+        } else {
+            if (p.status === 'Joined') {
+                voiceStatus = 'offline';
+            } else {
+                voiceStatus = `${p.status} (offline)`;
+            }
         }
-        return p;
+        
+        return {
+            ...p,
+            voiceStatus,
+            isSpeaking
+        };
     });
 
     // Multi-selection state
@@ -301,19 +496,23 @@ const ParticipantsScreen = () => {
                 onPress={isAdminState ? () => toggleSelection(item.id) : null}
                 activeOpacity={isAdminState ? 0.7 : 1}
             >
-                <View style={[
-                    styles.avatarContainer,
-                    item.isSpeaking && styles.speakingAvatar
-                ]}>
-                    <Image source={{ uri: item.image }} style={styles.avatar} />
+                <View style={styles.avatarContainer}>
+                    {item.isSpeaking && <SpeakerGlow size={60} />}
+                    <Image
+                        source={{ uri: item.image }}
+                        style={[
+                            styles.avatar,
+                            item.isSpeaking && styles.speakingAvatar
+                        ]}
+                    />
                 </View>
                 <View style={styles.info}>
                     <Text style={styles.name}>{item.name}</Text>
                     <Text style={[
                         styles.status,
-                        item.voiceStatus === 'Speaking' && styles.statusSpeaking,
-                        item.voiceStatus === 'Active' && styles.statusActive,
-                        item.voiceStatus === 'Muted' && styles.statusMuted,
+                        item.voiceStatus && item.voiceStatus.includes('Speaking') && styles.statusSpeaking,
+                        item.voiceStatus && item.voiceStatus.includes('Active') && styles.statusActive,
+                        item.voiceStatus && item.voiceStatus.includes('Muted') && styles.statusMuted,
                     ]}>{item.voiceStatus ? item.voiceStatus : item.status}</Text>
                 </View>
 
@@ -402,6 +601,7 @@ const ParticipantsScreen = () => {
     const panYDetail = React.useRef(new Animated.Value(0)).current;
     const panYMultiDelete = React.useRef(new Animated.Value(0)).current;
     const panYConfirm = React.useRef(new Animated.Value(0)).current;
+    const searchInputRef = React.useRef(null);
 
     const detailSwipe = createDraggableResponder(setDetailVisible, panYDetail);
     const multiDeleteSwipe = createDraggableResponder(setMultiDeleteVisible, panYMultiDelete);
@@ -443,8 +643,11 @@ const ParticipantsScreen = () => {
             {/* Search Bar */}
             <View style={styles.searchContainer}>
                 <View style={styles.searchBar}>
-                    <Feather name="search" size={22} color="#A1A1AA" style={styles.searchIcon} />
+                    <TouchableOpacity onPress={() => searchInputRef.current?.focus()}>
+                        <Feather name="search" size={22} color="#A1A1AA" style={styles.searchIcon} />
+                    </TouchableOpacity>
                     <TextInput
+                        ref={searchInputRef}
                         style={styles.searchInput}
                         placeholder="Search participant"
                         placeholderTextColor="#A1A1AA"
@@ -459,14 +662,12 @@ const ParticipantsScreen = () => {
                 data={mappedParticipants}
                 renderItem={renderParticipant}
                 keyExtractor={item => item.id}
-                contentContainerStyle={styles.listContent}
-                ListEmptyComponent={
-                    !isLoading && (
-                        <View style={{ padding: 40, alignItems: 'center' }}>
-                            <Text style={{ color: '#A1A1AA', fontSize: 16 }}>No participants found</Text>
-                        </View>
-                    )
-                }
+                contentContainerStyle={[
+                    styles.listContent,
+                    mappedParticipants.length === 0 && { flexGrow: 1, justifyContent: 'center' }
+                ]}
+                showsVerticalScrollIndicator={false}
+                ListEmptyComponent={renderEmptyComponent}
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}
@@ -499,16 +700,18 @@ const ParticipantsScreen = () => {
                                 <Text style={styles.detailName}>{selectedParticipant.name}</Text>
                             </View>
 
-                            {/* Mini Map Placeholder */}
-                            <View style={styles.mapPlaceholder}>
-                                <Image
-                                    source={{ uri: 'https://via.placeholder.com/400x200/1A1E21/FFFFFF?text=Map+View' }}
-                                    style={styles.mapImage}
-                                />
-                                <View style={styles.mapPinContainer}>
-                                    <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
+                            {/* Mini Map Placeholder - Only rendered when location visibility allows */}
+                            {selectedParticipant.canSeeLocation !== false && (
+                                <View style={styles.mapPlaceholder}>
+                                    <Image
+                                        source={{ uri: 'https://via.placeholder.com/400x200/1A1E21/FFFFFF?text=Map+View' }}
+                                        style={styles.mapImage}
+                                    />
+                                    <View style={styles.mapPinContainer}>
+                                        <Image source={{ uri: selectedParticipant.image }} style={styles.mapPinAvatar} />
+                                    </View>
                                 </View>
-                            </View>
+                            )}
 
                             {!isAdminState && (
                                 <TouchableOpacity
@@ -707,15 +910,22 @@ const styles = StyleSheet.create({
         marginBottom: 20,
     },
     avatarContainer: {
+        position: 'relative',
         width: 60,
         height: 60,
         borderRadius: 30,
-        padding: 2,
+        justifyContent: 'center',
+        alignItems: 'center',
         marginRight: 16,
     },
     speakingAvatar: {
         borderWidth: 2,
         borderColor: '#34C759',
+        shadowColor: '#34C759',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 6,
+        elevation: 8,
     },
     avatar: {
         width: '100%',
@@ -941,6 +1151,43 @@ const styles = StyleSheet.create({
         borderRadius: 3,
         alignSelf: 'center',
         marginBottom: 20,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 30,
+        paddingBottom: 60,
+    },
+    emptyIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#1E2328',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#B99A4A',
+    },
+    emptyTitle: {
+        fontSize: 20,
+        color: '#FFF',
+        fontFamily: Typography.serif.regular,
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: '#A1A1AA',
+        fontFamily: Typography.sans.regular,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

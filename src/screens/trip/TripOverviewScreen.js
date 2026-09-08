@@ -16,12 +16,13 @@ import {
     Animated,
     Share,
     Linking,
-    Platform
+    Platform,
+    AppState
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt } from 'firebase/database';
+import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt, onDisconnect } from 'firebase/database';
 
 import { database, auth, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
@@ -41,6 +42,10 @@ import { updatePrayerWidget } from '../../utils/widgetHelper';
 import { useVoice } from '../../context/VoiceContext';
 import { useTracks } from '@livekit/react-native';
 import { Track, RoomEvent } from 'livekit-client';
+import SpeakerGlow from '../../components/SpeakerGlow';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
 
 
 const { width, height } = Dimensions.get('window');
@@ -141,8 +146,9 @@ const TripOverviewScreen = () => {
 
     const [liveTripData, setLiveTripData] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
-    const [userRole, setUserRole] = useState(passedIsAdmin ? 'admin' : 'participant');
+    const initialIsAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false);
+    const [isAdmin, setIsAdmin] = useState(initialIsAdmin);
+    const [userRole, setUserRole] = useState(initialIsAdmin ? 'admin' : 'participant');
     const [isScrolled, setIsScrolled] = useState(false);
 
 
@@ -176,13 +182,22 @@ const TripOverviewScreen = () => {
         connect,
         disconnect,
         stopChannel,
+        setActiveTrip,
         isAdmin: isAdminContext,
         activeTripId,
+        activeSpeakerData: contextActiveSpeakerData,
+        speakingUids: contextSpeakingUids,
         room
     } = useVoice();
     const isAdminRef = React.useRef(isAdmin);
     const globalVisibilityConfigRef = React.useRef({});
+    const staffDataRef = React.useRef({});
+    const organizerIdRef = React.useRef(null);
+    const userRoleRef = React.useRef(userRole);
+
     const [participantsList, setParticipantsList] = useState([]);
+    const [participantUids, setParticipantUids] = useState([]);
+    const [staffData, setStaffData] = useState({});
     const [notificationsList, setNotificationsList] = useState([]);
     const [lastChatMessage, setLastChatMessage] = useState(null);
     const [liveLocations, setLiveLocations] = useState({});
@@ -195,8 +210,17 @@ const TripOverviewScreen = () => {
     const [currentUserPhoto, setCurrentUserPhoto] = useState('');
     const [resolvedOrgId, setResolvedOrgId] = useState(passedOrgId || trip?.orgId || trip?.org_id);
     const [unreadCount, setUnreadCount] = useState(0);
-    const [dismissedSosAlerts, setDismissedSosAlerts] = useState([]);
     const [speakingUids, setSpeakingUids] = useState([]);
+    const [voicePresence, setVoicePresence] = useState({});
+    const [appPresence, setAppPresence] = useState({});
+    const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
+    const [organizerId, setOrganizerId] = useState(null);
+
+    useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
+    useEffect(() => { globalVisibilityConfigRef.current = globalVisibilityConfig; }, [globalVisibilityConfig]);
+    useEffect(() => { staffDataRef.current = staffData; }, [staffData]);
+    useEffect(() => { organizerIdRef.current = organizerId; }, [organizerId]);
+    useEffect(() => { userRoleRef.current = userRole; }, [userRole]);
 
     useEffect(() => {
         if (!room) return;
@@ -218,12 +242,83 @@ const TripOverviewScreen = () => {
         };
     }, [room]);
 
-
     // Stable ID resolution to avoid effect re-runs on temporary nulls
     const tripId = passedTripId || trip?.id || trip?.tripId || trip?.trip_id || liveTripData?.id;
     const orgId = resolvedOrgId || passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
 
+    useEffect(() => {
+        if (!tripId || !orgId) return;
 
+        const presenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`);
+        const unsubscribe = onValue(presenceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setVoicePresence(snapshot.val() || {});
+            } else {
+                setVoicePresence({});
+            }
+        });
+
+        return () => unsubscribe();
+    }, [tripId, orgId]);
+
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const appPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`);
+        const unsubscribe = onValue(appPresenceRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setAppPresence(snapshot.val() || {});
+            } else {
+                setAppPresence({});
+            }
+        });
+
+        // Ensure own presence is marked online in RTDB immediately when viewing trip
+        const myUid = auth.currentUser?.uid;
+        if (myUid && AppState.currentState === 'active') {
+            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence/${myUid}`);
+            onDisconnect(itemRef).remove().catch(() => {});
+            update(appPresenceRef, {
+                [myUid]: true
+            }).catch(() => {});
+        }
+
+        return () => unsubscribe();
+    }, [tripId, orgId, auth.currentUser?.uid]);
+
+    useEffect(() => {
+        if (!tripId || !orgId) return;
+
+        const staffRef = ref(database, `orgs/${orgId}/staff`);
+        const unsubscribeStaff = onValue(staffRef, (snapshot) => {
+            const val = snapshot.val() || {};
+            setStaffData(val);
+            const myUid = auth.currentUser?.uid;
+            if (myUid && val[myUid]) {
+                const sRole = val[myUid];
+                setUserRole(sRole);
+                const isStaff = sRole === 'admin' || sRole === 'co-host' || sRole === 'manager';
+                isAdminRef.current = isStaff;
+                setIsAdmin(isStaff);
+            }
+        });
+
+        return () => unsubscribeStaff();
+    }, [tripId, orgId]);
+
+    const handleHoldToTalkStart = () => {
+        if (isAllMuted) {
+            Alert.alert("Muted by Organizer", "The organizer has globally muted the channel. You cannot unmute yourself at this time.");
+            return;
+        }
+        setIsHoldToTalkActive(true);
+        setIsMuted(false);
+    };
+
+    const handleHoldToTalkEnd = () => {
+        setIsHoldToTalkActive(false);
+        setIsMuted(true);
+    };
 
     // Real-time Data Synchronization
     useEffect(() => {
@@ -260,7 +355,11 @@ const TripOverviewScreen = () => {
                     get(ref(database, `users/${currentU.uid}`)).then(snap => {
                         if (snap.exists()) {
                             const uData = snap.val();
-                            if (uData.full_name) setCurrentUserFullName(uData.full_name);
+                            const profile = uData.profile || {};
+                            const realName = (profile.firstName || profile.lastName)
+                                ? `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
+                                : (uData.full_name || 'User');
+                            if (realName) setCurrentUserFullName(realName);
                             const photoVal = uData.profile?.photoURL || uData.photo || uData.profile_photo || uData.image;
                             if (photoVal) setCurrentUserPhoto(photoVal);
                         }
@@ -269,10 +368,11 @@ const TripOverviewScreen = () => {
 
                 let activeTripId = tripId;
                 let activeOrgId = orgId;
+                const myUid = auth.currentUser?.uid;
 
                 // S22: If no trip info passed (app start), fetch current_trip from user profile (The Secure Store)
-                if (!activeTripId && auth.currentUser) {
-                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+                if (!activeTripId && myUid) {
+                    const userSnap = await get(ref(database, `users/${myUid}`));
                     const userData = userSnap.val();
 
                     if (userData?.current_trip) {
@@ -288,14 +388,14 @@ const TripOverviewScreen = () => {
                 }
 
                 // S22: If orgId is missing, resolve it from staff profile or joined trips
-                if (!activeOrgId && auth.currentUser) {
-                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+                if (!activeOrgId && myUid) {
+                    const userSnap = await get(ref(database, `users/${myUid}`));
                     const userData = userSnap.val();
 
                     if (userData?.staff_org_id) {
                         activeOrgId = userData.staff_org_id;
                     } else {
-                        const joinedSnap = await get(ref(database, `users/${auth.currentUser.uid}/joined_trips/${activeTripId}`));
+                        const joinedSnap = await get(ref(database, `users/${myUid}/joined_trips/${activeTripId}`));
                         if (joinedSnap.exists()) {
                             activeOrgId = joinedSnap.val().org_id || joinedSnap.val().orgId;
                         }
@@ -303,8 +403,8 @@ const TripOverviewScreen = () => {
                 }
 
                 // S22: Anchor this trip as the 'current_trip' for the user session
-                if (auth.currentUser && activeTripId) {
-                    update(ref(database, `users/${auth.currentUser.uid}`), {
+                if (myUid && activeTripId) {
+                    update(ref(database, `users/${myUid}`), {
                         current_trip: activeTripId
                     }).catch(err => { });
 
@@ -351,7 +451,6 @@ const TripOverviewScreen = () => {
             }
         };
 
-
         syncData();
         return () => {
             // Cleanup would require tracking all listeners, for now we let it be
@@ -364,10 +463,20 @@ const TripOverviewScreen = () => {
         const configRef = ref(database, `orgs/${orgId}/trips/${tripId}/visibility_config`);
         const unsubscribe = onValue(configRef, (snapshot) => {
             if (snapshot.exists()) {
-                setGlobalVisibilityConfig(snapshot.val());
+                setGlobalVisibilityConfig(snapshot.val() || {});
             } else {
                 setGlobalVisibilityConfig({});
             }
+        });
+        return () => unsubscribe();
+    }, [orgId, tripId]);
+
+    // 0.1 Fetch Organizer ID
+    useEffect(() => {
+        if (!orgId || !tripId) return;
+        const organizerRef = ref(database, `orgs/${orgId}/trips/${tripId}/organizer_id`);
+        const unsubscribe = onValue(organizerRef, (snapshot) => {
+            setOrganizerId(snapshot.val() || null);
         });
         return () => unsubscribe();
     }, [orgId, tripId]);
@@ -376,6 +485,14 @@ const TripOverviewScreen = () => {
     const DEFAULT_TRIP_IMAGE = require('../../../assets/Madinah.png');
 
     const displayTrip = liveTripData || trip || {};
+
+    const isExpired = (() => {
+        if (!displayTrip || !displayTrip.endDate) return false;
+        const endTime = typeof displayTrip.endDate === 'number'
+            ? displayTrip.endDate
+            : new Date(displayTrip.endDate).getTime();
+        return Date.now() > endTime;
+    })();
 
     const tripData = {
         title: displayTrip.title || 'Loading Trip...',
@@ -387,225 +504,392 @@ const TripOverviewScreen = () => {
         isAdmin,
         orgId,
         tripId,
+        startDate: displayTrip.startDate || null,
+        endDate: displayTrip.endDate || null,
     };
 
 
-    // 1. Fetch Real Participants with Privacy Masking
+    const activeUnsubsRef = React.useRef({});
+
+    // 0.2 Listen to raw participant UIDs
     useEffect(() => {
-        if (!tripId || !orgId) {
-            setParticipantsList([]);
-            setParticipantsCount(0);
+        if (!tripId) {
+            setParticipantUids([]);
             return;
         }
 
         const participantsRef = ref(database, `trips_participants/${tripId}`);
-        const tripDataRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
-
-        let organizerId = null;
-
-        // Get organizer ID first
-        get(tripDataRef).then(snap => {
-            if (snap.exists()) {
-                organizerId = snap.val().organizer_id;
-            }
-        });
-
-        let activeUnsubs = {}; // Manage individual user subscriptions
-
         const unsubscribe = onValue(participantsRef, (snapshot) => {
             const val = snapshot.val() || {};
             let uids = [];
-
             if (Array.isArray(val)) {
                 uids = val.filter(v => v !== null);
             } else {
                 uids = Object.keys(val);
             }
-
-            // Get staff list for filtering
-            const staffRef = ref(database, `orgs/${orgId}/staff`);
-            get(staffRef).then(staffSnap => {
-                const staffList = staffSnap.val() || {};
-                const filteredUids = uids.filter(uid => {
-                    const role = staffList[uid];
-                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
-                });
-
-                const teamMemberUids = Object.keys(staffList).filter(uid => {
-                    const role = staffList[uid];
-                    return role === 'admin' || role === 'co-host' || role === 'manager';
-                });
-
-                const combinedUids = Array.from(new Set([...filteredUids, ...teamMemberUids]));
-
-                setParticipantsCount(combinedUids.length);
-
-                if (combinedUids.length === 0) {
-                    setParticipantsList([]);
-                    Object.values(activeUnsubs).forEach(unsub => unsub());
-                    activeUnsubs = {};
-                    return;
-                }
-
-                // Unsubscribe from removed users
-                Object.keys(activeUnsubs).forEach(uid => {
-                    if (!combinedUids.includes(uid)) {
-                        activeUnsubs[uid]();
-                        delete activeUnsubs[uid];
-                        setParticipantsList(prev => prev.filter(p => p.id !== uid));
-                    }
-                });
-
-                combinedUids.forEach((uid) => {
-                    if (!activeUnsubs[uid]) {
-                        // Mark as subscribed immediately with a no-op so duplicate calls are blocked
-                        activeUnsubs[uid] = () => { };
-
-                        const buildAndSetParticipant = (userData) => {
-                            const profile = userData.profile || {};
-                            const fullName = userData.full_name;
-                            const visibility = userData.participant_visibility?.[tripId] || {};
-                            const isCurrentUser = uid === auth.currentUser?.uid;
-                            const amIAdmin = isAdminRef.current;
-
-                            const canSeePII = (field) => {
-                                if (isCurrentUser) return true;
-                                const globalSetting = globalVisibilityConfigRef.current[field] || 'Show to everyone';
-                                if (globalSetting === 'Do not show') return false;
-                                if (globalSetting === 'Show to organizer') return amIAdmin;
-                                if (globalSetting === 'Show to everyone') return true;
-                                if (globalSetting === 'Custom choice') {
-                                    const personalSetting = visibility[field] || 'Show to organizer';
-                                    if (personalSetting === 'Do not show') return false;
-                                    if (personalSetting === 'Show to organizer') return amIAdmin;
-                                    if (personalSetting === 'Show to everyone') return true;
-                                }
-                                return false;
-                            };
-
-                            let displayName = 'Participant';
-                            if (canSeePII('name')) {
-                                if (profile.firstName || profile.lastName) {
-                                    displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                                } else if (fullName) {
-                                    displayName = fullName;
-                                } else if (isCurrentUser) {
-                                    displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
-                                }
-                            } else if (isCurrentUser) {
-                                displayName = 'You';
-                            }
-
-                            const displayImage = canSeePII('photo') && profile.photoURL
-                                ? profile.photoURL
-                                : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'P')}&background=B99A4A&color=fff`;
-
-                            const role = staffList[uid];
-                            let status = uid === organizerId ? 'Organizer' : 'Joined';
-                            if (role === 'admin') status = 'Admin';
-                            else if (role === 'co-host') status = 'Co-Host';
-                            else if (role === 'manager') status = 'Manager';
-
-                            const pData = {
-                                id: uid,
-                                name: displayName,
-                                image: displayImage,
-                                status: status,
-                                isSpeaking: false,
-                                isOrganizer: uid === organizerId,
-                                canSeeLocation: canSeePII('location')
-                            };
-
-                            setParticipantsList(prev => {
-                                const filtered = prev.filter(p => p.id !== uid);
-                                return [...filtered, pData];
-                            });
-                        };
-
-                        const isCurrentUser = uid === auth.currentUser?.uid;
-
-                        if (isCurrentUser) {
-                            // For own profile: use a live onValue listener so updates reflect immediately
-                            const userRef = ref(database, `users/${uid}`);
-                            const unsub = onValue(userRef, (snap) => {
-                                buildAndSetParticipant(snap.val() || {});
-                            }, () => {
-                                // Permission denied — still show self with fallback
-                                buildAndSetParticipant({});
-                            });
-                            activeUnsubs[uid] = unsub;
-                        } else {
-                            // For other participants: listen to sub-nodes directly since parent is read-restricted
-                            const profileRef = ref(database, `users/${uid}/profile`);
-                            const nameRef = ref(database, `users/${uid}/full_name`);
-                            const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
-
-                            let latestProfile = {};
-                            let latestFullName = null;
-                            let latestVisibility = {};
-
-                            const updateParticipant = () => {
-                                buildAndSetParticipant({
-                                    profile: latestProfile,
-                                    full_name: latestFullName,
-                                    participant_visibility: {
-                                        [tripId]: latestVisibility
-                                    }
-                                });
-                            };
-
-                            const unsubProfile = onValue(profileRef, (snap) => {
-                                latestProfile = snap.val() || {};
-                                updateParticipant();
-                            }, () => {
-                                latestProfile = {};
-                                updateParticipant();
-                            });
-
-                            const unsubName = onValue(nameRef, (snap) => {
-                                latestFullName = snap.val();
-                                updateParticipant();
-                            }, () => {
-                                latestFullName = null;
-                                updateParticipant();
-                            });
-
-                            const unsubVisibility = onValue(visibilityRef, (snap) => {
-                                latestVisibility = snap.val() || {};
-                                updateParticipant();
-                            }, () => {
-                                latestVisibility = {};
-                                updateParticipant();
-                            });
-
-                            activeUnsubs[uid] = () => {
-                                unsubProfile();
-                                unsubName();
-                                unsubVisibility();
-                            };
-                        }
-                    }
-                });
-            });
+            setParticipantUids(uids);
         });
 
-        return () => {
-            unsubscribe();
-            Object.values(activeUnsubs).forEach(unsub => unsub());
-        };
-    }, [tripId, orgId, isAdmin, globalVisibilityConfig]);
+        return () => unsubscribe();
+    }, [tripId]);
 
-    // Keep refs in sync with state so stale closures inside onValue listeners always see fresh values
-    useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
-    useEffect(() => { globalVisibilityConfigRef.current = globalVisibilityConfig; }, [globalVisibilityConfig]);
+    // Compute combined participant and staff UIDs reactively
+    const combinedUids = React.useMemo(() => {
+        const staffList = staffData || {};
+        const filteredUids = participantUids.filter(uid => {
+            const role = staffList[uid];
+            return !role || role === 'admin' || role === 'co-host' || role === 'manager';
+        });
+
+        const teamMemberUids = Object.keys(staffList).filter(uid => {
+            const role = staffList[uid];
+            return role === 'admin' || role === 'co-host' || role === 'manager';
+        });
+
+        const allUids = [...filteredUids, ...teamMemberUids];
+        if (organizerId) {
+            allUids.push(organizerId);
+        }
+        if (auth.currentUser?.uid) {
+            const myUid = auth.currentUser.uid;
+            if (staffList[myUid] || participantUids.includes(myUid) || organizerId === myUid || isAdmin) {
+                allUids.push(myUid);
+            }
+        }
+
+        return Array.from(new Set(allUids.filter(Boolean)));
+    }, [participantUids, staffData, organizerId, isAdmin]);
+
+    // 1. Fetch Real Participants with Privacy Masking
+    useEffect(() => {
+        if (!tripId || combinedUids.length === 0) {
+            setParticipantsList([]);
+            setParticipantsCount(0);
+            Object.values(activeUnsubsRef.current).forEach(unsub => unsub());
+            activeUnsubsRef.current = {};
+            return;
+        }
+
+        setParticipantsCount(combinedUids.length);
+
+        // Unsubscribe from removed users
+        Object.keys(activeUnsubsRef.current).forEach(uid => {
+            if (!combinedUids.includes(uid)) {
+                activeUnsubsRef.current[uid]();
+                delete activeUnsubsRef.current[uid];
+                setParticipantsList(prev => prev.filter(p => p.id !== uid));
+            }
+        });
+
+        combinedUids.forEach((uid) => {
+            if (!activeUnsubsRef.current[uid]) {
+                // Mark as subscribed immediately with a no-op so duplicate calls are blocked
+                activeUnsubsRef.current[uid] = () => { };
+
+                const buildAndSetParticipant = (userData) => {
+                    const rawProfile = userData.profile || {};
+                    const photo = rawProfile.photoURL || rawProfile.photo_url || rawProfile.photo || rawProfile.profile_photo || rawProfile.image || userData.photo_url || userData.photo || userData.image;
+                    const profile = {
+                        ...rawProfile,
+                        photoURL: photo,
+                        photo_url: photo
+                    };
+                    const fullName = userData.full_name;
+                    const visibility = userData.participant_visibility?.[tripId] || {};
+                    const latestStaff = staffDataRef.current || {};
+                    const latestOrganizerId = organizerIdRef.current;
+                    const targetRole = latestStaff[uid];
+                    const isTargetStaff = isStaffMember(uid, latestStaff, latestOrganizerId, targetRole);
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, latestStaff, latestOrganizerId, userRoleRef.current) || isAdminRef.current;
+
+                    const displayName = getParticipantDisplayName({
+                        profile,
+                        fullName,
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const displayImage = getParticipantDisplayPhoto({
+                        profile,
+                        displayName,
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const canSeeFirstName = checkPIIVisibility({
+                        field: 'name',
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const canSeeLastName = checkPIIVisibility({
+                        field: 'lastname',
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const canSeeEmail = checkPIIVisibility({
+                        field: 'email',
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const canSeePhone = checkPIIVisibility({
+                        field: 'phone',
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const canSeeLocation = checkPIIVisibility({
+                        field: 'location',
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: visibility
+                    });
+
+                    const role = latestStaff[uid];
+                    let status = uid === latestOrganizerId ? 'Organizer' : 'Joined';
+                    if (role === 'admin') status = 'Admin';
+                    else if (role === 'co-host') status = 'Co-Host';
+                    else if (role === 'manager') status = 'Manager';
+
+                    let rawFirstName = profile.firstName || profile.first_name || '';
+                    let rawLastName = profile.lastName || profile.last_name || '';
+                    if (!rawFirstName && !rawLastName && fullName) {
+                        const parts = String(fullName).trim().split(/\s+/);
+                        rawFirstName = parts[0] || '';
+                        rawLastName = parts.slice(1).join(' ') || '';
+                    }
+
+                    const pData = {
+                        id: uid,
+                        name: displayName,
+                        image: displayImage,
+                        status: status,
+                        isSpeaking: false,
+                        isOrganizer: uid === latestOrganizerId,
+                        email: canSeeEmail ? (profile.email || 'N/A') : '***',
+                        phone: canSeePhone ? (profile.phone || 'N/A') : '***',
+                        firstName: canSeeFirstName ? (rawFirstName || '') : '***',
+                        lastName: canSeeLastName ? (rawLastName || '') : '***',
+                        canSeeFirstName,
+                        canSeeLastName,
+                        canSeeEmail,
+                        canSeePhone,
+                        canSeeLocation,
+                        rawProfile: profile,
+                        rawFullName: fullName,
+                        rawVisibility: visibility
+                    };
+
+                    setParticipantsList(prev => {
+                        const filtered = prev.filter(p => p.id !== uid);
+                        return [...filtered, pData];
+                    });
+                };
+
+                const isCurrentUser = uid === auth.currentUser?.uid;
+
+                if (isCurrentUser) {
+                    // For own profile: use a live onValue listener so updates reflect immediately
+                    const userRef = ref(database, `users/${uid}`);
+                    const unsub = onValue(userRef, (snap) => {
+                        buildAndSetParticipant(snap.val() || {});
+                    }, () => {
+                        // Permission denied — still show self with fallback
+                        buildAndSetParticipant({});
+                    });
+                    activeUnsubsRef.current[uid] = unsub;
+                } else {
+                    // For other participants: fetch once via get() to eliminate 4x continuous WebSocket listeners per participant
+                    Promise.all([
+                        get(ref(database, `users/${uid}/profile`)).catch(() => null),
+                        get(ref(database, `users/${uid}/full_name`)).catch(() => null),
+                        get(ref(database, `users/${uid}/photo_url`)).catch(() => null),
+                        get(ref(database, `users/${uid}/participant_visibility/${tripId}`)).catch(() => null),
+                    ]).then(([pSnap, nSnap, phSnap, vSnap]) => {
+                        const latestProfile = pSnap?.val() || {};
+                        const latestFullName = nSnap?.val() || null;
+                        const latestPhotoUrl = phSnap?.val() || null;
+                        const latestVisibility = vSnap?.val() || {};
+
+                        const resolvedPhoto = latestProfile?.photoURL || latestProfile?.photo_url || latestPhotoUrl || latestProfile?.photo || latestProfile?.profile_photo || latestProfile?.image;
+                        buildAndSetParticipant({
+                            profile: {
+                                ...latestProfile,
+                                photoURL: resolvedPhoto,
+                                photo_url: resolvedPhoto
+                            },
+                            full_name: latestFullName,
+                            participant_visibility: {
+                                [tripId]: latestVisibility
+                            }
+                        });
+                    }).catch(() => {
+                        buildAndSetParticipant({});
+                    });
+                }
+            }
+        });
+    }, [combinedUids, tripId]);
+
+    // Update participant display info when visibility config or roles change
+    useEffect(() => {
+        setParticipantsList(prev => {
+            if (!prev || prev.length === 0) return prev;
+            return prev.map(p => {
+                const currentStaff = staffData || {};
+                const currentOrganizerId = organizerId;
+                const currentVisConfig = globalVisibilityConfig || {};
+                const currentAdmin = isAdmin;
+                const currentUserRole = userRole;
+
+                const targetRole = currentStaff[p.id];
+                const isTargetStaff = isStaffMember(p.id, currentStaff, currentOrganizerId, targetRole);
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, currentStaff, currentOrganizerId, currentUserRole) || currentAdmin;
+
+                const displayName = getParticipantDisplayName({
+                    profile: p.rawProfile || {},
+                    fullName: p.rawFullName,
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const displayImage = getParticipantDisplayPhoto({
+                    profile: p.rawProfile || {},
+                    displayName,
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const canSeeFirstName = checkPIIVisibility({
+                    field: 'name',
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const canSeeLastName = checkPIIVisibility({
+                    field: 'lastname',
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const canSeeEmail = checkPIIVisibility({
+                    field: 'email',
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const canSeePhone = checkPIIVisibility({
+                    field: 'phone',
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                const canSeeLocation = checkPIIVisibility({
+                    field: 'location',
+                    targetUid: p.id,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: currentVisConfig,
+                    personalVisibility: p.rawVisibility || {}
+                });
+
+                let status = p.id === currentOrganizerId ? 'Organizer' : 'Joined';
+                if (targetRole === 'admin') status = 'Admin';
+                else if (targetRole === 'co-host') status = 'Co-Host';
+                else if (targetRole === 'manager') status = 'Manager';
+
+                const rawProfile = p.rawProfile || {};
+                const emailVal = rawProfile.email || p.email;
+                const phoneVal = rawProfile.phone || p.phone;
+
+                let rawFirstName = rawProfile.firstName || rawProfile.first_name || '';
+                let rawLastName = rawProfile.lastName || rawProfile.last_name || '';
+                if (!rawFirstName && !rawLastName && p.rawFullName) {
+                    const parts = String(p.rawFullName).trim().split(/\s+/);
+                    rawFirstName = parts[0] || '';
+                    rawLastName = parts.slice(1).join(' ') || '';
+                }
+
+                return {
+                    ...p,
+                    name: displayName,
+                    image: displayImage,
+                    status: status,
+                    isOrganizer: p.id === currentOrganizerId,
+                    email: canSeeEmail ? (emailVal || 'N/A') : '***',
+                    phone: canSeePhone ? (phoneVal || 'N/A') : '***',
+                    firstName: canSeeFirstName ? (rawFirstName || '') : '***',
+                    lastName: canSeeLastName ? (rawLastName || '') : '***',
+                    canSeeFirstName,
+                    canSeeLastName,
+                    canSeeEmail,
+                    canSeePhone,
+                    canSeeLocation
+                };
+            });
+        });
+    }, [globalVisibilityConfig, staffData, organizerId, isAdmin, userRole]);
 
     // Voice state is now managed globally by VoiceContext
-    const { setActiveTrip } = useVoice();
     useEffect(() => {
-        if (tripId && orgId) {
+        if (tripId && orgId && setActiveTrip) {
             setActiveTrip(tripId, orgId);
         }
-    }, [tripId, orgId]);
+    }, [tripId, orgId, setActiveTrip]);
 
     useEffect(() => {
         if (!tripId || !orgId) return;
@@ -646,24 +930,36 @@ const TripOverviewScreen = () => {
         if (!isStaff || !orgId || !tripId) return;
         const nextState = !isAllMuted;
         update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-            isAllMuted: nextState
+            isAllMuted: nextState,
+            lastUpdatedBy: auth.currentUser?.uid || null
         });
     };
 
     const handleToggleChannel = async () => {
+        if (isExpired) {
+            Alert.alert("Trip Expired", "Voice channels cannot be started for an expired trip.");
+            return;
+        }
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
-        if (!isStaff || !orgId || !tripId) return;
+        const targetOrgId = resolvedOrgId || orgId;
+        if (!isStaff || !targetOrgId || !tripId) return;
 
         if (!isChannelStarted) {
-            // If starting, navigate to Voice Chat and auto-start
+            // If starting, set active trip in context and navigate to Voice Chat with auto-start
+            if (setActiveTrip) {
+                setActiveTrip(tripId, targetOrgId);
+            }
             navigation.navigate('VoiceChat', {
+                animation: 'slide_from_left',
                 trip: tripData,
+                tripId: tripId,
+                orgId: targetOrgId,
                 isAdmin: true,
                 autoStart: true
             });
         } else {
             // If stopping, use context to stop channel globally
-            stopChannel(true, tripId, orgId);
+            stopChannel(true, tripId, targetOrgId);
         }
     };
 
@@ -682,14 +978,22 @@ const TripOverviewScreen = () => {
                         msg = 'asked for your location';
                     }
 
+                    const resolvedTimestamp = extractNotificationTimestamp(val, id);
+
                     return {
                         id,
                         ...(val || {}),
+                        timestamp: resolvedTimestamp,
                         message: msg
                     };
                 });
-                // Sort by timestamp
-                list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                // Sort by timestamp descending (newest on top)
+                list.sort((a, b) => {
+                    const timeA = Number(a.timestamp) || 0;
+                    const timeB = Number(b.timestamp) || 0;
+                    if (timeB !== timeA) return timeB - timeA;
+                    return String(b.id || '').localeCompare(String(a.id || ''));
+                });
                 setNotificationsList(list);
             } else {
                 setNotificationsList([]);
@@ -707,12 +1011,21 @@ const TripOverviewScreen = () => {
         const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
         const unsubscribe = onValue(templatesRef, (snapshot) => {
             if (snapshot.exists()) {
-                const data = snapshot.val();
-                const list = Object.entries(data).map(([id, t]) => ({
-                    id,
-                    name: t.name,
-                    message: t.message
-                }));
+                const data = snapshot.val() || {};
+                const seenKeys = new Set();
+                const list = [];
+                for (const [id, t] of Object.entries(data)) {
+                    if (!t || !t.name) continue;
+                    const dedupKey = `${t.name.trim().toLowerCase()}:::${(t.message || '').trim()}`;
+                    if (!seenKeys.has(dedupKey)) {
+                        seenKeys.add(dedupKey);
+                        list.push({
+                            id,
+                            name: t.name.trim(),
+                            message: t.message || ''
+                        });
+                    }
+                }
                 setSharedTemplates(list);
             } else {
                 setSharedTemplates([]);
@@ -720,7 +1033,7 @@ const TripOverviewScreen = () => {
         });
 
         return () => unsubscribe();
-    }, [orgId, tripId, isAdmin]);
+    }, [orgId, tripId, isAdmin, userRole]);
 
     // 4. Fetch Last Chat Message
     useEffect(() => {
@@ -811,27 +1124,38 @@ const TripOverviewScreen = () => {
         return () => unsubscribe();
     }, [orgId, tripId]);
 
-    // 5. Track Current User Location
+    // 5. Track Current User Location & Background Location
+    useEffect(() => {
+        if (orgId && tripId && auth.currentUser) {
+            startLiveLocationTracking(orgId, tripId);
+        }
+    }, [orgId, tripId]);
 
     useEffect(() => {
         let subscription;
         const startWatching = async () => {
-            const { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') return;
+            try {
+                const { status } = await Location.requestForegroundPermissionsAsync();
+                if (status !== 'granted') return;
 
-            subscription = await Location.watchPositionAsync(
-                {
-                    accuracy: Location.Accuracy.Balanced,
-                    timeInterval: 5000,
-                    distanceInterval: 10,
-                },
-                (loc) => {
-                    setUserLocation({
-                        latitude: loc.coords.latitude,
-                        longitude: loc.coords.longitude,
-                    });
-                }
-            );
+                subscription = await Location.watchPositionAsync(
+                    {
+                        accuracy: Location.Accuracy.Balanced,
+                        timeInterval: 4000,
+                        distanceInterval: 5,
+                    },
+                    (loc) => {
+                        if (loc?.coords) {
+                            setUserLocation({
+                                latitude: loc.coords.latitude,
+                                longitude: loc.coords.longitude,
+                            });
+                        }
+                    }
+                );
+            } catch (err) {
+                console.log("[TripOverview] Location watcher error:", err);
+            }
         };
         startWatching();
         return () => subscription?.remove();
@@ -847,13 +1171,28 @@ const TripOverviewScreen = () => {
         for (const [uid, loc] of Object.entries(liveLocations ?? {})) {
             if (uid === auth.currentUser?.uid || !loc) continue;
 
+            const lat = Number(loc.lat ?? loc.latitude);
+            const lng = Number(loc.lng ?? loc.longitude);
+            if (isNaN(lat) || isNaN(lng)) continue;
+
             // Check if participant is still active and has visibility
             const pProfile = participantsList.find(p => p.id === uid);
-            if (!pProfile || pProfile.canSeeLocation === false) continue;
+            const isTargetStaff = isStaffMember(uid, staffData, organizerId);
+            const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
+            const canSee = checkPIIVisibility({
+                field: 'location',
+                targetUid: uid,
+                viewerUid: auth.currentUser?.uid,
+                isViewerStaff,
+                isTargetStaff,
+                globalConfig: globalVisibilityConfig,
+                personalVisibility: pProfile?.visibility || {}
+            });
+            if (!canSee) continue;
 
             const dist = Math.sqrt(
-                Math.pow(loc.lat - userLocation.latitude, 2) +
-                Math.pow((loc.lng || 0) - userLocation.longitude, 2)
+                Math.pow(lat - userLocation.latitude, 2) +
+                Math.pow(lng - userLocation.longitude, 2)
             );
 
             if (dist < minDistance) {
@@ -863,9 +1202,12 @@ const TripOverviewScreen = () => {
         }
 
         if (!nearestUid) return null;
+        const nLoc = liveLocations[nearestUid] || {};
         return {
             uid: nearestUid,
-            ...liveLocations[nearestUid],
+            ...nLoc,
+            lat: Number(nLoc.lat ?? nLoc.latitude),
+            lng: Number(nLoc.lng ?? nLoc.longitude),
             profile: participantsList.find(p => p.id === nearestUid)
         };
     };
@@ -874,12 +1216,29 @@ const TripOverviewScreen = () => {
 
     const handleAcceptNotification = async (notif) => {
         const myUid = auth.currentUser?.uid;
-        if (!myUid || !orgId || !tripId) return;
+        if (!myUid || !orgId || !tripId || !notif?.id) return;
 
         try {
             // 1. Grant permission if it's a location request
-            if (notif?.type === 'location_request' && notif?.fromUid) {
-                await set(ref(database, `trips_active/${orgId}/${tripId}/location_permissions/${myUid}/${notif.fromUid}`), true);
+            const requesterUid = notif.fromUid || notif.senderUid || notif.sender_id;
+            if (requesterUid) {
+                await set(ref(database, `trips_active/${orgId}/${tripId}/location_permissions/${myUid}/${requesterUid}`), true);
+
+                // Start location tracking for current user and sync immediately
+                startLiveLocationTracking(orgId, tripId);
+                syncCurrentUserLocationNow(orgId, tripId);
+
+                // Send confirmation notification to requester
+                const senderName = auth.currentUser?.displayName || 'Participant';
+                await set(ref(database, `trips_active/${orgId}/${tripId}/notifications/${requesterUid}/${Date.now()}`), {
+                    fromUid: myUid,
+                    senderUid: myUid,
+                    name: senderName,
+                    title: 'Location Request Accepted',
+                    message: `${senderName} is now sharing their live location with you.`,
+                    type: 'alert',
+                    timestamp: serverTimestamp(),
+                });
             }
 
             // 2. Mark as accepted for visual feedback
@@ -894,6 +1253,28 @@ const TripOverviewScreen = () => {
                 } catch (e) { }
             }, 2000);
         } catch (error) {
+            console.log("Error accepting notification:", error);
+        }
+    };
+
+    const handleDeclineNotification = async (notif) => {
+        const myUid = auth.currentUser?.uid;
+        if (!myUid || !orgId || !tripId || !notif?.id) return;
+
+        try {
+            // 1. Mark as declined for visual feedback
+            await update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`), {
+                status: 'declined'
+            });
+
+            // 2. Remove after delay
+            setTimeout(async () => {
+                try {
+                    await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`));
+                } catch (e) { }
+            }, 1000);
+        } catch (error) {
+            console.log("Error declining notification:", error);
         }
     };
 
@@ -944,36 +1325,60 @@ const TripOverviewScreen = () => {
                     if (!prev || prev.id !== participant.id) return prev;
                     const newData = { ...prev };
 
-                    // Decrypt fields if they are encrypted
-                    const decryptedEmail = ChatEncryption.decrypt(result.data.email);
-                    const decryptedPhone = ChatEncryption.decrypt(result.data.phone);
-                    const decryptedName = ChatEncryption.decrypt(result.data.fullName);
+                    const rawEmail = result.data.email;
+                    const rawPhone = result.data.phone;
+                    const rawFullName = result.data.fullName;
 
-                    // Update if we got valid plaintext results
-                    if (decryptedEmail && decryptedEmail.includes('@')) {
-                        newData.email = decryptedEmail;
-                    } else {
-                        newData.email = result.data.email || 'N/A';
-                    }
-                    if (decryptedPhone && decryptedPhone.length > 5) {
-                        newData.phone = decryptedPhone;
-                    } else {
-                        newData.phone = result.data.phone || 'N/A';
-                    }
-                    if (decryptedName && !decryptedName.includes('*')) {
-                        newData.name = decryptedName;
-                    } else {
-                        newData.name = result.data.fullName || prev.name;
+                    // Decrypt fields if they are encrypted ciphertext strings, otherwise use plaintext directly
+                    let resolvedEmail = rawEmail;
+                    if (rawEmail && !rawEmail.includes('@') && rawEmail !== 'N/A') {
+                        try {
+                            const dec = ChatEncryption.decrypt(rawEmail);
+                            if (dec && dec.includes('@')) resolvedEmail = dec;
+                        } catch (e) {}
                     }
 
+                    let resolvedPhone = rawPhone;
+                    if (rawPhone && rawPhone !== 'N/A' && rawPhone.length > 30) {
+                        try {
+                            const dec = ChatEncryption.decrypt(rawPhone);
+                            if (dec && dec.length > 5) resolvedPhone = dec;
+                        } catch (e) {}
+                    }
+
+                    newData.email = resolvedEmail || 'N/A';
+                    newData.phone = resolvedPhone || 'N/A';
+
+                    let rawFirstName = '';
+                    let rawLastName = '';
                     if (result.data.profile) {
-                        newData.firstName = result.data.profile.firstName || '';
-                        newData.lastName = result.data.profile.lastName || '';
+                        rawFirstName = result.data.profile.firstName || '';
+                        rawLastName = result.data.profile.lastName || '';
                     } else {
-                        const parts = (result.data.fullName || '').split(' ');
-                        newData.firstName = parts[0] || '';
-                        newData.lastName = parts.slice(1).join(' ') || '';
+                        const parts = (rawFullName || '').trim().split(/\s+/);
+                        rawFirstName = parts[0] || '';
+                        rawLastName = parts.slice(1).join(' ') || '';
                     }
+
+                    newData.firstName = rawFirstName;
+                    newData.lastName = rawLastName;
+
+                    const targetRole = staffDataRef.current?.[participant.id];
+                    const isTargetStaff = isStaffMember(participant.id, staffDataRef.current, organizerIdRef.current, targetRole);
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffDataRef.current, organizerIdRef.current, userRoleRef.current) || isAdminRef.current;
+
+                    const updatedDisplayName = getParticipantDisplayName({
+                        profile: { firstName: rawFirstName, lastName: rawLastName },
+                        fullName: rawFullName,
+                        targetUid: participant.id,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfigRef.current,
+                        personalVisibility: prev.rawVisibility || {}
+                    });
+
+                    newData.name = updatedDisplayName;
 
                     return newData;
                 });
@@ -1018,28 +1423,135 @@ const TripOverviewScreen = () => {
         }
     };
 
-    const sortedParticipants = [...participantsList].sort((a, b) => {
+    const sortedParticipants = React.useMemo(() => {
+        const activeUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
+        const speakerData = activeSpeakerData || contextActiveSpeakerData;
         const myUid = auth.currentUser?.uid;
-        if (a.id === myUid) return -1;
-        if (b.id === myUid) return 1;
-        return a.name.localeCompare(b.name);
-    });
 
-    const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+        return [...participantsList].sort((a, b) => {
+            // Rule 1: Current user (You) always first
+            if (a.id === myUid && b.id !== myUid) return -1;
+            if (b.id === myUid && a.id !== myUid) return 1;
 
-    const participants = sortedParticipants.map(p => {
-        const track = voiceTracks.find(t => t.participant.identity === p.id);
-        if (track) {
-            const isSpeaking = speakingUids.includes(p.id);
-            const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
+            const aIsSpeaking = activeUids.includes(a.id) || (speakerData && speakerData.uid === a.id && speakerData.speaking !== false);
+            const bIsSpeaking = activeUids.includes(b.id) || (speakerData && speakerData.uid === b.id && speakerData.speaking !== false);
+
+            const aIndex = activeUids.indexOf(a.id);
+            const bIndex = activeUids.indexOf(b.id);
+
+            // Rule 2: Active speakers directly below current user
+            if (aIsSpeaking && bIsSpeaking) {
+                if (aIndex !== -1 && bIndex !== -1 && aIndex !== bIndex) {
+                    return aIndex - bIndex;
+                }
+            }
+            if (aIsSpeaking && !bIsSpeaking) return -1;
+            if (!aIsSpeaking && bIsSpeaking) return 1;
+
+            // Rule 3: Rest of participants in consistent alphabetical order
+            const aName = (a.name || '').trim();
+            const bName = (b.name || '').trim();
+            const nameDiff = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
+            if (nameDiff !== 0) return nameDiff;
+            return (a.id || '').localeCompare(b.id || '');
+        });
+    }, [participantsList, speakingUids, contextSpeakingUids, activeSpeakerData, contextActiveSpeakerData, auth.currentUser?.uid]);
+
+    const activeSpeakerInfo = React.useMemo(() => {
+        const activeUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
+        const speakerData = activeSpeakerData || contextActiveSpeakerData;
+
+        // 1. If connected and LiveKit reports active speakers
+        if (activeUids && activeUids.length > 0) {
+            const speakerUid = activeUids[0];
+            const p = participantsList.find(item => item.id === speakerUid);
+            if (p) {
+                return {
+                    isSpeaking: true,
+                    name: p.name,
+                    avatar: p.image || p.avatar || speakerData?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name?.[0] || 'U')}&background=B99A4A&color=fff`,
+                    uid: speakerUid
+                };
+            }
+            if (speakerUid === auth.currentUser?.uid) {
+                const name = currentUserFullName || auth.currentUser?.displayName || 'You';
+                return {
+                    isSpeaking: true,
+                    name: name,
+                    avatar: currentUserPhoto || auth.currentUser?.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(name[0] || 'U')}&background=B99A4A&color=fff`,
+                    uid: speakerUid
+                };
+            }
+            if (speakerData && speakerData.uid === speakerUid) {
+                return {
+                    isSpeaking: true,
+                    name: speakerData.name || 'User',
+                    avatar: speakerData.avatar || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff`,
+                    uid: speakerUid
+                };
+            }
             return {
-                ...p,
-                isSpeaking,
-                isMicrophoneEnabled,
-                voiceStatus: isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted')
+                isSpeaking: true,
+                name: 'Active Speaker',
+                avatar: speakerData?.avatar || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff`,
+                uid: speakerUid
             };
         }
-        return p;
+
+        // 2. If Firebase activeSpeakerData reports an active speaker
+        if (speakerData && speakerData.name && (speakerData.speaking !== false)) {
+            return {
+                isSpeaking: true,
+                name: speakerData.name,
+                avatar: speakerData.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(speakerData.name[0] || 'U')}&background=B99A4A&color=fff`,
+                uid: speakerData.uid
+            };
+        }
+
+        // 3. Nobody is actively speaking
+        return {
+            isSpeaking: false,
+            name: null,
+            avatar: (tripData?.image && typeof tripData.image === 'string' ? tripData.image : null) || auth.currentUser?.photoURL || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff',
+            uid: null
+        };
+    }, [speakingUids, contextSpeakingUids, activeSpeakerData, contextActiveSpeakerData, participantsList, currentUserFullName, currentUserPhoto, tripData]);
+
+    const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+    const participants = sortedParticipants.map(p => {
+        const isInVoice = voicePresence[p.id] === true;
+        const isCurrentUser = p.id === auth.currentUser?.uid;
+        const isOnline = appPresence[p.id] === true || (isCurrentUser && AppState.currentState === 'active');
+        const track = voiceTracks.find(t => t.participant.identity === p.id);
+        const speakerData = activeSpeakerData || contextActiveSpeakerData;
+        const currentSpeakingUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
+        const isSpeaking = currentSpeakingUids.includes(p.id) || (speakerData && speakerData.uid === p.id && speakerData.speaking !== false);
+        
+        let voiceStatus = null;
+        if (track) {
+            const isMicrophoneEnabled = track.participant.isMicrophoneEnabled;
+            voiceStatus = isSpeaking ? 'Speaking' : (isMicrophoneEnabled ? 'Active' : 'Muted');
+        } else if (isInVoice) {
+            voiceStatus = isSpeaking ? 'Speaking' : 'joined';
+        } else if (isOnline) {
+            if (p.status === 'Joined') {
+                voiceStatus = 'online';
+            } else {
+                voiceStatus = `${p.status} (online)`;
+            }
+        } else {
+            if (p.status === 'Joined') {
+                voiceStatus = 'offline';
+            } else {
+                voiceStatus = `${p.status} (offline)`;
+            }
+        }
+        
+        return {
+            ...p,
+            voiceStatus,
+            isSpeaking
+        };
     });
 
 
@@ -1052,12 +1564,6 @@ const TripOverviewScreen = () => {
     const MOCK_NOTIFICATIONS = notificationsList;
 
     const lastAlert = notificationsList.find(n => n.type === 'emergency');
-    const activeEmergency = notificationsList.find(
-        n => n.type === 'emergency' &&
-        n.read !== true &&
-        Date.now() - (n.timestamp || 0) < 24 * 60 * 60 * 1000 &&
-        !dismissedSosAlerts.includes(n.id)
-    );
     const loggedInName = currentUserFullName || auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'Participant';
     const lastAlertSender = lastAlert ? lastAlert.name : loggedInName;
 
@@ -1075,7 +1581,7 @@ const TripOverviewScreen = () => {
         }
 
         try {
-            const timestamp = serverTimestamp();
+            const timestamp = Date.now();
             const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
             const senderPhoto = currentUserPhoto || auth.currentUser?.photoURL || '';
 
@@ -1098,19 +1604,22 @@ const TripOverviewScreen = () => {
             const rawUids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
             const uids = Array.from(new Set(rawUids.filter(id => typeof id === 'string')));
 
-            // 2. Broadcast to all found UIDs
-            const promises = uids.map(uid => {
-                const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
-                return push(userNotifRef, {
-                    name: adminName,
-                    title: alertTitle || title || 'Alert!',
-                    message: msg,
-                    timestamp: timestamp,
-                    type: 'alert',
-                    senderImage: senderPhoto,
-                    senderUid: auth.currentUser?.uid
+            const myUid = auth.currentUser?.uid;
+            // 2. Broadcast to all found UIDs (excluding self)
+            const promises = uids
+                .filter(uid => uid !== myUid)
+                .map(uid => {
+                    const userNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
+                    return push(userNotifRef, {
+                        name: adminName,
+                        title: alertTitle || title || 'Alert!',
+                        message: msg,
+                        timestamp: timestamp,
+                        type: 'alert',
+                        senderImage: senderPhoto,
+                        senderUid: myUid
+                    });
                 });
-            });
 
             await Promise.all(promises);
             setQuickAlertVisible(false); // Close preview
@@ -1138,39 +1647,58 @@ const TripOverviewScreen = () => {
                 console.log("Failed to get fresh location for emergency:", locErr);
             }
 
-            // 1. Get all staff members for this organization
+            // 1. Get all staff members for this organization and the trip organizer
+            let organizerUid = null;
+            try {
+                const orgTripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}/organizer_id`));
+                if (orgTripSnap.exists()) organizerUid = orgTripSnap.val();
+            } catch (e) {}
+
             const staffRef = ref(database, `orgs/${orgId}/staff`);
             const staffSnap = await get(staffRef);
 
-            if (staffSnap.exists()) {
-                const staffData = staffSnap.val();
-                // S22: Ensure unique Staff UIDs to prevent duplicate emergency alerts
-                const staffUids = Array.from(new Set(Object.keys(staffData)));
-                const userName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'A Participant';
-                const timestamp = serverTimestamp();
-                const senderPhoto = currentUserPhoto || auth.currentUser?.photoURL || '';
+            const staffData = staffSnap.exists() ? (staffSnap.val() || {}) : {};
+            const allStaffUids = new Set([
+                ...Object.keys(staffData),
+                ...(organizerUid ? [organizerUid] : [])
+            ]);
 
-                // 2. Send notification to each staff member (excluding the sender)
-                const promises = staffUids
-                    .filter(sUid => sUid !== auth.currentUser?.uid) // Don't notify yourself
-                    .map(sUid => {
-                        const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${sUid}`);
-                        return push(notifRef, {
-                            name: isAdmin ? "Admin" : userName,
-                            title: 'Emergency Alert',
-                            message: "needs immediate assistance!",
-                            timestamp: timestamp,
-                            type: 'emergency',
-                            senderUid: auth.currentUser?.uid,
-                            senderImage: senderPhoto,
-                            latitude: lat,
-                            longitude: lng
-                        });
-                    });
+            const staffUids = Array.from(allStaffUids).filter(sUid => sUid && sUid !== auth.currentUser?.uid);
+            const userName = currentUserFullName || auth.currentUser?.displayName || auth.currentUser?.email?.split('@')[0] || 'A Participant';
+            const timestamp = serverTimestamp();
+            const senderPhoto = currentUserPhoto || auth.currentUser?.photoURL || '';
 
-                await Promise.all(promises);
-                setEmergencySuccessVisible(true);
+            // 2. Update trips_active locations path with accurate emergency coordinates
+            if (lat && lng && auth.currentUser?.uid) {
+                set(ref(database, `trips_active/${orgId}/${tripId}/locations/${auth.currentUser.uid}`), {
+                    lat: lat,
+                    lng: lng,
+                    latitude: lat,
+                    longitude: lng,
+                    updated_at: timestamp
+                }).catch(e => console.log("Failed to sync location for emergency:", e));
             }
+
+            // 3. Send notification to each staff member (Manager, Co-Host, Admin, Organizer)
+            const promises = staffUids.map(sUid => {
+                const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${sUid}`);
+                return push(notifRef, {
+                    name: userName,
+                    title: 'Emergency Alert',
+                    message: "needs immediate assistance!",
+                    timestamp: timestamp,
+                    type: 'emergency',
+                    senderUid: auth.currentUser?.uid,
+                    senderImage: senderPhoto,
+                    latitude: lat,
+                    longitude: lng,
+                    lat: lat,
+                    lng: lng
+                });
+            });
+
+            await Promise.all(promises);
+            setEmergencySuccessVisible(true);
         } catch (error) {
             console.log("Emergency Alert Failed:", error);
         }
@@ -1370,7 +1898,7 @@ const TripOverviewScreen = () => {
                     <Image
                         source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
                         style={[StyleSheet.absoluteFill, { zIndex: 1 }]}
-                        resizeMode="contain"
+                        resizeMode="cover"
                     />
                 )}
                 <LinearGradient
@@ -1449,6 +1977,14 @@ const TripOverviewScreen = () => {
                     <View style={{ height: 75 + insets.top + 20 }} pointerEvents="none" />
                     {/* 1. Transparent Gap with Interactive Buttons (Mirror) */}
 
+                    {isExpired && (
+                        <View style={styles.expiredBanner}>
+                            <Ionicons name="warning" size={20} color="#FF383C" style={{ marginRight: 8 }} />
+                            <Text style={styles.expiredBannerText}>
+                                This trip has expired. Interactive features (chat, voice, location, SOS) are inactive.
+                            </Text>
+                        </View>
+                    )}
 
                     {/* 2. Content Container */}
                     <View style={{ backgroundColor: 'transparent', paddingHorizontal: 20 }}>
@@ -1526,13 +2062,23 @@ const TripOverviewScreen = () => {
 
                         {/* Audio Channel Section */}
                         <View style={[styles.sectionCard, { padding: 12 }]}>
-                            <TouchableOpacity style={styles.channelHeader} onPress={() => navigation.navigate('VoiceChat', { trip: tripData })}>
+                            <TouchableOpacity style={styles.channelHeader} onPress={() => {
+                                if (isExpired) {
+                                    Alert.alert("Trip Expired", "Voice chat is not available for this trip as it has expired.");
+                                    return;
+                                }
+                                navigation.navigate('VoiceChat', { animation: 'slide_from_left', trip: tripData });
+                            }}>
                                 {
                                     isChannelStarted ? (
                                         <View style={styles.avatarWrapper}>
+                                            {activeSpeakerInfo.isSpeaking && <SpeakerGlow size={50} />}
                                             <Image
-                                                source={{ uri: activeSpeakerData?.avatar || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff' }}
-                                                style={styles.speakerAvatar}
+                                                source={{ uri: activeSpeakerInfo.avatar || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff' }}
+                                                style={[
+                                                    styles.speakerAvatar,
+                                                    activeSpeakerInfo.isSpeaking ? styles.speakerAvatarSpeaking : styles.speakerAvatarIdle
+                                                ]}
                                             />
                                             {isChannelStarted && <View style={styles.liveIndicator} />}
                                         </View>
@@ -1542,7 +2088,7 @@ const TripOverviewScreen = () => {
                                 <View style={styles.channelInfo}>
                                     <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: isChannelStarted ? '#34C759' : '#FF383C' }}>{isChannelStarted ? 'Live' : 'Offline'}</Text></Text>
                                     <Text style={styles.activeSpeaker}>
-                                        {isChannelStarted ? (activeSpeakerData ? `Active speaker: ${activeSpeakerData.name}` : 'Ready for conversation') : 'Channel not started'}
+                                        {isChannelStarted ? (activeSpeakerInfo.isSpeaking ? `Active speaker: ${activeSpeakerInfo.name}` : 'Ready for conversation') : 'Channel not started'}
                                     </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={24} color="#fff" />
@@ -1618,24 +2164,24 @@ const TripOverviewScreen = () => {
                                 ) : (
                                     <View style={{ width: '100%', alignItems: 'center' }}>
                                         <TouchableOpacity
-                                            onPress={handleToggleMute}
+                                            onPressIn={handleHoldToTalkStart}
+                                            onPressOut={handleHoldToTalkEnd}
                                             style={[
                                                 styles.controlButtonOutline,
                                                 { width: '100%', marginBottom: 0 },
-                                                (!isMuted && !isAllMuted) && { backgroundColor: '#23272A', borderColor: '#B99A4A' },
-                                                (isMuted) && { backgroundColor: '#2D2528', borderColor: '#2D2528' },
-                                                (isAllMuted && isMuted) && { opacity: 0.5 }
+                                                isHoldToTalkActive && { backgroundColor: '#B99A4A', borderColor: '#B99A4A' },
+                                                isAllMuted && { opacity: 0.5 }
                                             ]}
                                         >
                                             <View style={{ marginRight: 8 }}>
                                                 {(isMuted || isAllMuted) ? (
-                                                    <MicMutedIcon color="#D66A77" size={32} />
+                                                    <MicMutedIcon color={isHoldToTalkActive ? "#FFF" : "#D66A77"} size={20} />
                                                 ) : (
-                                                    <MicUnmutedIcon color="#FFF" size={32} />
+                                                    <MicUnmutedIcon color="#FFF" size={20} />
                                                 )}
                                             </View>
-                                            <Text style={[styles.controlText, { fontSize: responsiveFontSize(16) }, (!isMuted && !isAllMuted) && { color: '#FFFFFF' }, (isMuted) && { color: '#D66A77' }, (isAllMuted && isMuted) && { color: '#D66A77' }]}>
-                                                {isAllMuted && isMuted ? 'Muted by Organizer' : (isMuted ? 'Unmute Myself' : 'Mute Myself')}
+                                            <Text style={[styles.controlText, { fontSize: responsiveFontSize(16) }, isHoldToTalkActive && { color: '#FFFFFF' }]}>
+                                                {isAllMuted ? 'Muted by Organizer' : 'Hold to Talk'}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
@@ -1647,7 +2193,13 @@ const TripOverviewScreen = () => {
                         <View style={styles.rowContainer}>
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, { overflow: 'hidden' }]}
-                                onPress={() => navigation.navigate('LiveLocation', { trip: tripData })}
+                                onPress={() => {
+                                    if (isExpired) {
+                                        Alert.alert("Trip Expired", "Live location sharing is not available for this trip as it has expired.");
+                                        return;
+                                    }
+                                    navigation.navigate('LiveLocation', { animation: 'slide_from_left', trip: tripData });
+                                }}
 
                             >
                                 {userLocation ? (
@@ -1689,7 +2241,7 @@ const TripOverviewScreen = () => {
                                             <View style={styles.mapAvatar}>
                                                 {(currentUserPhoto || auth.currentUser?.photoURL) ? (
                                                     <Image
-                                                        source={{ uri: currentUserPhoto || auth.currentUser.photoURL }}
+                                                        source={{ uri: currentUserPhoto || auth.currentUser?.photoURL }}
                                                         style={styles.mapAvatarImg}
                                                         resizeMode="cover"
                                                     />
@@ -1704,7 +2256,7 @@ const TripOverviewScreen = () => {
                                         </Marker>
 
                                         {/* Nearest Participant */}
-                                        {nearestParticipant && (
+                                        {nearestParticipant && !isNaN(nearestParticipant.lat) && !isNaN(nearestParticipant.lng) && (
                                             <Marker
                                                 coordinate={{ latitude: nearestParticipant.lat, longitude: nearestParticipant.lng }}
                                                 anchor={{ x: 0.5, y: 0.5 }}
@@ -1747,7 +2299,13 @@ const TripOverviewScreen = () => {
 
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, { backgroundColor: '#23272A', }]}
-                                onPress={() => navigation.navigate('TripChat', { trip: tripData })}
+                                onPress={() => {
+                                    if (isExpired) {
+                                        Alert.alert("Trip Expired", "Chat is not available for this trip as it has expired.");
+                                        return;
+                                    }
+                                    navigation.navigate('TripChat', { animation: 'slide_from_right', trip: tripData });
+                                }}
                             >
                                 <View style={styles.chatIconWrapper}>
                                     <View style={styles.chatIconCircle}>
@@ -1778,71 +2336,80 @@ const TripOverviewScreen = () => {
                         <View style={styles.sectionCard}>
                             <Text style={styles.notificationTitle}>Notification</Text>
                             <View style={styles.notificationListContainer}>
-                                <ScrollView
-                                    showsVerticalScrollIndicator={false}
-                                    nestedScrollEnabled={true}
-                                    contentContainerStyle={{ flexGrow: 1 }}
-                                >
-                                    {notificationsList
-                                        .filter(item => item.type === 'location_request' || item.type === 'alert')
-                                        .map((item, index, filteredList) => (
-                                            <View key={item.id}>
-                                                <View style={styles.notificationItem}>
-                                                    <View style={styles.notificationContent}>
-                                                        <Text style={styles.notifName}>
-                                                            {item.name} <Text style={[styles.notifMsg, item.type === 'emergency' && { color: '#FF4B4B', fontWeight: 'bold' }]}>{item.message}</Text>
-                                                        </Text>
-                                                    </View>
+                                {(() => {
+                                    const locationRequests = notificationsList.filter(item =>
+                                        item.type === 'location_request' &&
+                                        item.status !== 'declined' &&
+                                        item.status !== 'dismissed' &&
+                                        item.status !== 'inactive'
+                                    );
 
-                                                     {item.type === 'emergency' && item.latitude && item.longitude && (
-                                                         <TouchableOpacity
-                                                             style={[
-                                                                 styles.acceptButton,
-                                                                 {
-                                                                     backgroundColor: '#FF3B30',
-                                                                     borderColor: '#FF3B30',
-                                                                     flexDirection: 'row',
-                                                                     alignItems: 'center',
-                                                                     justifyContent: 'center',
-                                                                     paddingHorizontal: 10,
-                                                                     height: 32,
-                                                                     borderRadius: 16
-                                                                 }
-                                                             ]}
-                                                             onPress={() => {
-                                                                 const url = Platform.select({
-                                                                     ios: `maps:0,0?q=${item.latitude},${item.longitude}`,
-                                                                     android: `geo:0,0?q=${item.latitude},${item.longitude}`
-                                                                 });
-                                                                 Linking.openURL(url);
-                                                             }}
-                                                         >
-                                                             <Ionicons name="location-outline" size={16} color="#FFF" style={{ marginRight: 4 }} />
-                                                             <Text style={[styles.acceptButtonText, { fontSize: 12 }]}>Location</Text>
-                                                         </TouchableOpacity>
-                                                     )}
-
-                                                     {item.type !== 'alert' && item.type !== 'emergency' && item.type !== 'broadcast' && (
-                                                        <TouchableOpacity
-                                                            style={[styles.acceptButton, item.status === 'accepted' && { backgroundColor: '#A1A1AA' }, { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}
-                                                            onPress={() => handleAcceptNotification(item)}
-                                                            disabled={item.status === 'accepted'}
-                                                        >
-                                                            <Svg width="18" height="18" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: 8 }}>
-                                                                <Path d="M7.99967 14.6667C11.6816 14.6667 14.6663 11.6819 14.6663 8.00004C14.6663 4.31814 11.6816 1.33337 7.99967 1.33337C4.31778 1.33337 1.33301 4.31814 1.33301 8.00004C1.33301 11.6819 4.31778 14.6667 7.99967 14.6667Z" stroke="white" strokeWidth="1.5" />
-                                                                <Path d="M5.66602 8.33337L6.99935 9.66671L10.3327 6.33337" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                                            </Svg>
-
-                                                            <Text style={styles.acceptButtonText}>
-                                                                {item.status === 'accepted' ? 'Accepted' : 'Accept'}
-                                                            </Text>
-                                                        </TouchableOpacity>
-                                                    )}
-                                                </View>
-                                                {index < filteredList.length - 1 && <View style={styles.notificationSeparator} />}
+                                    if (locationRequests.length === 0) {
+                                        return (
+                                            <View style={styles.emptyNotificationContainer}>
+                                                <Text style={styles.emptyNotificationText}>No pending location requests</Text>
                                             </View>
-                                        ))}
-                                </ScrollView>
+                                        );
+                                    }
+
+                                    return (
+                                        <ScrollView
+                                            showsVerticalScrollIndicator={false}
+                                            nestedScrollEnabled={true}
+                                            contentContainerStyle={{ flexGrow: 1 }}
+                                        >
+                                            {locationRequests.map((item, index) => {
+                                                const senderUid = item.fromUid || item.senderUid || item.sender_id;
+                                                const senderObj = participantsList.find(p => p.id === senderUid);
+                                                const senderName = senderObj?.name || item.name || 'Participant';
+
+                                                return (
+                                                    <View key={item.id}>
+                                                        <View style={styles.notificationItem}>
+                                                            <View style={styles.notificationContent}>
+                                                                <Text style={styles.notifName}>
+                                                                    {senderName} <Text style={styles.notifMsg}>{item.message || 'asked for your location'}</Text>
+                                                                </Text>
+                                                            </View>
+
+                                                            <View style={styles.notificationActions}>
+                                                                <TouchableOpacity
+                                                                    style={[
+                                                                        styles.acceptButton,
+                                                                        item.status === 'accepted' && { backgroundColor: '#A1A1AA' },
+                                                                        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }
+                                                                    ]}
+                                                                    onPress={() => handleAcceptNotification(item)}
+                                                                    disabled={item.status === 'accepted'}
+                                                                >
+                                                                    <Svg width="18" height="18" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginRight: 8 }}>
+                                                                        <Path d="M7.99967 14.6667C11.6816 14.6667 14.6663 11.6819 14.6663 8.00004C14.6663 4.31814 11.6816 1.33337 7.99967 1.33337C4.31778 1.33337 1.33301 4.31814 1.33301 8.00004C1.33301 11.6819 4.31778 14.6667 7.99967 14.6667Z" stroke="white" strokeWidth="1.5" />
+                                                                        <Path d="M5.66602 8.33337L6.99935 9.66671L10.3327 6.33337" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                                                    </Svg>
+
+                                                                    <Text style={styles.acceptButtonText}>
+                                                                        {item.status === 'accepted' ? 'Accepted' : 'Accept'}
+                                                                    </Text>
+                                                                </TouchableOpacity>
+
+                                                                {item.status !== 'accepted' && (
+                                                                    <TouchableOpacity
+                                                                        style={styles.declineButton}
+                                                                        onPress={() => handleDeclineNotification(item)}
+                                                                        disabled={item.status === 'declined'}
+                                                                    >
+                                                                        <Ionicons name="close" size={18} color="#FF4B4B" />
+                                                                    </TouchableOpacity>
+                                                                )}
+                                                            </View>
+                                                        </View>
+                                                        {index < locationRequests.length - 1 && <View style={styles.notificationSeparator} />}
+                                                    </View>
+                                                );
+                                            })}
+                                        </ScrollView>
+                                    );
+                                })()}
                             </View>
                         </View>
 
@@ -1874,22 +2441,26 @@ const TripOverviewScreen = () => {
                                                 style={styles.participantRow}
                                                 onPress={() => handleParticipantPress(p)}
                                             >
-                                                <View style={[
-                                                    styles.participantAvatarContainer,
-                                                    p.isSpeaking && styles.speakingAvatarBorder
-                                                ]}>
-                                                    <Image source={{ uri: p.image }} style={styles.participantAvatar} />
+                                                <View style={styles.participantAvatarContainer}>
+                                                    {p.isSpeaking && <SpeakerGlow size={56} />}
+                                                    <Image
+                                                        source={{ uri: p.image }}
+                                                        style={[
+                                                            styles.participantAvatar,
+                                                            p.isSpeaking && styles.speakingAvatarBorder
+                                                        ]}
+                                                    />
                                                 </View>
                                                 <View style={styles.participantInfo}>
                                                     <Text style={styles.participantName}>
                                                         {p.name} {p.id === auth.currentUser?.uid ? '(You)' : ''}
                                                     </Text>
                                                     <Text style={[
-                                                        styles.participantStatus,
-                                                        p.voiceStatus === 'Speaking' && styles.statusSpeaking,
-                                                        p.voiceStatus === 'Active' && styles.statusActive,
-                                                        p.voiceStatus === 'Muted' && styles.statusMuted,
-                                                    ]}>
+                                                         styles.participantStatus,
+                                                         p.voiceStatus && p.voiceStatus.includes('Speaking') && styles.statusSpeaking,
+                                                         p.voiceStatus && p.voiceStatus.includes('Active') && styles.statusActive,
+                                                         p.voiceStatus && p.voiceStatus.includes('Muted') && styles.statusMuted,
+                                                     ]}>
                                                         {p.voiceStatus ? p.voiceStatus : p.status}
                                                     </Text>
                                                 </View>
@@ -1931,6 +2502,10 @@ const TripOverviewScreen = () => {
                             <TouchableOpacity
                                 style={[styles.sectionCard, styles.halfCard, styles.alertCard, !isAdmin && { flex: 1 }]}
                                 onPress={() => {
+                                    if (isExpired) {
+                                        Alert.alert("Trip Expired", "SOS alerts cannot be triggered for an expired trip.");
+                                        return;
+                                    }
                                     if (!isAdmin) {
                                         setCountdown(10);
                                         setEmergencyModalVisible(true);
@@ -2047,6 +2622,10 @@ const TripOverviewScreen = () => {
                 mapDarkStyle={mapDarkStyle}
                 isDecrypting={isDecrypting}
                 tripId={tripId}
+                globalVisibilityConfig={globalVisibilityConfig}
+                staffData={staffData}
+                organizerId={organizerId}
+                userRole={userRole}
             />
 
             {/* Delete Confirmation Modal */}
@@ -2075,6 +2654,8 @@ const TripOverviewScreen = () => {
                             text="Cancel"
                             onPress={() => setDeleteConfirmVisible(false)}
                             style={{ flex: 1 }}
+                            innerStyle={{ height: 56 }}
+                            borderRadius={28}
                             innerBg="#1E2124"
                         />
                         <TouchableOpacity
@@ -2161,6 +2742,8 @@ const TripOverviewScreen = () => {
                             text="Cancel"
                             onPress={() => setDeleteModalVisible(false)}
                             style={{ flex: 1 }}
+                            innerStyle={{ height: 56 }}
+                            borderRadius={28}
                             innerBg="#1E2124"
                         />
                         <TouchableOpacity
@@ -2225,107 +2808,17 @@ const TripOverviewScreen = () => {
                             text="Cancel"
                             onPress={() => setQuickAlertVisible(false)}
                             style={{ flex: 1 }}
+                            innerStyle={{ height: 56 }}
+                            borderRadius={28}
                             innerBg="#1E2124"
                         />
                         <TouchableOpacity
                             style={[styles.confirmDeleteBtn, { backgroundColor: '#B99A4A' }]}
                             onPress={() => broadcastNotification(alertMessage, alertTitle)}
                         >
-                            <Text style={styles.confirmDeleteText}>Send All</Text>
+                            <Text style={styles.confirmDeleteText}>Send</Text>
                         </TouchableOpacity>
                     </View>
-                </View>
-            </Modal>
-
-            {/* SOS Alert Received Modal */}
-            <Modal
-                isVisible={!!(activeEmergency && (isAdmin || userRole === 'admin' || userRole === 'co-host' || userRole === 'manager'))}
-                onBackdropPress={() => {
-                    if (activeEmergency) {
-                        setDismissedSosAlerts(prev => [...prev, activeEmergency.id]);
-                        // Mark emergency alert as read in the database
-                        const myUid = auth.currentUser?.uid;
-                        if (myUid && orgId && tripId) {
-                            update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${activeEmergency.id}`), {
-                                read: true
-                            }).catch(err => console.log("Failed to mark emergency as read:", err));
-                        }
-                    }
-                }}
-                backdropOpacity={0.85}
-                style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}
-                animationIn="fadeIn"
-                animationOut="fadeOut"
-                useNativeDriver={true}
-                hideModalContentWhileAnimating={true}
-            >
-                <View style={styles.sosAlertContent}>
-                    
-
-                    {/* Red alert icon circle */}
-                    <View style={styles.sosIconCircle}>
-                        <Ionicons name="information-circle-outline" size={32} color="#FFF" />
-                    </View>
-
-                    {/* Header */}
-                    <Text style={styles.sosAlertTitle}>SOS ALERT TRIGGERED</Text>
-
-                    {/* Participant Info */}
-                    {activeEmergency && (
-                        <View style={styles.sosParticipantRow}>
-                            <Image
-                                source={{ uri: activeEmergency.senderImage || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=3387&auto=format&fit=crop' }}
-                                style={styles.sosAvatar}
-                            />
-                            <Text style={styles.sosParticipantName}>{activeEmergency.name}</Text>
-                        </View>
-                    )}
-
-                    {/* Button */}
-                    <GradientBorderButton
-                        onPress={() => {
-                            if (activeEmergency) {
-                                // 1. Determine participant details
-                                const senderUid = activeEmergency.senderUid;
-                                const senderName = activeEmergency.name;
-                                const senderImage = activeEmergency.senderImage;
-                                const pProfile = participantsList.find(p => p.id === senderUid) || {
-                                    id: senderUid,
-                                    name: senderName,
-                                    image: senderImage
-                                };
-
-                                // 2. Dismiss alert
-                                setDismissedSosAlerts(prev => [...prev, activeEmergency.id]);
-
-                                // Mark emergency alert as read in the database
-                                const myUid = auth.currentUser?.uid;
-                                if (myUid && orgId && tripId) {
-                                    update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${activeEmergency.id}`), {
-                                        read: true
-                                    }).catch(err => console.log("Failed to mark emergency as read:", err));
-                                }
-
-                                // 3. Wait for modal exit transition, then open details modal
-                                setTimeout(() => {
-                                    handleParticipantPress(pProfile);
-                                }, 400);
-                            }
-                        }}
-                        borderRadius={28}
-                        style={{ width: '100%' }}
-                        innerStyle={{ height: 56 }}
-                        innerBg="transparent"
-                    >
-                        <Text style={{
-                            color: '#FFF',
-                            fontSize: 16,
-                            fontFamily: Typography.sans.bold,
-                            fontWeight: 'bold'
-                        }}>
-                            Participant Details
-                        </Text>
-                    </GradientBorderButton>
                 </View>
             </Modal>
         </View >
@@ -2333,6 +2826,23 @@ const TripOverviewScreen = () => {
 };
 
 const styles = StyleSheet.create({
+    expiredBanner: {
+        backgroundColor: 'rgba(255, 56, 60, 0.15)',
+        borderColor: '#FF383C',
+        borderWidth: 1,
+        borderRadius: 12,
+        padding: 12,
+        marginHorizontal: 20,
+        marginBottom: 15,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    expiredBannerText: {
+        color: '#FF453A',
+        fontFamily: Typography.sans.medium,
+        fontSize: 13,
+        flex: 1,
+    },
     container: {
         flex: 1,
         backgroundColor: Colors.dark.background,
@@ -2520,6 +3030,29 @@ const styles = StyleSheet.create({
         height: 1,
         backgroundColor: 'rgba(255,255,255,0.08)',
     },
+    notificationActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    declineButton: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255, 75, 75, 0.15)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 8,
+    },
+    emptyNotificationContainer: {
+        paddingVertical: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    emptyNotificationText: {
+        color: '#8E8E93',
+        fontSize: responsiveFontSize(14),
+        fontFamily: Typography.sans.regular,
+    },
     channelHeader: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -2530,33 +3063,50 @@ const styles = StyleSheet.create({
     },
     avatarWrapper: {
         position: 'relative',
+        width: 50,
+        height: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     speakerAvatar: {
         width: 50,
         height: 50,
         borderRadius: 25,
         borderWidth: 2,
+    },
+    speakerAvatarIdle: {
         borderColor: '#B99A4A',
-        elevation: 14,
+        elevation: 8,
         shadowColor: '#B99A4A',
         shadowOffset: {
             width: 0,
             height: 0,
         },
-        shadowOpacity: 0.8,
-        shadowRadius: 10
+        shadowOpacity: 0.5,
+        shadowRadius: 6,
+    },
+    speakerAvatarSpeaking: {
+        borderColor: '#34C759',
+        elevation: 16,
+        shadowColor: '#34C759',
+        shadowOffset: {
+            width: 0,
+            height: 0,
+        },
+        shadowOpacity: 0.9,
+        shadowRadius: 10,
     },
     liveIndicator: {
         width: 12,
         height: 12,
         borderRadius: 6,
-
         backgroundColor: '#34C759',
         position: 'absolute',
-        bottom: 2,
-        right: 2,
+        bottom: 0,
+        right: 0,
         borderWidth: 2,
         borderColor: '#1E2023',
+        zIndex: 2,
     },
     channelInfo: {
         flex: 1,
@@ -2635,17 +3185,22 @@ const styles = StyleSheet.create({
         maxHeight: 210,
     },
     participantAvatarContainer: {
+        position: 'relative',
+        width: 56,
+        height: 56,
+        justifyContent: 'center',
+        alignItems: 'center',
         marginRight: 12,
-        borderRadius: 24,
-        // For border space
+        borderRadius: 28,
     },
     speakingAvatarBorder: {
         borderWidth: 2,
         borderColor: '#34C759',
-        // shadowColor: '#34C759',
-        // shadowOpacity: 0.5,
-        borderRadius: 50,
-        shadowRadius: 5,
+        shadowColor: '#34C759',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 6,
+        elevation: 8,
     },
     participantAvatar: {
         width: 56,

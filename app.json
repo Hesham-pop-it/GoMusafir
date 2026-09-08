@@ -2,7 +2,7 @@
   "expo": {
     "newArchEnabled": false,
     "name": "GoMusafir",
-    "slug": "GoMusafir",
+    "slug": "gomusafir",
     "scheme": "gomusafir",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -40,13 +40,12 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "NSLocationAlwaysUsageDescription": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
         "NSMicrophoneUsageDescription": "Allow GoMusafir to access your microphone for voice chat.",
+        "NSCameraUsageDescription": "Allow GoMusafir to access your camera to take photos and scan QR codes.",
+        "NSPhotoLibraryUsageDescription": "Allow GoMusafir to access your photos to save the QR code.",
+        "NSPhotoLibraryAddUsageDescription": "Allow GoMusafir to save photos.",
         "UIBackgroundModes": [
-          "remote-notification",
           "location",
-          "audio",
-          "voip",
           "remote-notification",
-          "location",
           "audio",
           "voip"
         ],
@@ -68,7 +67,13 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ],
       "package": "com.popit.GoMusafir",
       "intentFilters": [
@@ -98,6 +103,14 @@
       "favicon": "./assets/logo.png"
     },
     "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow GoMusafir to access your photos to save the QR code.",
+          "savePhotosPermission": "Allow GoMusafir to save photos.",
+          "isAccessMediaLocationEnabled": true
+        }
+      ],
       [
         "expo-video",
         {
@@ -156,6 +169,16 @@
       "expo-secure-store",
       "expo-audio",
       [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
+          "locationAlwaysPermission": "Allow GoMusafir to access your location to provide navigation and updates even when the app is in the background.",
+          "locationWhenInUsePermission": "Allow GoMusafir to access your location to show nearby places and provide navigation.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
         "react-native-maps",
         {
           "iosGoogleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
@@ -172,7 +195,9 @@
               "displayName": "My Widget",
               "description": "A sample home screen widget",
               "ios": {
-                "supportedFamilies": ["systemSmall", "systemMedium", "systemLarge"],
+                "supportedFamilies": [
+                  "systemMedium"
+                ],
                 "contentMarginsDisabled": true
               }
             },
@@ -187,8 +212,29 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "619ef28d-9e0f-4e5c-8b41-5f21a2a1fd65"
+        "projectId": "4a4bce63-dc10-420a-97dc-c38b674bb480",
+        "build": {
+          "experimental": {
+            "ios": {
+              "appExtensions": [
+                {
+                  "targetName": "ExpoWidgetsTarget",
+                  "bundleIdentifier": "com.popit.GoMusafir.ExpoWidgetsTarget",
+                  "entitlements": {
+                    "com.apple.security.application-groups": [
+                      "group.com.popit.GoMusafir"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "expo-navigation-bar": {
+        "style": "light"
       }
-    }
+    },
+    "owner": "pop-its-team"
   }
 }

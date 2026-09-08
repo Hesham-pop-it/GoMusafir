@@ -19,9 +19,10 @@ const GradientBorderButton = ({ text, onPress, style, innerBg = '#1A1E21', child
     const isTransparent = innerBg === 'transparent';
 
     const onLayout = (event) => {
+        if (!isTransparent) return;
         const { width, height } = event.nativeEvent.layout;
         if (width > 0 && height > 0) {
-            setLayout({ width, height });
+            setLayout(prev => (prev.width === width && prev.height === height ? prev : { width, height }));
         }
     };
 

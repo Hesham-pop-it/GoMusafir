@@ -14,48 +14,219 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { ref, onValue, get } from 'firebase/database';
 import { database, auth } from '../../config/firebase';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { navigateToNotificationTarget, extractNotificationTimestamp, formatNotificationTime } from '../../utils/notificationNavigation';
 
-const NotificationScreen = ({ navigation }) => {
+const NotificationScreen = ({ navigation, route }) => {
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        if (!auth.currentUser) return;
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
 
-        const uid = auth.currentUser.uid;
-        let unsubscribeNotifications = null;
+        const activeUnsubscribes = [];
 
         const setupListener = async () => {
             try {
-                // 1. Get current trip info
                 const userSnap = await get(ref(database, `users/${uid}`));
-                const userData = userSnap.val();
-                const tripId = userData?.current_trip;
-                const orgId = userData?.staff_org_id || userData?.joined_trips?.[tripId]?.orgId;
+                const userData = userSnap.val() || {};
 
-                if (!tripId || !orgId) {
-                    setLoading(false);
-                    return;
+                // Collect all trip/org pairs for this user
+                const tripOrgPairs = [];
+                const seenTrips = new Set();
+
+                // 1. Current trip
+                const currentTripId = route?.params?.tripId || userData.current_trip;
+                if (currentTripId) {
+                    let currentOrgId = route?.params?.orgId || userData.staff_org_id || userData.joined_trips?.[currentTripId]?.org_id || userData.joined_trips?.[currentTripId]?.orgId;
+                    if (!currentOrgId) {
+                        const orgSnap = await get(ref(database, `trips_orgs/${currentTripId}`));
+                        if (orgSnap.exists()) currentOrgId = orgSnap.val();
+                    }
+                    if (currentOrgId) {
+                        tripOrgPairs.push({ tripId: currentTripId, orgId: currentOrgId });
+                        seenTrips.add(currentTripId);
+                    }
                 }
 
-                // 2. Listen to notifications
-                const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
-                unsubscribeNotifications = onValue(notifRef, (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        const list = Object.entries(data).map(([id, val]) => ({
-                            id,
-                            ...val,
-                            title: getTitle(val.type, val.name),
-                            description: getDescription(val),
-                            seen: val.read === true,
-                        })).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-                        setNotifications(list);
-                    } else {
-                        setNotifications([]);
+                // 2. All joined trips
+                const joinedTrips = userData.joined_trips || {};
+                for (const tId of Object.keys(joinedTrips)) {
+                    if (seenTrips.has(tId)) continue;
+                    let oId = joinedTrips[tId]?.org_id || joinedTrips[tId]?.orgId;
+                    if (!oId) {
+                        const orgSnap = await get(ref(database, `trips_orgs/${tId}`));
+                        if (orgSnap.exists()) oId = orgSnap.val();
                     }
+                    if (oId) {
+                        tripOrgPairs.push({ tripId: tId, orgId: oId });
+                        seenTrips.add(tId);
+                    }
+                }
+
+                // 3. All organization trips (for Staff/Admin/Manager)
+                const staffOrgId = userData.staff_org_id;
+                if (staffOrgId) {
+                    try {
+                        const orgTripsSnap = await get(ref(database, `orgs/${staffOrgId}/trips`));
+                        if (orgTripsSnap.exists()) {
+                            const orgTrips = orgTripsSnap.val() || {};
+                            for (const tId of Object.keys(orgTrips)) {
+                                if (seenTrips.has(tId)) continue;
+                                tripOrgPairs.push({ tripId: tId, orgId: staffOrgId });
+                                seenTrips.add(tId);
+                            }
+                        }
+                    } catch (e) {
+                        console.log("Error fetching org trips for notifs:", e);
+                    }
+                }
+
+                // Fetch if current user is admin for each org in tripOrgPairs
+                const orgAdminMap = {};
+                for (const { orgId: oId } of tripOrgPairs) {
+                    if (orgAdminMap[oId] !== undefined) continue;
+                    try {
+                        const staffSnap = await get(ref(database, `orgs/${oId}/staff/${uid}`));
+                        const role = staffSnap.val();
+                        orgAdminMap[oId] = ['admin', 'co-host', 'manager'].includes(role);
+                    } catch (e) {
+                        orgAdminMap[oId] = false;
+                    }
+                }
+
+                const allNotifsMap = {};
+
+                const updateCombinedList = async () => {
+                    // Deduplicate notifications across user_global and trip channels
+                    const seenIds = new Set();
+                    const combinedRaw = [];
+
+                    for (const [source, dict] of Object.entries(allNotifsMap)) {
+                        if (!dict || typeof dict !== 'object') continue;
+                        for (const [id, val] of Object.entries(dict)) {
+                            if (!val || typeof val !== 'object') continue;
+                            if (seenIds.has(id)) continue;
+                            seenIds.add(id);
+                            combinedRaw.push([id, val, source]);
+                        }
+                    }
+
+                    if (combinedRaw.length === 0) {
+                        setNotifications([]);
+                        setLoading(false);
+                        return;
+                    }
+
+                    const list = await Promise.all(combinedRaw.map(async ([id, val, source]) => {
+                        let resolvedName = val.name;
+                        const targetUid = val.senderUid || val.sender_id || val.senderId || val.fromUid;
+                        const tId = val.tripId || (source !== 'user_global' ? source : currentTripId);
+                        const oId = val.orgId || (currentTripId ? (userData.joined_trips?.[currentTripId]?.org_id || userData.joined_trips?.[currentTripId]?.orgId || userData.staff_org_id) : null);
+
+                        if (targetUid && tId && oId) {
+                            const isCurrentUser = targetUid === uid;
+                            if (isCurrentUser) {
+                                resolvedName = 'You';
+                            } else {
+                                try {
+                                    // Fetch global visibility config for the specific trip
+                                    const globalVisSnap = await get(ref(database, `orgs/${oId}/trips/${tId}/visibility_config`));
+                                    const globalVis = globalVisSnap.val() || {};
+
+                                    // Fetch target user's personal visibility config
+                                    const userVisSnap = await get(ref(database, `users/${targetUid}/participant_visibility/${tId}`));
+                                    const userVis = userVisSnap.val() || {};
+
+                                    const targetRoleSnap = await get(ref(database, `orgs/${oId}/staff/${targetUid}`));
+                                    const targetRole = targetRoleSnap.val();
+                                    const isTargetStaff = isStaffMember(targetUid, { [targetUid]: targetRole }, null, targetRole);
+
+                                    const isViewerStaff = Boolean(orgAdminMap[oId]);
+
+                                    const profSnap = await get(ref(database, `users/${targetUid}/profile`));
+                                    const prof = profSnap.val() || {};
+
+                                    resolvedName = getParticipantDisplayName({
+                                        profile: prof,
+                                        fullName: val.name,
+                                        targetUid,
+                                        viewerUid: uid,
+                                        isViewerStaff,
+                                        isTargetStaff,
+                                        globalConfig: globalVis,
+                                        personalVisibility: userVis
+                                    });
+                                } catch (e) {
+                                    console.log("Notif page PII check error:", e);
+                                }
+                            }
+                        }
+
+                        const resolvedTimestamp = extractNotificationTimestamp(val, id);
+
+                        const itemWithResolved = {
+                            ...val,
+                            timestamp: resolvedTimestamp,
+                            name: resolvedName || val.name,
+                            tripId: tId,
+                            orgId: oId,
+                            senderUid: targetUid,
+                            isUserGlobal: source === 'user_global'
+                        };
+                        return {
+                            id,
+                            uniqueKey: `${source}_${id}`,
+                            ...itemWithResolved,
+                            title: getTitle(itemWithResolved),
+                            description: getDescription(itemWithResolved),
+                            seen: val.read === true || val.seen === true,
+                        };
+                    }));
+
+                    list.sort((a, b) => {
+                        const timeA = Number(a.timestamp) || 0;
+                        const timeB = Number(b.timestamp) || 0;
+                        if (timeB !== timeA) {
+                            return timeB - timeA;
+                        }
+                        return String(b.id || '').localeCompare(String(a.id || ''));
+                    });
+                    setNotifications(list);
                     setLoading(false);
+                };
+
+                // Listen to user-level push notifications (system, account, push alerts)
+                const userGlobalRef = ref(database, `users/${uid}/notifications`);
+                const unsubUserGlobal = onValue(userGlobalRef, (snapshot) => {
+                    if (snapshot.exists()) {
+                        allNotifsMap['user_global'] = snapshot.val();
+                    } else {
+                        delete allNotifsMap['user_global'];
+                    }
+                    updateCombinedList();
                 });
+                activeUnsubscribes.push(unsubUserGlobal);
+
+                // Listen to each trip's notifications path
+                tripOrgPairs.forEach(({ tripId: tId, orgId: oId }) => {
+                    const notifRef = ref(database, `trips_active/${oId}/${tId}/notifications/${uid}`);
+                    const unsub = onValue(notifRef, (snapshot) => {
+                        if (snapshot.exists()) {
+                            allNotifsMap[tId] = snapshot.val();
+                        } else {
+                            delete allNotifsMap[tId];
+                        }
+                        updateCombinedList();
+                    });
+                    activeUnsubscribes.push(unsub);
+                });
+
+                if (tripOrgPairs.length === 0) {
+                    setLoading(false);
+                }
+
             } catch (error) {
                 console.log("Notif setup error:", error);
                 setLoading(false);
@@ -65,30 +236,79 @@ const NotificationScreen = ({ navigation }) => {
         setupListener();
 
         return () => {
-            if (unsubscribeNotifications) unsubscribeNotifications();
+            activeUnsubscribes.forEach(unsub => unsub());
         };
-    }, []);
+    }, [route?.params?.tripId, route?.params?.orgId]);
 
-    const getTitle = (type, name) => {
-        switch (type) {
+    const getTitle = (item) => {
+        if (item.title) return item.title;
+        switch (item.type) {
             case 'location_request': return 'Location Request';
             case 'emergency': return 'HELP REQUESTED!';
             case 'trip_started': return 'Trip Started';
             case 'trip_ended': return 'Trip Ended';
-            case 'voice_started': return 'Voice Channel Active';
-            default: return 'New Update';
+            case 'voice_started': return 'Voice Chat Started';
+            case 'voice_ended': return 'Voice Chat Ended';
+            case 'voice_mute_all': return 'Organizer Muted Everyone';
+            case 'voice_unmute_all': return 'Mute All Disabled';
+            case 'voice_muted': return 'Microphone Muted';
+            case 'voice_unmuted': return 'Microphone Unmuted';
+            case 'voice_recording_started': return 'Recording Started';
+            case 'voice_recording_stopped': return 'Recording Stopped';
+            case 'voice_channel_update': return 'Voice Chat Update';
+            case 'seat_update': return 'Seat Update';
+            case 'NEW_SIGN_IN':
+            case 'new_sign_in':
+            case 'sign_in':
+            case 'new_signin':
+                return 'New Sign-In';
+            case 'alert': return 'Alert';
+            case 'broadcast': return item.name ? `Announcement from ${item.name}` : 'Announcement';
+            default: return item.name ? `Notification from ${item.name}` : 'New Update';
         }
     };
 
     const getDescription = (item) => {
+        if (item.message) {
+            if (item.type === 'emergency') {
+                return `${item.name || 'Someone'} ${item.message}`;
+            }
+            return item.message;
+        }
+        if (item.text) return item.text;
+        if (item.body) return item.body;
+        if (item.description) return item.description;
+
         switch (item.type) {
             case 'location_request': return `${item.name || 'A participant'} wants to see your live location.`;
             case 'emergency': return `${item.name || 'Someone'} needs immediate assistance!`;
             case 'trip_started': return 'The journey has officially begun. Stay safe!';
             case 'trip_ended': return 'The trip has concluded. We hope you had a great journey!';
             case 'voice_started': return `${item.name || 'Organizer'} started a voice channel.`;
-            default: return item.text || 'You have a new notification.';
+            case 'voice_ended': return 'The voice channel has ended.';
+            case 'voice_mute_all': return 'You have been muted by the organizer.';
+            case 'voice_unmute_all': return 'You can now unmute your microphone.';
+            case 'voice_muted': return 'You were muted by the organizer.';
+            case 'voice_unmuted': return 'You were unmuted by the organizer.';
+            case 'voice_recording_started': return 'This audio channel is now being recorded.';
+            case 'voice_recording_stopped': return 'The recording has ended.';
+            case 'voice_channel_update': return 'Voice chat status was updated.';
+            case 'seat_update': return 'Seats capacity or allocation was updated.';
+            case 'NEW_SIGN_IN':
+            case 'new_sign_in':
+            case 'sign_in':
+            case 'new_signin':
+                return 'We noticed a new sign-in to your GoMusāfir account. Tap to log out.';
+            default: return 'You have a new notification.';
         }
+    };
+
+    const handleNotificationPress = async (item) => {
+        // Optimistically mark as seen in local state
+        setNotifications(prev =>
+            prev.map(n => ((n.uniqueKey === item.uniqueKey || n.id === item.id) ? { ...n, seen: true, read: true } : n))
+        );
+        await navigateToNotificationTarget(item, navigation);
     };
 
     const rendernotificationItem = ({ item }) => {
@@ -98,19 +318,30 @@ const NotificationScreen = ({ navigation }) => {
         if (item.type === 'emergency') { iconName = 'alert-octagon'; iconColor = '#FF3B30'; }
         else if (item.type === 'location_request') { iconName = 'map-marker-radius'; iconColor = '#34C759'; }
         else if (item.type === 'trip_started') { iconName = 'flag-variant'; iconColor = '#B99A4A'; }
-        else if (item.type === 'voice_started') { iconName = 'microphone'; iconColor = '#5856D6'; }
+        else if (item.type === 'voice_started' || item.type === 'voice_channel_update') { iconName = 'microphone'; iconColor = '#5856D6'; }
+        else if (item.type === 'voice_ended') { iconName = 'microphone-off'; iconColor = '#942F31'; }
+        else if (item.type === 'voice_mute_all' || item.type === 'voice_muted') { iconName = 'volume-mute'; iconColor = '#FF9500'; }
+        else if (item.type === 'voice_unmute_all' || item.type === 'voice_unmuted') { iconName = 'volume-high'; iconColor = '#34C759'; }
+        else if (item.type === 'voice_recording_started' || item.type === 'voice_recording_stopped') { iconName = 'record-circle-outline'; iconColor = '#FF3B30'; }
+        else if (item.type === 'alert' || item.type === 'broadcast') { iconName = 'bullhorn-outline'; iconColor = '#D4AF37'; }
+        else if (item.type === 'seat_update') { iconName = 'car-seat'; iconColor = '#B99A4A'; }
+        else if (item.type === 'NEW_SIGN_IN' || item.type === 'new_sign_in' || item.type === 'sign_in' || item.type === 'new_signin') { iconName = 'shield-alert-outline'; iconColor = '#FF9500'; }
 
         return (
-            <TouchableOpacity style={[styles.card, !item.seen && styles.cardUnseen]}>
+            <TouchableOpacity 
+                style={[styles.card, !item.seen && styles.cardUnseen]}
+                onPress={() => handleNotificationPress(item)}
+                activeOpacity={0.7}
+            >
                 <View style={styles.iconWrapper}>
                     <MaterialCommunityIcons name={iconName} size={24} color={iconColor} />
                 </View>
                 <View style={styles.contentWrapper}>
                     <Text style={[styles.cardTitle, !item.seen && { fontWeight: 'bold' }]}>{item.title}</Text>
                     <Text style={styles.cardDescription}>{item.description}</Text>
-                    {item.timestamp && (
+                    {Boolean(item.timestamp) && (
                         <Text style={styles.timeText}>
-                            {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            {formatNotificationTime(item.timestamp)}
                         </Text>
                     )}
                 </View>
@@ -139,7 +370,7 @@ const NotificationScreen = ({ navigation }) => {
                     <FlatList
                         data={notifications}
                         renderItem={rendernotificationItem}
-                        keyExtractor={item => item.id}
+                        keyExtractor={(item, index) => item.uniqueKey || item.id || `notif-${index}`}
                         contentContainerStyle={styles.listContent}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={

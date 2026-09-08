@@ -1,19 +1,29 @@
+// LiveKit requires browser globals (Event, EventTarget, WebRTC, URL etc.)
+// that React Native doesn't have. registerGlobals() must be called first.
+import { registerGlobals } from '@livekit/react-native';
+registerGlobals();
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Text, TextInput, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreenNative from 'expo-splash-screen';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SplashScreenCustom from './src/screens/splash/SplashScreen';
-import RootNavigator from './src/navigation/RootNavigator';
+import RootNavigator, { navigationRef } from './src/navigation/RootNavigator';
 import AppRootLayout from './src/components/AppRootLayout';
+import TemplateAlertPopup from './src/components/TemplateAlertPopup';
 import { Colors } from './src/constants/Colors';
 import { auth, database } from './src/config/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { ref, set, onValue, off, get } from 'firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { handleAuthHandoffUrl } from './src/utils/authHandoff';
+import { safeSignOut } from './src/utils/authUtils';
 
-import { registerForPushNotificationsAsync } from './src/services/notificationService';
+import { registerForPushNotificationsAsync, unregisterForPushNotificationsAsync } from './src/services/notificationService';
 import { LanguageProvider } from './src/context/LanguageContext';
 
 import {
@@ -77,6 +87,17 @@ export default function App() {
       try {
         currentDeviceId = await getDeviceId();
 
+        // S15: Check if app was opened via auth-handoff deep link (cold start)
+        try {
+          const initialUrl = await Linking.getInitialURL();
+          if (initialUrl && (initialUrl.includes('auth-handoff') || initialUrl.includes('auth/handoff'))) {
+            console.log('[App] Detected initial auth-handoff URL:', initialUrl);
+            await handleAuthHandoffUrl(initialUrl);
+          }
+        } catch (handoffErr) {
+          console.warn('[App] Initial auth-handoff processing failed:', handoffErr);
+        }
+
         if (auth) {
           unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
             if (unsubscribeDevice) {
@@ -92,12 +113,43 @@ export default function App() {
               const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
               await set(deviceRef, currentDeviceId);
 
+              // Guard flag to prevent multiple simultaneous forced sign-out attempts
+              let isForceSigningOut = false;
+
               unsubscribeDevice = onValue(deviceRef, (snapshot) => {
                 const activeId = snapshot.val();
-                if (activeId && activeId !== currentDeviceId) {
-                  Alert.alert("Session Ended", "This account has been logged in on another device. You have been signed out.");
-                  signOut(auth);
+                if (activeId && activeId !== currentDeviceId && !isForceSigningOut) {
+                  isForceSigningOut = true;
+
+                  // Eagerly unsubscribe the device listener so it doesn't fire again
+                  // while the async sign-out is in progress
+                  if (unsubscribeDevice) {
+                    unsubscribeDevice();
+                    unsubscribeDevice = null;
+                  }
+
+                  Alert.alert(
+                    "Session Ended",
+                    "This account has been signed in on another device. You have been signed out.",
+                    [{ text: "OK" }],
+                    { cancelable: false }
+                  );
+
+                  // Clear any local session artifacts before signing out
+                  AsyncStorage.multiRemove(['mfa_lock']).catch(() => {});
+
+                  // Safely sign out (clears RTDB presence, stops notifications/location)
+                  safeSignOut(auth).catch(err => {
+                    console.warn("Auto sign out failed:", err);
+                    // Even if Firebase sign-out fails (e.g. offline), reset the
+                    // navigation to the Welcome screen so the UI reflects the
+                    // evicted session state.
+                    setInitialRoute("Welcome");
+                    setAppIsReady(true);
+                  });
                 }
+              }, (err) => {
+                console.log("[App] deviceRef error:", err?.message);
               });
 
               registerForPushNotificationsAsync(user);
@@ -126,13 +178,29 @@ export default function App() {
                     isJoining = false;
                   }
 
+                  let targetScreen = "Welcome";
                   if (userData.mfa_pending || mfaLock) {
-                    setInitialRoute("BusinessVerification");
+                    targetScreen = "BusinessVerification";
                   } else if (!isJoining) {
                     if (isStaff) {
-                      setInitialRoute("Home");
+                      targetScreen = "Home";
                     } else {
-                      setInitialRoute("TripOverview");
+                      targetScreen = "TripOverview";
+                    }
+                  }
+
+                  if (!appIsReady) {
+                    setInitialRoute(targetScreen);
+                  }
+
+                  // If navigation container is already mounted and user was on auth screens, smoothly transition
+                  if (navigationRef.isReady()) {
+                    const currentRoute = navigationRef.getCurrentRoute()?.name;
+                    if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "Signup") {
+                      navigationRef.reset({
+                        index: 0,
+                        routes: [{ name: targetScreen }]
+                      });
                     }
                   }
                   
@@ -144,11 +212,25 @@ export default function App() {
                   // Ensure the app doesn't hang in ready state on auth/token errors
                   setAppIsReady(true);
                 }
+              }, (err) => {
+                console.log("[App] userRef error:", err?.message);
+                setAppIsReady(true);
               });
 
             } else {
-              setInitialRoute("Welcome");
+              if (!appIsReady) {
+                setInitialRoute("Welcome");
+              }
               setAppIsReady(true);
+              if (navigationRef.isReady()) {
+                const currentRoute = navigationRef.getCurrentRoute()?.name;
+                if (currentRoute && currentRoute !== "Welcome" && currentRoute !== "Login" && currentRoute !== "BusinessLogin" && currentRoute !== "Signup") {
+                  navigationRef.reset({
+                    index: 0,
+                    routes: [{ name: "Welcome" }]
+                  });
+                }
+              }
             }
           });
         } else {
@@ -163,15 +245,53 @@ export default function App() {
     };
 
     prepare();
+
+    // S15: Runtime deep link listener (warm start while app is open)
+    const handleRuntimeDeepLink = (event) => {
+      try {
+        WebBrowser.dismissBrowser();
+      } catch (e) {}
+
+      if (event?.url && (event.url.includes('auth-handoff') || event.url.includes('auth/handoff'))) {
+        console.log('[App] Received runtime auth-handoff URL:', event.url);
+        handleAuthHandoffUrl(event.url);
+      }
+    };
+
+    const linkingSubscription = Linking.addEventListener('url', handleRuntimeDeepLink);
     
+    // Fallback safety timeout so app never hangs indefinitely on splash
+    const fallbackTimer = setTimeout(() => {
+      setAppIsReady(true);
+    }, 4000);
+
     return () => {
+        clearTimeout(fallbackTimer);
         if (unsubscribeAuth) unsubscribeAuth();
         if (unsubscribeDevice) unsubscribeDevice();
         if (unsubscribeUser) unsubscribeUser();
+        if (linkingSubscription) linkingSubscription.remove();
     };
+
   }, []);
 
-  const onLayoutRootView = useCallback(async () => {}, []);
+  useEffect(() => {
+    if (appIsReady && fontsLoaded) {
+      SplashScreenNative.hideAsync().catch((e) => {
+        console.warn('[App] Error hiding native splash screen:', e);
+      });
+    }
+  }, [appIsReady, fontsLoaded]);
+
+  const onLayoutRootView = useCallback(async () => {
+    if (appIsReady && fontsLoaded) {
+      try {
+        await SplashScreenNative.hideAsync();
+      } catch (e) {
+        console.warn('[App] Error hiding splash screen on layout:', e);
+      }
+    }
+  }, [appIsReady, fontsLoaded]);
 
   if (!appIsReady || !fontsLoaded) {
     return null;
@@ -182,13 +302,12 @@ export default function App() {
       <SafeAreaProvider>
         <View style={styles.container} onLayout={onLayoutRootView}>
           <StatusBar style="light" />
-          {showSplash ? (
-            <SplashScreenCustom onFinish={() => setShowSplash(false)} />
-          ) : (
+
             <AppRootLayout>
-              <RootNavigator key={initialRoute} initialRouteName={initialRoute} />
+              <RootNavigator initialRouteName={initialRoute} />
+              <TemplateAlertPopup />
             </AppRootLayout>
-          )}
+          
         </View>
       </SafeAreaProvider>
     </LanguageProvider>

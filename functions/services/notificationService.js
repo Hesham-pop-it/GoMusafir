@@ -26,6 +26,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
 
         if (!tokenSnap.exists()) return;
         const fcmToken = tokenSnap.val();
+        if (!fcmToken || typeof fcmToken !== 'string') return;
         const prefs = prefsSnap.val() || {};
 
         // 2. Enforce User Preferences
@@ -34,7 +35,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
             if (tripId && prefs.muted_trips && prefs.muted_trips[tripId]) return; // Per-trip mute
         }
 
-        // 3. Deduplication (10s-30s window)
+        // 3. Deduplication (10s-30s window) - Only when an explicit eventId is supplied
         if (eventId) {
             const debounceRef = db.ref(`users/${uid}/notif_debounce/${eventId}`);
             const debounceSnap = await debounceRef.get();
@@ -42,13 +43,27 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                 const lastSent = debounceSnap.val();
                 if (Date.now() - lastSent < 30000) return; // 30 second debounce
             }
-            // Fire and forget update
-            debounceRef.set(Date.now()).then(() => debounceRef.remove({ timeout: 35000 })).catch(() => {});
+            // Fire and forget update with timed removal
+            debounceRef.set(Date.now()).then(() => {
+                setTimeout(() => debounceRef.remove().catch(() => {}), 35000);
+            }).catch(() => {});
         }
 
-        // 4. Construct Advanced Payload
+        // 4. Construct Advanced Payload (All data values MUST be strings for FCM)
+        const sanitizedData = {};
+        if (data && typeof data === 'object') {
+            for (const [k, v] of Object.entries(data)) {
+                if (v !== undefined && v !== null) {
+                    sanitizedData[k] = typeof v === 'string' ? v : String(v);
+                }
+            }
+        }
+        if (androidChannelId) {
+            sanitizedData.androidChannelId = androidChannelId;
+        }
+
         const message = {
-            data: { ...data },
+            data: sanitizedData,
             token: fcmToken,
             android: {
                 priority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "high" : "normal",
@@ -63,8 +78,8 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                     aps: {
                         contentAvailable: silent ? true : undefined,
                         mutableContent: true,
-                        sound: interruptionLevel === 'critical' ? { critical: 1, name: "default", volume: 1.0 } : (silent ? undefined : "default"),
-                        "interruption-level": interruptionLevel,
+                        sound: silent ? undefined : "default",
+                        "interruption-level": interruptionLevel === 'critical' ? 'time-sensitive' : interruptionLevel,
                     },
                 },
                 headers: {
@@ -74,7 +89,31 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
         };
 
         if (!silent) {
-            message.notification = { title, body };
+            message.notification = { title: String(title || "GoMusafir Update"), body: String(body || "") };
+
+            // Save in-app notification record under users/${uid}/notifications only if not skipped
+            if (!options.skipDbSave) {
+                try {
+                    await db.ref(`users/${uid}/notifications`).push().set({
+                        title: title || "GoMusafir Update",
+                        message: body || "",
+                        type: data.type || options.type || "push",
+                        tripId: data.tripId || options.tripId || null,
+                        orgId: data.orgId || options.orgId || null,
+                        name: data.name || null,
+                        senderImage: data.senderImage || null,
+                        latitude: data.latitude || data.lat || null,
+                        longitude: data.longitude || data.lng || null,
+                        lat: data.lat || data.latitude || null,
+                        lng: data.lng || data.longitude || null,
+                        timestamp: Date.now(),
+                        read: false,
+                        senderUid: data.senderUid || data.sender_id || null
+                    });
+                } catch (dbErr) {
+                    console.error(`[NotificationService] DB save failed for ${uid}:`, dbErr.message);
+                }
+            }
         }
 
         // 5. Send message

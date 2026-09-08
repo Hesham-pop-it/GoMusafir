@@ -45,10 +45,11 @@ const JourneyTeamScreen = () => {
 
     React.useEffect(() => {
         const currentUser = auth.currentUser;
-        if (!currentUser) return;
+        if (!currentUser?.uid) return;
+        const myUid = currentUser.uid;
 
         // 1. Get orgId
-        const orgRef = ref(database, `users/${currentUser.uid}/staff_org_id`);
+        const orgRef = ref(database, `users/${myUid}/staff_org_id`);
         const unsubscribeUser = onValue(orgRef, (snap) => {
             const orgId = snap.val();
             if (!orgId) {
@@ -68,7 +69,7 @@ const JourneyTeamScreen = () => {
                 const staffList = staffSnap.val(); // { uid: "manager", uid2: "co-host" }
                 
                 // Track current user's role
-                const myRole = staffList[currentUser.uid] || 'none';
+                const myRole = staffList[myUid] || 'none';
                 setUserRole(myRole);
 
                 // 3. Fetch user details for each staff member safely

@@ -225,15 +225,49 @@ const FlyingGreetings = () => {
     );
 };
 
+const safePlay = (p) => {
+    try {
+        if (p && typeof p.play === 'function') {
+            p.play();
+        }
+    } catch (e) {
+        // Shared object might be deallocated during navigation/unmount
+    }
+};
+
+const safePause = (p) => {
+    try {
+        if (p && typeof p.pause === 'function') {
+            p.pause();
+        }
+    } catch (e) {
+        // Shared object might be deallocated during navigation/unmount
+    }
+};
+
+const safeReplay = (p) => {
+    try {
+        if (p && typeof p.replay === 'function') {
+            p.replay();
+        }
+    } catch (e) {
+        // Shared object might be deallocated during navigation/unmount
+    }
+};
+
 const WelcomeScreen = ({ navigation }) => {
-    const player = useVideoPlayer(require('../../../assets/Login_Animation_1080p.mp4'), (player) => {
-        player.muted = true;
-        player.loop = true;
-        player.audioMixingMode = 'mixWithOthers';
-        player.play();
+    const isMountedRef = React.useRef(true);
+    const player = useVideoPlayer(require('../../../assets/Login_Animation_1080p.mp4'), (p) => {
+        try {
+            p.muted = true;
+            p.loop = true;
+            p.audioMixingMode = 'mixWithOthers';
+            safePlay(p);
+        } catch (e) {}
     });
 
     React.useEffect(() => {
+        isMountedRef.current = true;
         // Configure audio mode to mix with other apps so background music doesn't stop
         const configureAudio = async () => {
             try {
@@ -243,28 +277,35 @@ const WelcomeScreen = ({ navigation }) => {
                     shouldPlayInBackground: false,
                     allowsRecording: false,
                 });
-
             } catch (error) {
                 console.log("Error configuring audio mode:", error);
             }
         };
         configureAudio();
+
+        return () => {
+            isMountedRef.current = false;
+            safePause(player);
+        };
     }, []);
 
     const isFocused = useIsFocused();
 
     React.useEffect(() => {
+        if (!isMountedRef.current) return;
+
         if (isFocused) {
-            player.play();
+            safePlay(player);
         } else {
-            player.pause();
+            safePause(player);
         }
 
         const subscription = AppState.addEventListener('change', (nextAppState) => {
+            if (!isMountedRef.current) return;
             if (nextAppState === 'active' && isFocused) {
-                player.play();
+                safePlay(player);
             } else {
-                player.pause();
+                safePause(player);
             }
         });
 
@@ -274,9 +315,11 @@ const WelcomeScreen = ({ navigation }) => {
     }, [isFocused, player]);
 
     useEventListener(player, 'playToEnd', () => {
-        player.replay();
-        player.play();
+        if (!isMountedRef.current) return;
+        safeReplay(player);
+        safePlay(player);
     });
+
 
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
@@ -335,16 +378,16 @@ const WelcomeScreen = ({ navigation }) => {
                         <TouchableOpacity
                             style={[styles.button, styles.secondaryButton]}
                             onPress={async () => {
-                                player.pause();
+                                safePause(player);
                                 await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', {
-                                    presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-                                    
+                                    presentationStyle: WebBrowser.WebBrowserPresentationStyle.CURRENT_CONTEXT,
                                 });
-                                if (isFocused) {
-                                    player.play();
+                                if (isMountedRef.current && isFocused) {
+                                    safePlay(player);
                                 }
                             }} // TODO: Replace with dynamic config for prod vs staging
                         >
+
                             <Text style={styles.secondaryButtonText}>Create a Business Account</Text>
                         </TouchableOpacity>
 

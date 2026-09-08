@@ -13,6 +13,22 @@
            "profile": {
               ".read": "auth.uid !== null", 
               ".write": "$uid === auth.uid"
+           },
+           "photo_url": {
+              ".read": "auth.uid !== null",
+              ".write": "$uid === auth.uid"
+           },
+           "photo": {
+              ".read": "auth.uid !== null",
+              ".write": "$uid === auth.uid"
+           },
+           "image": {
+              ".read": "auth.uid !== null",
+              ".write": "$uid === auth.uid"
+           },
+           "profile_photo": {
+              ".read": "auth.uid !== null",
+              ".write": "$uid === auth.uid"
            }
         }
     },
@@ -29,6 +45,14 @@
                  }
               }
            },
+           "dashboard_stats": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
+              ".write": "false"
+           },
+           "checkout_sessions": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
+              ".write": "false"
+           },
            "staff": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId) || (root.child('trips_orgs').child(root.child('users').child(auth.uid).child('current_trip').val()).val() == $orgId)",
               ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host'"
@@ -43,6 +67,10 @@
            "payments": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
               ".indexOn": ["stripeSessionId"]
+           },
+           "prepaid_seats": {
+              ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
+              ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host'"
            }
         }
     },
@@ -95,12 +123,28 @@
                     }
                  }
               },
-              "voice_channel": {
-                  ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())",
-                  ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() )",
-                  "activeSpeaker": {
-                      ".write": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
-                  }
+               "voice_channel": {
+                   ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
+                   ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId )",
+                   "activeSpeaker": {
+                       ".write": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+                   },
+                   "presence": {
+                       ".read": "auth != null",
+                       ".write": "auth != null"
+                   },
+                   "app_presence": {
+                       ".read": "auth != null",
+                       ".write": "auth != null"
+                   },
+                   "active_hosts": {
+                       ".read": "auth != null",
+                       ".write": "auth != null"
+                   }
+                },
+               "voice_presence": {
+                   ".read": "auth != null",
+                   ".write": "auth != null"
                },
                 "pinned_location": {
                    ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
@@ -124,6 +168,12 @@
     "system_logs": {
         ".read": false,
         ".write": false
+    },
+    "account_deletion_requests": {
+      "$request_id": {
+        ".read": false,
+        ".write": "!data.exists() && newData.exists() && newData.hasChildren(['name', 'email', 'timestamp'])"
+      }
     }
   }
 }

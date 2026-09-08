@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator, Animated, PanResponder } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator, Animated, PanResponder, Platform, Linking } from 'react-native';
 import Modal from '../CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -8,6 +8,8 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
 import { useNavigation } from '@react-navigation/native';
+import { auth } from '../../config/firebase';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width } = Dimensions.get('window');
 
@@ -20,7 +22,11 @@ const ParticipantDetailModal = ({
     onDelete,
     mapDarkStyle,
     isDecrypting,
-    tripId
+    tripId,
+    globalVisibilityConfig = {},
+    staffData = {},
+    organizerId = null,
+    userRole = null
 }) => {
     const navigation = useNavigation();
     const [scrollOffset, setScrollOffset] = useState(0);
@@ -84,14 +90,183 @@ const ParticipantDetailModal = ({
     ).current;
 
     const { t } = useLanguage();
-    const participantLocation = participant ? liveLocations[participant.id] : null;
 
-    const latitude = participantLocation?.lat || 21.4225;
-    const longitude = participantLocation?.lng || 39.8262;
+    const isCurrentUser = Boolean(participant?.id && auth.currentUser?.uid && participant.id === auth.currentUser?.uid);
+    const isViewerStaff = Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+    const isTargetStaff = Boolean(isStaffMember(participant?.id, staffData, organizerId, participant?.status));
+    const personalVis = participant?.rawVisibility || participant?.visibility || {};
 
-    const nameParts = participant?.name ? participant.name.trim().split(/\s+/) : ['Guest'];
-    const firstName = participant?.firstName || nameParts[0] || 'Guest';
-    const lastName = participant?.lastName || (nameParts.length > 1 ? nameParts.slice(1).join(' ') : '');
+    const displayAvatar = getParticipantDisplayPhoto({
+        profile: participant?.rawProfile || participant?.profile || {},
+        rawPhoto: participant?.image || participant?.photo || participant?.photoURL || participant?.rawProfile?.photoURL || participant?.rawProfile?.photo_url,
+        displayName: participant?.name || 'Participant',
+        targetUid: participant?.id,
+        viewerUid: auth.currentUser?.uid,
+        isViewerStaff,
+        isTargetStaff,
+        globalConfig: globalVisibilityConfig,
+        personalVisibility: personalVis
+    });
+
+    const canSeeFirstName = isCurrentUser || (participant?.canSeeFirstName !== undefined
+        ? participant.canSeeFirstName
+        : checkPIIVisibility({
+            field: 'name',
+            targetUid: participant?.id,
+            viewerUid: auth.currentUser?.uid,
+            isViewerStaff,
+            isTargetStaff,
+            globalConfig: globalVisibilityConfig,
+            personalVisibility: personalVis
+        }));
+
+    const canSeeLastName = isCurrentUser || (participant?.canSeeLastName !== undefined
+        ? participant.canSeeLastName
+        : checkPIIVisibility({
+            field: 'lastname',
+            targetUid: participant?.id,
+            viewerUid: auth.currentUser?.uid,
+            isViewerStaff,
+            isTargetStaff,
+            globalConfig: globalVisibilityConfig,
+            personalVisibility: personalVis
+        }));
+
+    const canSeeEmail = isCurrentUser || (participant?.canSeeEmail !== undefined
+        ? participant.canSeeEmail
+        : checkPIIVisibility({
+            field: 'email',
+            targetUid: participant?.id,
+            viewerUid: auth.currentUser?.uid,
+            isViewerStaff,
+            isTargetStaff,
+            globalConfig: globalVisibilityConfig,
+            personalVisibility: personalVis
+        }));
+
+    const canSeePhone = isCurrentUser || (participant?.canSeePhone !== undefined
+        ? participant.canSeePhone
+        : checkPIIVisibility({
+            field: 'phone',
+            targetUid: participant?.id,
+            viewerUid: auth.currentUser?.uid,
+            isViewerStaff,
+            isTargetStaff,
+            globalConfig: globalVisibilityConfig,
+            personalVisibility: personalVis
+        }));
+
+    const canSeeLocation = isCurrentUser || (participant?.canSeeLocation === true) || checkPIIVisibility({
+        field: 'location',
+        targetUid: participant?.id,
+        viewerUid: auth.currentUser?.uid,
+        isViewerStaff,
+        isTargetStaff,
+        globalConfig: globalVisibilityConfig,
+        personalVisibility: personalVis
+    });
+
+    const liveLoc = (participant?.id && liveLocations) ? liveLocations[participant.id] : null;
+
+    const parseCoord = (val) => {
+        if (typeof val === 'number' && !isNaN(val)) return val;
+        if (typeof val === 'string' && val.trim() !== '') {
+            const num = parseFloat(val);
+            return isNaN(num) ? null : num;
+        }
+        return null;
+    };
+
+    const rawLat = parseCoord(liveLoc?.lat)
+        ?? parseCoord(liveLoc?.latitude)
+        ?? parseCoord(participant?.latitude)
+        ?? parseCoord(participant?.lat)
+        ?? parseCoord(participant?.location?.latitude)
+        ?? parseCoord(participant?.location?.lat);
+
+    const rawLng = parseCoord(liveLoc?.lng)
+        ?? parseCoord(liveLoc?.longitude)
+        ?? parseCoord(participant?.longitude)
+        ?? parseCoord(participant?.lng)
+        ?? parseCoord(participant?.location?.longitude)
+        ?? parseCoord(participant?.location?.lng);
+
+    const hasValidLocation = Boolean(
+        (canSeeLocation || isViewerStaff || isCurrentUser) &&
+        rawLat !== null &&
+        rawLng !== null &&
+        typeof rawLat === 'number' &&
+        typeof rawLng === 'number' &&
+        !isNaN(rawLat) &&
+        !isNaN(rawLng) &&
+        (rawLat !== 0 || rawLng !== 0)
+    );
+
+    const latitude = rawLat;
+    const longitude = rawLng;
+
+    const mapRef = useRef(null);
+
+    useEffect(() => {
+        if (hasValidLocation && mapRef.current && typeof latitude === 'number' && typeof longitude === 'number') {
+            mapRef.current.animateToRegion({
+                latitude,
+                longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+            }, 500);
+        }
+    }, [latitude, longitude, hasValidLocation]);
+
+    const handleOpenNavigation = () => {
+        if (!hasValidLocation) return;
+        const url = Platform.select({
+            ios: `maps:0,0?q=${latitude},${longitude}`,
+            android: `geo:0,0?q=${latitude},${longitude}(${encodeURIComponent(participant.name || 'Participant')})`
+        });
+        const googleUrl = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}`;
+        Linking.canOpenURL(url).then(supported => {
+            if (supported) {
+                Linking.openURL(url);
+            } else {
+                Linking.openURL(googleUrl);
+            }
+        }).catch(() => {
+            Linking.openURL(googleUrl);
+        });
+    };
+
+    // Extract unmasked profile info
+    const rawProfile = participant?.rawProfile || participant?.profile || {};
+    let extractedFirst = rawProfile.firstName || rawProfile.first_name || '';
+    let extractedLast = rawProfile.lastName || rawProfile.last_name || '';
+
+    const fullNameCandidate = participant?.rawFullName || participant?.fullName || participant?.full_name || rawProfile.fullName || rawProfile.full_name;
+    if ((!extractedFirst || !extractedLast) && fullNameCandidate) {
+        const parts = String(fullNameCandidate).trim().split(/\s+/);
+        if (!extractedFirst) extractedFirst = parts[0] || '';
+        if (!extractedLast) extractedLast = parts.slice(1).join(' ') || '';
+    }
+
+    if (!extractedFirst && participant?.firstName && participant.firstName !== '***') {
+        extractedFirst = participant.firstName;
+    }
+    if (!extractedLast && participant?.lastName && participant.lastName !== '***') {
+        extractedLast = participant.lastName;
+    }
+
+    if ((!extractedFirst || !extractedLast) && participant?.name && !['Participant', 'Guest', 'Staff Member', 'You'].includes(participant.name.trim())) {
+        const nameParts = participant.name.trim().split(/\s+/);
+        if (!extractedFirst) extractedFirst = nameParts[0] || '';
+        if (!extractedLast) extractedLast = nameParts.slice(1).join(' ') || '';
+    }
+
+    const firstName = canSeeFirstName ? (extractedFirst || 'Guest') : '***';
+    const lastName = canSeeLastName ? (extractedLast || '') : '***';
+    const rawEmail = (rawProfile.email && rawProfile.email !== '***' ? rawProfile.email : '') || (participant?.email && participant.email !== '***' ? participant.email : '') || '';
+    const rawPhone = (rawProfile.phone && rawProfile.phone !== '***' ? rawProfile.phone : '') || (participant?.phone && participant.phone !== '***' ? participant.phone : '') || '';
+    const displayEmail = canSeeEmail ? (rawEmail || 'N/A') : '***';
+    const displayPhone = canSeePhone ? (rawPhone || 'N/A') : '***';
 
     if (!participant) return null;
 
@@ -135,37 +310,49 @@ const ParticipantDetailModal = ({
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.detailHeader}>
-                        <Image source={{ uri: participant.image }} style={styles.detailAvatar} />
+                        <Image source={{ uri: displayAvatar }} style={styles.detailAvatar} />
                         <Text style={styles.detailName}>{participant.name}</Text>
                     </View>
 
-                    {/* Real Map View */}
-                    <View style={styles.mapPlaceholder}>
-                        <MapView
-                            style={StyleSheet.absoluteFill}
-                            initialRegion={{
-                                latitude,
-                                longitude,
-                                latitudeDelta: 0.01,
-                                longitudeDelta: 0.01,
-                            }}
-                            region={{
-                                latitude,
-                                longitude,
-                                latitudeDelta: 0.01,
-                                longitudeDelta: 0.01,
-                            }}
-                            customMapStyle={mapDarkStyle}
-                        >
-                            <Marker
-                                coordinate={{ latitude, longitude }}
+                    {/* Real Map View - Only rendered when location is permitted and active */}
+                    {hasValidLocation && (
+                        <View style={styles.mapPlaceholder}>
+                            <MapView
+                                ref={mapRef}
+                                style={StyleSheet.absoluteFill}
+                                initialRegion={{
+                                    latitude,
+                                    longitude,
+                                    latitudeDelta: 0.01,
+                                    longitudeDelta: 0.01,
+                                }}
+                                region={{
+                                    latitude,
+                                    longitude,
+                                    latitudeDelta: 0.01,
+                                    longitudeDelta: 0.01,
+                                }}
+                                customMapStyle={mapDarkStyle}
                             >
-                                <View style={styles.mapPinContainer}>
-                                    <Image source={{ uri: participant.image }} style={styles.mapPinAvatar} />
-                                </View>
-                            </Marker>
-                        </MapView>
-                    </View>
+                                <Marker
+                                    coordinate={{ latitude, longitude }}
+                                    anchor={{ x: 0.5, y: 0.5 }}
+                                >
+                                    <View style={styles.mapPinContainer}>
+                                        <Image source={{ uri: displayAvatar }} style={styles.mapPinAvatar} />
+                                    </View>
+                                </Marker>
+                            </MapView>
+                            <TouchableOpacity
+                                style={styles.mapNavButton}
+                                onPress={handleOpenNavigation}
+                                activeOpacity={0.8}
+                            >
+                                <Ionicons name="navigate-outline" size={14} color="#FFF" style={{ marginRight: 4 }} />
+                                <Text style={styles.mapNavButtonText}>Directions</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
 
                     {/* Name Fields */}
                     <View style={styles.row}>
@@ -189,7 +376,7 @@ const ParticipantDetailModal = ({
                         {isDecrypting && (!participant.email || participant.email === 'N/A' || participant.email.includes('*') || !participant.email.includes('@')) ? (
                             <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                         ) : (
-                            <Text style={styles.inputText}>{participant.email || 'N/A'}</Text>
+                            <Text style={styles.inputText}>{displayEmail}</Text>
                         )}
                     </View>
 
@@ -199,7 +386,7 @@ const ParticipantDetailModal = ({
                         {isDecrypting && (!participant.phone || participant.phone === 'N/A' || participant.phone.includes('*')) ? (
                             <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                         ) : (
-                            <Text style={styles.inputText}>{participant.phone || 'N/A'}</Text>
+                            <Text style={styles.inputText}>{displayPhone}</Text>
                         )}
                     </View>
 
@@ -337,6 +524,24 @@ const styles = StyleSheet.create({
     mapPinAvatar: {
         width: '100%',
         height: '100%',
+    },
+    mapNavButton: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+        backgroundColor: 'rgba(30, 33, 36, 0.85)',
+        borderColor: '#B99A4A',
+        borderWidth: 1,
+        borderRadius: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    mapNavButtonText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.bold,
     },
     deleteButtonPill: {
         width: '100%',

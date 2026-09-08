@@ -11,6 +11,7 @@ import {
     Platform,
     ScrollView,
     Dimensions,
+    ActivityIndicator,
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +28,7 @@ import { ref, onValue, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { useLanguage } from '../../context/LanguageContext';
 import ChatEncryption from '../../utils/chatEncryption';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width } = Dimensions.get('window');
 
@@ -258,11 +260,32 @@ const ParticipantsScreen = ({ navigation }) => {
     const [sortOption, setSortOption] = useState('A-Z');
 
     const { t, isRTL, language, changeLanguage } = useLanguage();
+    const [isLoading, setIsLoading] = useState(true);
     const [allParticipants, setAllParticipants] = useState([]);
     const [filteredData, setFilteredData] = useState([]);
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [isDetailsVisible, setIsDetailsVisible] = useState(false);
     const [isDecrypting, setIsDecrypting] = useState(false);
+
+    const renderEmptyComponent = () => {
+        if (isLoading) {
+            return (
+                <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="large" color="#B99A4A" />
+                </View>
+            );
+        }
+
+        return (
+            <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                    <Feather name="users" size={32} color="#B99A4A" />
+                </View>
+                <Text style={styles.emptyTitle}>{t('no_participants_title')}</Text>
+                <Text style={styles.emptySubtitle}>{t('no_participants_subtitle')}</Text>
+            </View>
+        );
+    };
 
     const handleParticipantPress = async (participant) => {
         setIsDecrypting(true);
@@ -311,7 +334,10 @@ const ParticipantsScreen = ({ navigation }) => {
     // 1. Fetch Live Data from Firebase
     useEffect(() => {
         const user = auth.currentUser;
-        if (!user) return;
+        if (!user) {
+            setIsLoading(false);
+            return;
+        }
 
         const fetchAllParticipants = async () => {
             try {
@@ -328,6 +354,7 @@ const ParticipantsScreen = ({ navigation }) => {
                 }
 
                 if (!orgId) {
+                    setIsLoading(false);
                     return;
                 }
 
@@ -377,20 +404,94 @@ const ParticipantsScreen = ({ navigation }) => {
                                                         const historyTrip = profileData.joined_trips[historyTripId];
                                                         const title = tripsData[historyTripId]?.title || "Past Trip";
                                                         tripHistory.push({
-                                                            name: title,
-                                                            status: historyTrip.status || "Joined"
+                                                             name: title,
+                                                             status: historyTrip.status || "Joined"
                                                         });
                                                     }
                                                 }
 
+                                                const globalVisConfig = tripsData[tripId]?.visibility_config || {};
+                                                const userVis = profileData.participant_visibility?.[tripId] || {};
+                                                const isViewerStaff = true; // In the organization portal, viewers are org staff
+                                                const isTargetStaff = Boolean(staffList[pUid]);
+
+                                                const displayName = getParticipantDisplayName({
+                                                    profile,
+                                                    fullName: profileData.full_name || profileData.name,
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
+                                                const displayPhoto = getParticipantDisplayPhoto({
+                                                    profile,
+                                                    rawPhoto: profileImage,
+                                                    displayName,
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
+                                                const canSeeFirstName = checkPIIVisibility({
+                                                    field: 'name',
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
+                                                const canSeeLastName = checkPIIVisibility({
+                                                    field: 'lastname',
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
+                                                const canSeeEmail = checkPIIVisibility({
+                                                    field: 'email',
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
+                                                const canSeePhone = checkPIIVisibility({
+                                                    field: 'phone',
+                                                    targetUid: pUid,
+                                                    viewerUid: user.uid,
+                                                    isViewerStaff,
+                                                    isTargetStaff,
+                                                    globalConfig: globalVisConfig,
+                                                    personalVisibility: userVis
+                                                });
+
                                                 participantsMap.set(pUid, {
                                                     id: pUid,
                                                     tripId: tripId,
-                                                    name: profileData.full_name || profileData.name || (profile.firstName ? `${profile.firstName} ${profile.lastName || ""}`.trim() : "Guest"),
+                                                    name: displayName,
                                                     trip: tripName,
-                                                    image: profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(profileData.full_name || "Guest")}&background=B99A4A&color=fff`,
-                                                    email: profile.email || profileData.email || profileData.p_email || 'N/A',
-                                                    phone: profile.phone || profileData.p_phone || profileData.phone || profileData.phone_number || 'N/A',
+                                                    image: displayPhoto,
+                                                    email: canSeeEmail ? (profile.email || profileData.email || profileData.p_email || 'N/A') : '***',
+                                                    phone: canSeePhone ? (profile.phone || profileData.p_phone || profileData.phone || profileData.phone_number || 'N/A') : '***',
+                                                    firstName: canSeeFirstName ? (profile.firstName || '') : '***',
+                                                    lastName: canSeeLastName ? (profile.lastName || '') : '***',
+                                                    canSeeFirstName,
+                                                    canSeeLastName,
+                                                    canSeeEmail,
+                                                    canSeePhone,
                                                     tripHistory: tripHistory,
                                                     likes: profileData.likes || 0
                                                 });
@@ -404,13 +505,18 @@ const ParticipantsScreen = ({ navigation }) => {
                             }
                         }
                         setAllParticipants(Array.from(participantsMap.values()));
+                        setIsLoading(false);
                     } else {
+                        setAllParticipants([]);
+                        setIsLoading(false);
                     }
                 }, (error) => {
+                    setIsLoading(false);
                 });
 
                 return () => unsubscribeTrips();
             } catch (err) {
+                setIsLoading(false);
             }
         };
 
@@ -583,8 +689,13 @@ const ParticipantsScreen = ({ navigation }) => {
                         data={filteredData}
                         renderItem={renderParticipantItem}
                         keyExtractor={item => item.id}
-                        contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }]}
+                        contentContainerStyle={[
+                            styles.listContent,
+                            { paddingBottom: 100 + insets.bottom },
+                            filteredData.length === 0 && { flexGrow: 1, justifyContent: 'center' }
+                        ]}
                         showsVerticalScrollIndicator={false}
+                        ListEmptyComponent={renderEmptyComponent}
                     />
                 </View>
 
@@ -909,6 +1020,43 @@ const styles = StyleSheet.create({
         maxHeight: 400,
         paddingVertical: 8,
         elevation: 5,
+    },
+    emptyContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 30,
+        paddingBottom: 60,
+    },
+    emptyIconCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#1E2328',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#B99A4A',
+    },
+    emptyTitle: {
+        fontSize: 20,
+        color: '#FFF',
+        fontFamily: Typography.serif.regular,
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    emptySubtitle: {
+        fontSize: 14,
+        color: '#A1A1AA',
+        fontFamily: Typography.sans.regular,
+        textAlign: 'center',
+        lineHeight: 20,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
 });
 

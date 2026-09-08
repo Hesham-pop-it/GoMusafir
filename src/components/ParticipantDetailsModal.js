@@ -42,10 +42,42 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
 
     if (!participant) return null;
 
-    // Split name for display
-    const nameParts = participant.name ? participant.name.trim().split(/\s+/) : ['Guest'];
-    const firstName = nameParts[0] || 'Guest';
-    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+    const canSeeFirstName = participant.canSeeFirstName !== false;
+    const canSeeLastName = participant.canSeeLastName !== false;
+    const canSeeEmail = participant.canSeeEmail !== false;
+    const canSeePhone = participant.canSeePhone !== false;
+
+    // Extract unmasked profile info
+    const rawProfile = participant?.rawProfile || participant?.profile || {};
+    let extractedFirst = rawProfile.firstName || rawProfile.first_name || '';
+    let extractedLast = rawProfile.lastName || rawProfile.last_name || '';
+
+    const fullNameCandidate = participant?.rawFullName || participant?.fullName || participant?.full_name || rawProfile.fullName || rawProfile.full_name;
+    if ((!extractedFirst || !extractedLast) && fullNameCandidate) {
+        const parts = String(fullNameCandidate).trim().split(/\s+/);
+        if (!extractedFirst) extractedFirst = parts[0] || '';
+        if (!extractedLast) extractedLast = parts.slice(1).join(' ') || '';
+    }
+
+    if (!extractedFirst && participant?.firstName && participant.firstName !== '***') {
+        extractedFirst = participant.firstName;
+    }
+    if (!extractedLast && participant?.lastName && participant.lastName !== '***') {
+        extractedLast = participant.lastName;
+    }
+
+    if ((!extractedFirst || !extractedLast) && participant?.name && !['Participant', 'Guest', 'Staff Member', 'You'].includes(participant.name.trim())) {
+        const nameParts = participant.name.trim().split(/\s+/);
+        if (!extractedFirst) extractedFirst = nameParts[0] || '';
+        if (!extractedLast) extractedLast = nameParts.slice(1).join(' ') || '';
+    }
+
+    const firstName = canSeeFirstName ? (extractedFirst || 'Guest') : '***';
+    const lastName = canSeeLastName ? (extractedLast || '') : '***';
+    const rawEmail = (rawProfile.email && rawProfile.email !== '***' ? rawProfile.email : '') || (participant?.email && participant.email !== '***' ? participant.email : '') || '';
+    const rawPhone = (rawProfile.phone && rawProfile.phone !== '***' ? rawProfile.phone : '') || (participant?.phone && participant.phone !== '***' ? participant.phone : '') || '';
+    const displayEmail = canSeeEmail ? (rawEmail || 'N/A') : '***';
+    const displayPhone = canSeePhone ? (rawPhone || 'N/A') : '***';
 
     const { height: screenHeight } = Dimensions.get('window');
 
@@ -157,7 +189,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                             {isDecrypting && (!participant.email || participant.email === 'N/A' || participant.email.includes('*') || !participant.email.includes('@')) ? (
                                 <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                             ) : (
-                                <Text style={styles.inputText}>{participant.email || 'N/A'}</Text>
+                                <Text style={styles.inputText}>{displayEmail}</Text>
                             )}
                         </View>
 
@@ -167,7 +199,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                             {isDecrypting && (!participant.phone || participant.phone === 'N/A' || participant.phone.includes('*')) ? (
                                 <ActivityIndicator size="small" color="#B99A4A" style={{ alignSelf: 'flex-start' }} />
                             ) : (
-                                <Text style={styles.inputText}>{participant.phone || 'N/A'}</Text>
+                                <Text style={styles.inputText}>{displayPhone}</Text>
                             )}
                         </View>
 

@@ -18,11 +18,23 @@ import { Typography } from '../../constants/Typography';
 import { auth, functions, database } from '../../config/firebase';
 import { signOut, deleteUser } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
-import { ref, onValue } from 'firebase/database';
+import { ref, onValue, set } from 'firebase/database';
 import { Alert } from 'react-native';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
+import { safeSignOut } from '../../utils/authUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MyLiveActivity } from '../../components/Widget';
+
+const LinkItem = ({ label, onPress, showArrow = true }) => (
+    <TouchableOpacity style={styles.linkItem} onPress={onPress}>
+        <Text style={styles.linkText}>{label}</Text>
+        {showArrow && <Ionicons name="chevron-forward" size={20} color="#A1A1AA" />}
+    </TouchableOpacity>
+);
+
+const SectionHeader = ({ title }) => (
+    <Text style={styles.sectionHeader}>{title}</Text>
+);
 
 const SettingsScreen = ({ navigation }) => {
     const [isWidgetEnabled, setIsWidgetEnabled] = useState(true);
@@ -95,12 +107,12 @@ const SettingsScreen = ({ navigation }) => {
                 const leaveOrg = httpsCallable(functions, 'leaveOrganization');
                 await leaveOrg();
                 setDeleteVisible(false);
-                await signOut(auth);
+                await safeSignOut(auth);
             } else {
                 const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
                 await deleteMyAccount();
                 setDeleteVisible(false);
-                await signOut(auth);
+                await safeSignOut(auth);
             }
         } catch (error) {
             setDeleteVisible(false);
@@ -117,17 +129,6 @@ const SettingsScreen = ({ navigation }) => {
             setIsDeleting(false);
         }
     };
-
-    const LinkItem = ({ label, onPress, showArrow = true }) => (
-        <TouchableOpacity style={styles.linkItem} onPress={onPress}>
-            <Text style={styles.linkText}>{label}</Text>
-            {showArrow && <Ionicons name="chevron-forward" size={20} color="#A1A1AA" />}
-        </TouchableOpacity>
-    );
-
-    const SectionHeader = ({ title }) => (
-        <Text style={styles.sectionHeader}>{title}</Text>
-    );
 
 
 
@@ -242,15 +243,24 @@ const SettingsScreen = ({ navigation }) => {
                         style={[styles.modalConfirmButton, isLoggingOut && { opacity: 0.7 }]}
                         onPress={async () => {
                             setIsLoggingOut(true);
+                            
+                            // 1. Clear active device ID
                             try {
-                                // 1. Unregister notifications before signing out
-                                await unregisterForPushNotificationsAsync();
-                                
-                                // 2. Sign out
-                                await signOut(auth);
-                                // The onAuthStateChanged listener in App.js will handle redirecting to Welcome
+                                const user = auth.currentUser;
+                                if (user) {
+                                    const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
+                                    await set(deviceRef, null);
+                                }
+                            } catch (err) {
+                                console.warn("Failed to clear active device ID:", err);
+                            }
+
+                            // 2. Safe sign out (clears RTDB presence, stops location/notifications, then signs out)
+                            try {
+                                await safeSignOut(auth);
                             } catch (error) {
                                 console.warn("Error signing out:", error);
+                                Alert.alert("Error", "Failed to sign out. Please try again.");
                                 setIsLoggingOut(false);
                             }
                         }}

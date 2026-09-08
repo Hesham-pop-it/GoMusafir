@@ -102,7 +102,17 @@ export default function CompatModal({
                 ]}
                 pointerEvents="box-none"
             >
-                {children}
+                {avoidKeyboard ? (
+                    <KeyboardAvoidingView
+                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                        style={{ width: '100%' }}
+                        pointerEvents="box-none"
+                    >
+                        {children}
+                    </KeyboardAvoidingView>
+                ) : (
+                    children
+                )}
             </Animated.View>
         </View>
     );
@@ -116,17 +126,7 @@ export default function CompatModal({
             statusBarTranslucent
             {...rest}
         >
-            {avoidKeyboard ? (
-                <KeyboardAvoidingView
-                    style={StyleSheet.absoluteFill}
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    pointerEvents="box-none"
-                >
-                    {inner}
-                </KeyboardAvoidingView>
-            ) : (
-                inner
-            )}
+            {inner}
         </Modal>
     );
 }

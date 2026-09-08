@@ -12,6 +12,7 @@ const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddlewar
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
+const { deleteStripeCustomer } = require("../services/stripeService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -243,10 +244,13 @@ exports.checkUserExistence = onCall({ region: "europe-west1" }, async (request) 
     throw new HttpsError("invalid-argument", "Valid email is required.");
   }
   try {
-    await auth.getUserByEmail(email.toLowerCase());
-    return { exists: true };
+    const userRecord = await auth.getUserByEmail(email.toLowerCase());
+    const role = userRecord.customClaims?.role;
+    const staffSnap = await db.ref(`users/${userRecord.uid}/staff_org_id`).get();
+    const isStaff = !!staffSnap.val() || ['admin', 'co-host', 'manager'].includes(role);
+    return { exists: true, isStaff: !!isStaff };
   } catch (error) {
-    if (error.code === "auth/user-not-found") return { exists: false };
+    if (error.code === "auth/user-not-found") return { exists: false, isStaff: false };
     throw new HttpsError("internal", error.message);
   }
 });
@@ -299,10 +303,29 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
     }
   }
 
-  // 2. Delete from Auth (Admin SDK)
+  // 2. Delete Stripe Customer (if any)
+  let targetEmail = null;
+  try {
+    const targetUser = await auth.getUser(targetUid);
+    targetEmail = targetUser.email;
+  } catch (e) {}
+
+  let stripeCustomerId = null;
+  const userStripeSnap = await db.ref(`users/${targetUid}/stripe_customer_id`).get();
+  if (userStripeSnap.exists()) {
+    stripeCustomerId = userStripeSnap.val();
+  } else if (orgId) {
+    const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
+    if (orgStripeSnap.exists()) {
+      stripeCustomerId = orgStripeSnap.val();
+    }
+  }
+  await deleteStripeCustomer(stripeCustomerId, targetEmail, orgId);
+
+  // 3. Delete from Auth (Admin SDK)
   await auth.deleteUser(targetUid);
 
-  // 3. Delete from DB
+  // 4. Delete from DB
   await db.ref().update(updates);
 
   await writeAuditLog(orgId, {
@@ -322,6 +345,7 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
   const uid = request.auth.uid;
   const role = request.auth.token.role;
   const orgId = request.auth.token.orgId;
+  const userEmail = request.auth.token.email;
 
   // 1. If admin, mark org for deletion (soft delete)
   if (role === 'admin' && orgId) {
@@ -333,7 +357,20 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
     });
   }
 
-  // 2. Cleanup user data
+  // 2. Cleanup Stripe Customer
+  let stripeCustomerId = null;
+  const userStripeSnap = await db.ref(`users/${uid}/stripe_customer_id`).get();
+  if (userStripeSnap.exists()) {
+    stripeCustomerId = userStripeSnap.val();
+  } else if (orgId) {
+    const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
+    if (orgStripeSnap.exists()) {
+      stripeCustomerId = orgStripeSnap.val();
+    }
+  }
+  await deleteStripeCustomer(stripeCustomerId, userEmail, orgId);
+
+  // 3. Cleanup user data
   const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
   const updates = {
     [`users/${uid}`]: null,
@@ -353,9 +390,95 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
   
   await db.ref().update(updates);
 
-  // 3. Delete from Auth (Admin SDK)
+  // 4. Delete from Auth (Admin SDK)
   await auth.deleteUser(uid);
 
   return { success: true };
 });
+
+// ── Web-to-App Secure Authentication Handoff ──────────────────────────────────
+// Allows an authenticated web user (e.g. after registration) to securely hand off
+// their session to the mobile app without re-entering credentials.
+// S15: Short 5-minute TTL, single-use, cryptographically secure token.
+exports.createAuthHandoffToken = onCall({ region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+
+  const uid = request.auth.uid;
+  const token = crypto.randomBytes(32).toString("hex");
+
+  const handoffRef = db.ref(`auth_handoff_tokens/${token}`);
+  await handoffRef.set({
+    uid,
+    createdAt: admin.database.ServerValue.TIMESTAMP,
+    expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes validity
+    used: false,
+  });
+
+  return {
+    success: true,
+    token,
+    expiresIn: 300,
+  };
+});
+
+exports.exchangeAuthHandoffToken = onCall({ region: "europe-west1" }, async (request) => {
+  const { token } = request.data || {};
+
+  if (!token || typeof token !== "string" || token.length < 32 || token.length > 128) {
+    throw new HttpsError("invalid-argument", "Valid session handoff token is required.");
+  }
+
+  const tokenRef = db.ref(`auth_handoff_tokens/${token}`);
+  const snapshot = await tokenRef.get();
+
+  if (!snapshot.exists()) {
+    throw new HttpsError("not-found", "Invalid or expired session token.");
+  }
+
+  const tokenData = snapshot.val();
+  const now = Date.now();
+
+  if (tokenData.used || (tokenData.expiresAt && now > tokenData.expiresAt)) {
+    await tokenRef.remove().catch(() => {});
+    throw new HttpsError("failed-precondition", "This session token has expired or has already been used.");
+  }
+
+  // Burn immediately to ensure strict single-use security
+  await tokenRef.remove();
+
+  const uid = tokenData.uid;
+  if (!uid) {
+    throw new HttpsError("internal", "Malformed token record.");
+  }
+
+  // Verify the user exists in Firebase Auth
+  let userRecord;
+  try {
+    userRecord = await auth.getUser(uid);
+    if (!userRecord) {
+      throw new HttpsError("not-found", "User account not found.");
+    }
+  } catch (userErr) {
+    throw new HttpsError("not-found", "User account not found.");
+  }
+
+  // Clear any mfa_pending flag in database so the mobile app doesn't ask for MFA again
+  await db.ref(`users/${uid}/mfa_pending`).set(false).catch(() => {});
+
+  // Fetch the user's custom claims (which include role and orgId)
+  const existingClaims = userRecord.customClaims || {};
+
+  // Generate custom token for mobile app sign-in, preserving all existing custom claims
+  const customToken = await auth.createCustomToken(uid, {
+    ...existingClaims,
+    handoff: true,
+  });
+
+  return {
+    success: true,
+    customToken,
+  };
+});
+
 

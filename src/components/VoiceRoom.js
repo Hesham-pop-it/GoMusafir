@@ -102,7 +102,7 @@ const ParticipantTile = () => {
 // --- Sub-component: Controls Bar ---
 const ControlBar = ({ onDisconnect }) => {
   const room = useRoomContext();
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
 
   const toggleMute = async () => {
     const enabled = !isMuted;
@@ -174,7 +174,7 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
         await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
-          shouldPlayInBackground: true,
+          shouldPlayInBackground: false,
           shouldRouteThroughEarpiece: false,
           interruptionMode: 'mixWithOthers',
         });
@@ -223,7 +223,7 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
       serverUrl={url}
       token={token}
       connect={true}
-      audio={true}
+      audio={false}
       video={false}
       onDisconnected={onDisconnect}
       onError={(err) => {

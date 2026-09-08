@@ -12,8 +12,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, Feather } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
-import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
@@ -68,8 +68,13 @@ const JourneySuccessScreen = ({ route }) => {
             if (svgRef.current) {
                 svgRef.current.toDataURL(async (dataURL) => {
                     try {
+                        // Strip data URL scheme prefix if present, and remove newlines/spaces
+                        const cleanBase64 = dataURL
+                            .replace(/^data:image\/[a-z]+;base64,/, "")
+                            .replace(/(\r\n|\n|\r|\s)/gm, "");
+
                         const filename = FileSystem.documentDirectory + "gomusafir_qr.png";
-                        await FileSystem.writeAsStringAsync(filename, dataURL, {
+                        await FileSystem.writeAsStringAsync(filename, cleanBase64, {
                             encoding: FileSystem.EncodingType.Base64,
                         });
                         await MediaLibrary.saveToLibraryAsync(filename);
@@ -99,7 +104,7 @@ const JourneySuccessScreen = ({ route }) => {
                     <View style={styles.section}>
                         <Text style={styles.label}>Invitation Link</Text>
                         <View style={styles.linkContainer}>
-                            <Text style={styles.linkText}>{invitationLink}</Text>
+                            <Text style={styles.linkText} numberOfLines={1} ellipsizeMode="tail">{invitationLink}</Text>
                             <TouchableOpacity onPress={handleShare}>
                                 <Ionicons name="copy-outline" size={20} color="#A1A1AA" />
                             </TouchableOpacity>
@@ -184,6 +189,8 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontSize: responsiveFontSize(16),
         fontFamily: 'IBMPlexSans',
+        flex: 1,
+        marginRight: 10,
     },
     qrCard: {
         backgroundColor: 'rgba(253,253,253,0.1)',

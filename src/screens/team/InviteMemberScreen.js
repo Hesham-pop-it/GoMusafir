@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -7,6 +7,7 @@ import {
     TextInput,
     KeyboardAvoidingView,
     ScrollView,
+    Keyboard,
     Platform
 } from 'react-native';
 import Modal from '../../components/CompatModal';
@@ -27,6 +28,22 @@ const InviteMemberScreen = () => {
     const [selectedRole, setSelectedRole] = useState('Co-host');
     const [successModalVisible, setSuccessModalVisible] = useState(false);
     const [isInviting, setIsInviting] = useState(false);
+    const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+    useEffect(() => {
+        const showSub = Keyboard.addListener(
+            Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+            () => setIsKeyboardVisible(true)
+        );
+        const hideSub = Keyboard.addListener(
+            Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+            () => setIsKeyboardVisible(false)
+        );
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
 
     const handleSendInvite = async () => {
         if (!email) return;
@@ -72,10 +89,16 @@ const InviteMemberScreen = () => {
         <GlowBackground>
             <SafeAreaView style={styles.container}>
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                    style={{ flex: 1 }}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    style={{ flex: 1, backgroundColor: 'transparent' }}
                 >
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView 
+                        style={{ flex: 1, backgroundColor: 'transparent' }}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="interactive"
+                        showsVerticalScrollIndicator={false}
+                    >
                         <View style={styles.header}>
                             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                                 <Ionicons name="chevron-back" size={22} color="#FFF" />
@@ -112,15 +135,21 @@ const InviteMemberScreen = () => {
                         </View>
                     </ScrollView>
 
-                    <View style={styles.footer}>
+                    {/* Send Invite Button - Pinned cleanly above the keyboard */}
+                    <View style={[
+                        styles.footer,
+                        {
+                            paddingBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36),
+                        }
+                    ]}>
                         <TouchableOpacity
                             style={[styles.inviteButton, (!email || isInviting) && { opacity: 0.5 }]}
                             onPress={handleSendInvite}
                             disabled={!email || isInviting}
+                            activeOpacity={0.8}
                         >
                             <Text style={styles.inviteButtonText}>{isInviting ? "Sending..." : "Send Invite"}</Text>
                         </TouchableOpacity>
-
                     </View>
                 </KeyboardAvoidingView>
 
@@ -162,7 +191,11 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     scrollContent: {
+        flexGrow: 1,
         paddingHorizontal: 20,
+        paddingBottom: 24,
+        justifyContent: 'space-between',
+        backgroundColor: 'transparent',
     },
     header: {
         paddingTop: 10,
@@ -199,6 +232,7 @@ const styles = StyleSheet.create({
     },
     roleSection: {
         gap: 16,
+        marginBottom: 24,
     },
     sectionTitle: {
         color: '#FFF',
@@ -263,11 +297,13 @@ const styles = StyleSheet.create({
         fontFamily: Typography.sans.regular,
     },
     footer: {
-        padding: 24,
-        paddingBottom: 40,
+        backgroundColor: 'transparent',
+        paddingHorizontal: 20,
+        paddingTop: 8,
     },
     inviteButton: {
         height: 56,
+        width: '100%',
         backgroundColor: '#B99A4A',
         borderRadius: 28,
         justifyContent: 'center',

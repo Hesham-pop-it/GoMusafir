@@ -338,6 +338,10 @@ exports.setMuteAll = onCall({ region: "europe-west1" }, async (request) => {
   const orgId = request.auth.token.orgId;
 
   await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/mute_all`).set(mute);
+  await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).update({
+    isAllMuted: mute,
+    lastUpdatedBy: request.auth.uid
+  });
 
   await writeAuditLog(orgId, {
     action: mute ? "TRIP_MUTED" : "TRIP_UNMUTED",

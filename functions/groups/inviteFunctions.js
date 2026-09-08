@@ -356,17 +356,27 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
     updates[`users/${uid}/full_name`] = "Team Member";
   }
 
+  // Generate secure single-use auth handoff token for mobile app onboarding
+  const handoffToken = crypto.randomBytes(32).toString("hex");
+  updates[`auth_handoff_tokens/${handoffToken}`] = {
+    uid: uid,
+    createdAt: admin.database.ServerValue.TIMESTAMP,
+    expiresAt: Date.now() + 15 * 60 * 1000,
+    used: false,
+  };
+
   await db.ref().update(updates);
 
   // 3. Audit Logging (S20)
   await writeAuditLog(orgId, {
     action: "TEAM_MEMBER_JOINED",
     byUid: uid,
-    extra: { role, inviteToken: token }
+    extra: { role, inviteToken: token },
   });
 
-  return { success: true, orgId, role };
+  return { success: true, orgId, role, handoffToken };
 });
+
 
 
 // ── Get Invite Metadata (public — no auth needed) ─────────────────────────────

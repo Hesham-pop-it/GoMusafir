@@ -73,7 +73,13 @@ const ForgotPasswordScreen = () => {
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     style={{ flex: 1 }}
                 >
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView 
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="interactive"
+                        showsVerticalScrollIndicator={false}
+                    >
                         {/* Header */}
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                             <Ionicons name="chevron-back" size={22} color="#FFF" />
@@ -97,25 +103,30 @@ const ForgotPasswordScreen = () => {
                             </View>
                         </View>
                     </ScrollView>
-                </KeyboardAvoidingView>
 
-                <View style={styles.footer}>
-                    <TouchableOpacity
-                        style={[
-                            styles.loginButton,
-                            (email.trim().length === 0 || isLoading) && { opacity: 0.5 },
-                            { marginBottom: isKeyboardVisible ? 20 : 100 }
-                        ]}
-                        onPress={handleSend}
-                        disabled={email.trim().length === 0 || isLoading}
-                    >
-                        {isLoading ? (
-                            <ActivityIndicator color="#FFF" />
-                        ) : (
-                            <Text style={styles.loginButtonText}>Send link</Text>
-                        )}
-                    </TouchableOpacity>
-                </View>
+                    <View style={[
+                        styles.footer,
+                        {
+                            paddingBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36),
+                        }
+                    ]}>
+                        <TouchableOpacity
+                            style={[
+                                styles.loginButton,
+                                (email.trim().length === 0 || isLoading) && { opacity: 0.5 },
+                            ]}
+                            onPress={handleSend}
+                            disabled={email.trim().length === 0 || isLoading}
+                            activeOpacity={0.8}
+                        >
+                            {isLoading ? (
+                                <ActivityIndicator color="#FFF" />
+                            ) : (
+                                <Text style={styles.loginButtonText}>Send link</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+                </KeyboardAvoidingView>
             </SafeAreaView>
         </GlowBackground >
     );

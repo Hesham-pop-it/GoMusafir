@@ -115,43 +115,68 @@ const BusinessVerificationScreen = ({ route }) => {
 
                 // On success, handle navigation
                 if (activeParams.isExistingUser) {
-                    // S22: Accelerated path for existing users - Join trip immediately
-                    const redeemInvite = httpsCallable(functions, 'redeemInvitation');
-                    const result = await redeemInvite({
-                        inviteCode: activeParams.invitationCode,
-                        voiceConsent: true, // Returning users assumed to have active consent or re-grant
-                        locationConsent: true,
-                    });
+                    if (activeParams.isTeamInvite) {
+                        const redeemInvite = httpsCallable(functions, 'redeemTeamInvitation');
+                        const result = await redeemInvite({
+                            token: activeParams.teamInviteToken,
+                        });
 
-                    const resData = result.data || {};
-                    const newTripId = resData.tripId;
-                    const newOrgId = resData.orgId;
+                        const resData = result.data || {};
+                        const newOrgId = resData.orgId;
 
-                    // Clear security and flow flags ONLY after successful join
-                    const cleanupUpdates = {};
-                    cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
-                    cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
-                    if (newTripId) {
-                        cleanupUpdates[`users/${userUid}/current_trip`] = newTripId;
+                        // Clear security and flow flags ONLY after successful join
+                        const cleanupUpdates = {};
+                        cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
+                        cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
+                        await update(ref(database), cleanupUpdates);
+
+                        // S2: Clear local security lock
+                        await AsyncStorage.removeItem('mfa_lock');
+
+                        // Navigate to Home
+                        navigation.reset({
+                            index: 0,
+                            routes: [{ name: 'Home' }],
+                        });
+                    } else {
+                        // S22: Accelerated path for existing users - Join trip immediately
+                        const redeemInvite = httpsCallable(functions, 'redeemInvitation');
+                        const result = await redeemInvite({
+                            inviteCode: activeParams.invitationCode,
+                            voiceConsent: true, // Returning users assumed to have active consent or re-grant
+                            locationConsent: true,
+                        });
+
+                        const resData = result.data || {};
+                        const newTripId = resData.tripId;
+                        const newOrgId = resData.orgId;
+
+                        // Clear security and flow flags ONLY after successful join
+                        const cleanupUpdates = {};
+                        cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
+                        cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
+                        if (newTripId) {
+                            cleanupUpdates[`users/${userUid}/current_trip`] = newTripId;
+                        }
+                        await update(ref(database), cleanupUpdates);
+
+                        // S2: Clear local security lock
+                        await AsyncStorage.removeItem('mfa_lock');
+
+                        // S22: Anchor this as the current trip and navigate
+                        navigation.reset({
+                            index: 0,
+                            routes: [{
+                                name: 'TripOverview',
+                                params: {
+                                    ...activeParams,
+                                    tripId: newTripId,
+                                    orgId: newOrgId,
+                                    isAdmin: false
+                                }
+                            }],
+                        });
                     }
-                    await update(ref(database), cleanupUpdates);
-
-                    // S2: Clear local security lock
-                    await AsyncStorage.removeItem('mfa_lock');
-
-                    // S22: Anchor this as the current trip and navigate
-                    navigation.reset({
-                        index: 0,
-                        routes: [{
-                            name: 'TripOverview',
-                            params: {
-                                ...activeParams,
-                                tripId: newTripId,
-                                orgId: newOrgId,
-                                isAdmin: false
-                            }
-                        }],
-                    });
                 } else {
                     // For new users, clear mfa flag but keep join_flow_status active
                     const cleanupUpdates = {};
@@ -238,7 +263,13 @@ const BusinessVerificationScreen = ({ route }) => {
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     style={styles.content}
                 >
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView 
+                        style={{ flex: 1 }}
+                        contentContainerStyle={styles.scrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="interactive"
+                        showsVerticalScrollIndicator={false}
+                    >
                         {/* Title */}
                         <Text style={styles.title}>{title}</Text>
 
@@ -277,7 +308,12 @@ const BusinessVerificationScreen = ({ route }) => {
                     </ScrollView>
 
                     {/* Footer Buttons */}
-                    <View style={styles.footer}>
+                    <View style={[
+                        styles.footer,
+                        {
+                            paddingBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36),
+                        }
+                    ]}>
                         <GradientBorderButton
                             text={resendLoading ? "Sending..." : resendText}
                             onPress={handleResend}
@@ -289,10 +325,10 @@ const BusinessVerificationScreen = ({ route }) => {
                             style={[
                                 styles.primaryButton,
                                 (otp.length !== 6 || isLoading) && { opacity: 0.5 },
-                                { marginBottom: isKeyboardVisible ? 20 : 100 }
                             ]}
                             onPress={handleContinue}
                             disabled={otp.length !== 6 || isLoading}
+                            activeOpacity={0.8}
                         >
                             <Text style={styles.primaryButtonText}>
                                 {isLoading ? "Verifying..." : buttonText}

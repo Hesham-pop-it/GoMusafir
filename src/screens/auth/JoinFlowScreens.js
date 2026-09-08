@@ -23,7 +23,7 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { COUNTRIES } from '../../constants/Countries';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
@@ -50,6 +50,32 @@ const EyeIcon = () => (
                 <Rect width="24" height="24" fill="white" />
             </ClipPath>
         </Defs>
+    </Svg>
+);
+
+const ErrorIcon = () => (
+    <Svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+        <Path
+            d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
+        <Path
+            d="M12 8V12"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
+        <Path
+            d="M12 16H12.01"
+            stroke="#EF4444"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        />
     </Svg>
 );
 
@@ -108,7 +134,7 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
                         text={buttonText}
                         onPress={onContinue}
                         disabled={!isValid}
-                        style={{ marginBottom: isKeyboardVisible ? 20 : 100 }}
+                        style={{ marginBottom: isKeyboardVisible ? 16 : (Platform.OS === 'ios' ? 24 : 36) }}
                     />
                 </KeyboardAvoidingView>
             </SafeAreaView>
@@ -119,31 +145,44 @@ const JoinLayout = ({ navigation, title, label, children, onContinue, isValid = 
 // --- Screen 1: First Name ---
 export const JoinFirstNameScreen = ({ navigation, route }) => {
     const [firstName, setFirstName] = useState('');
+    const [error, setError] = useState('');
     // Merge params in case we loop back, though usually route.params is from previous
     const previousData = route.params || {};
 
     const handleContinue = () => {
-        navigation.navigate('JoinLastName', { ...previousData, firstName });
+        if (!firstName || !firstName.trim()) {
+            setError('First name is required.');
+            return;
+        }
+        navigation.navigate('JoinLastName', { ...previousData, firstName: firstName.trim() });
     };
-
 
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             label="First name"
             onContinue={handleContinue}
-            isValid={firstName.length > 0}
         >
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, error ? styles.inputWrapperError : null]}>
                 <TextInput
                     style={styles.input}
                     placeholder="Enter your first name"
                     placeholderTextColor="#71717A"
                     value={firstName}
-                    onChangeText={setFirstName}
+                    onChangeText={(text) => {
+                        setFirstName(text);
+                        if (error) setError('');
+                    }}
+                    autoFocus={true}
                 />
+                {error ? (
+                    <View style={styles.errorIconWrapper}>
+                        <ErrorIcon />
+                    </View>
+                ) : null}
             </View>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </JoinLayout>
     );
 };
@@ -151,78 +190,127 @@ export const JoinFirstNameScreen = ({ navigation, route }) => {
 // --- Screen 2: Last Name ---
 export const JoinLastNameScreen = ({ navigation, route }) => {
     const [lastName, setLastName] = useState('');
+    const [error, setError] = useState('');
     const previousData = route.params || {};
 
     const handleContinue = () => {
-        navigation.navigate('JoinPhone', { ...previousData, lastName });
+        if (!lastName || !lastName.trim()) {
+            setError('Last name is required.');
+            return;
+        }
+        navigation.navigate('JoinPhone', { ...previousData, lastName: lastName.trim() });
     };
-
 
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             label="Last name"
             onContinue={handleContinue}
-            isValid={lastName.length > 0}
         >
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, error ? styles.inputWrapperError : null]}>
                 <TextInput
                     style={styles.input}
                     placeholder="Enter your last name"
                     placeholderTextColor="#71717A"
                     value={lastName}
-                    onChangeText={setLastName}
+                    onChangeText={(text) => {
+                        setLastName(text);
+                        if (error) setError('');
+                    }}
+                    autoFocus={true}
                 />
+                {error ? (
+                    <View style={styles.errorIconWrapper}>
+                        <ErrorIcon />
+                    </View>
+                ) : null}
             </View>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </JoinLayout>
     );
 };
 
 // --- Screen 3: Email ---
 export const JoinEmailScreen = ({ navigation, route }) => {
-    const [email, setEmail] = useState('');
+    const previousData = route.params || {};
+    const [email, setEmail] = useState(previousData.email || '');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [emailError, setEmailError] = useState('');
+    const [passwordError, setPasswordError] = useState('');
+    const [confirmPasswordError, setConfirmPasswordError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     
     // Track if we are in signup mode (User not found after check) (S3/S6)
     const [isSignupMode, setIsSignupMode] = useState(false);
-    const previousData = route.params || {};
 
+    useEffect(() => {
+        if (previousData.email) {
+            setEmail(previousData.email);
+        }
+    }, [previousData.email]);
+
+    const isValidEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
     const showPasswordFields = email.length > 5 && email.includes('@');
 
-    // Logic Adjustment: Background check removed (Now performs check on Continue click)
-
     const handleContinue = async () => {
-        if (!email.includes('@') || password.length < 6) {
-            Alert.alert("Invalid Input", "Please enter a valid email and a password of at least 6 characters.");
-            return;
+        let hasError = false;
+        if (!email || !email.trim()) {
+            setEmailError('Email address is required.');
+            hasError = true;
+        } else if (!isValidEmail(email)) {
+            setEmailError('Please enter a valid email address.');
+            hasError = true;
         }
+
+        if (showPasswordFields) {
+            if (!password) {
+                setPasswordError('Password is required.');
+                hasError = true;
+            } else if (password.length < 6) {
+                setPasswordError('Password must be at least 6 characters.');
+                hasError = true;
+            }
+
+            if (isSignupMode) {
+                if (!confirmPassword) {
+                    setConfirmPasswordError('Please confirm your password.');
+                    hasError = true;
+                } else if (password !== confirmPassword) {
+                    setConfirmPasswordError('Passwords do not match.');
+                    hasError = true;
+                }
+            }
+        }
+
+        if (hasError) return;
 
         setIsLoading(true);
         try {
-            // S22: Check capacity BEFORE login/signup to avoid App.js session conflicts
-            const getMetadata = httpsCallable(functions, 'getInviteMetadata');
-            const metaResult = await getMetadata({ 
-                inviteCode: previousData.invitationCode,
-                email: email.trim().toLowerCase() 
-            });
-            const tripDetails = metaResult.data;
+            if (!previousData.isTeamInvite) {
+                // S22: Check capacity BEFORE login/signup to avoid App.js session conflicts
+                const getMetadata = httpsCallable(functions, 'getInviteMetadata');
+                const metaResult = await getMetadata({ 
+                    inviteCode: previousData.invitationCode,
+                    email: email.trim().toLowerCase() 
+                });
+                const tripDetails = metaResult.data;
 
-            if (tripDetails.isFull && !tripDetails.alreadyJoined) {
-                setIsLoading(false);
-                Alert.alert(
-                    "Trip Full",
-                    `Sorry, this trip has reached its maximum capacity of ${tripDetails.totalSeats} participants.`,
-                    [{ 
-                        text: "OK",
-                        onPress: () => navigation.navigate('Welcome') 
-                    }]
-                );
-                return;
+                if (tripDetails.isFull && !tripDetails.alreadyJoined) {
+                    setIsLoading(false);
+                    Alert.alert(
+                        "Trip Full",
+                        `Sorry, this trip has reached its maximum capacity of ${tripDetails.totalSeats} participants.`,
+                        [{ 
+                            text: "OK",
+                            onPress: () => navigation.navigate('Welcome') 
+                        }]
+                    );
+                    return;
+                }
             }
 
             let userCredential;
@@ -235,6 +323,12 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                 const userExists = result.data?.exists;
 
                 if (userExists) {
+                    if (result.data?.isStaff === true) {
+                        setEmailError('This business account cannot be used to join as a participant.');
+                        setIsLoading(false);
+                        return;
+                    }
+
                     // User Exists -> Log In
                     try {
                         userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -250,7 +344,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 
                         if (isStaff) {
                             await signOut(auth);
-                            Alert.alert("Account Conflict", "This business account cannot be used to join as a participant. Please use a separate participant account.");
+                            setEmailError('This business account cannot be used to join as a participant.');
                             setIsLoading(false);
                             return;
                         }
@@ -259,7 +353,9 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                         const updates = {};
                         updates[`users/${currentUserId}/join_flow_status`] = {
                             isJoining: true,
-                            invitationCode: previousData.invitationCode,
+                            invitationCode: previousData.invitationCode || null,
+                            teamInviteToken: previousData.teamInviteToken || null,
+                            isTeamInvite: !!previousData.isTeamInvite,
                             isExistingUser: true,
                             updated_at: serverTimestamp()
                         };
@@ -274,7 +370,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                         navigation.navigate('BusinessVerification', {
                             title: "Verify your email",
                             description: `We've sent a 6-digit secure code to ${email.trim()}. Please enter it below.`,
-                            targetScreen: "JoinTerms",
+                            targetScreen: previousData.isTeamInvite ? "Home" : "JoinTerms",
                             uid: currentUserId,
                             isExistingUser: true,
                             ...previousData,
@@ -282,7 +378,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                         });
                     } catch (loginError) {
                         if (loginError.code === 'auth/wrong-password' || loginError.code === 'auth/invalid-credential') {
-                            Alert.alert("Incorrect Password", "The password you entered is incorrect. Please try again.");
+                            setPasswordError('The password you entered is incorrect. Please try again.');
                         } else {
                             throw loginError;
                         }
@@ -294,7 +390,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
             } else {
                 // Step 2: User is in signup mode (Clicked Continue again)
                 if (password !== confirmPassword) {
-                    Alert.alert("Mismatch", "Passwords do not match.");
+                    setConfirmPasswordError('Passwords do not match.');
                     setIsLoading(false);
                     return;
                 }
@@ -306,9 +402,12 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                     // Set flag in database to prevent App.js from redirecting to Home instantly
                     await set(dbRef(database, `users/${currentUserId}/join_flow_status`), {
                         isJoining: true,
+                        invitationCode: previousData.invitationCode || null,
+                        teamInviteToken: previousData.teamInviteToken || null,
+                        isTeamInvite: !!previousData.isTeamInvite,
+                        isExistingUser: false,
                         updated_at: serverTimestamp()
                     });
-
 
                     // Navigate to standard signup flow
                     const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
@@ -331,83 +430,110 @@ export const JoinEmailScreen = ({ navigation, route }) => {
             if (error.code === 'auth/email-already-in-use') {
                 // If we attempted signup but user exists (fallback)
                 setIsSignupMode(false);
-                Alert.alert("Account Exists", "This email is already registered. Please enter your password to log in.");
+                setEmailError('This email is already registered. Please enter your password to log in.');
             } else {
-                Alert.alert("Error", error.message || "An error occurred. Please try again.");
+                setEmailError(error.message || 'An error occurred. Please try again.');
             }
         } finally {
             setIsLoading(false);
         }
     };
 
-
-
-    // Validation Logic
-    let isValid = false;
-    if (showPasswordFields) {
-        if (!isSignupMode) {
-            isValid = password.length >= 6;
-        } else {
-            isValid = password.length >= 6 && confirmPassword.length >= 6 && password === confirmPassword;
-        }
-    } else {
-        isValid = email.includes('@'); 
-    }
-
     return (
         <JoinLayout
             navigation={navigation}
-            title={"Join as Participant"}
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             label="Email address"
             onContinue={handleContinue}
-            isValid={isValid && !isLoading}
+            isValid={!isLoading}
             buttonText={isLoading ? "Please wait..." : (isSignupMode ? "Create Account" : "Continue")}
         >
-            <View style={styles.inputWrapper}>
+            <View style={[styles.inputWrapper, emailError ? styles.inputWrapperError : null, previousData.isTeamInvite && { opacity: 0.6 }]}>
                 <TextInput
                     style={styles.input}
                     placeholder="Enter your email address"
                     placeholderTextColor="#71717A"
                     value={email}
-                    onChangeText={setEmail}
+                    onChangeText={(text) => {
+                        setEmail(text);
+                        if (emailError) setEmailError('');
+                    }}
                     keyboardType="email-address"
                     autoCapitalize="none"
+                    editable={!previousData.isTeamInvite}
+                    autoFocus={!previousData.email}
                 />
+                {emailError ? (
+                    <View style={styles.errorIconWrapper}>
+                        <ErrorIcon />
+                    </View>
+                ) : null}
             </View>
+            {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
 
             {showPasswordFields && (
                 <View style={{ marginTop: 0 }}>
                     <Text style={styles.label}>Password</Text>
-                    <View style={styles.inputWrapper}>
+                    <View style={[styles.inputWrapper, passwordError ? styles.inputWrapperError : null]}>
                         <TextInput
                             style={styles.input}
                             placeholder="Enter password"
                             placeholderTextColor="#71717A"
                             value={password}
-                            onChangeText={setPassword}
+                            onChangeText={(text) => {
+                                setPassword(text);
+                                if (passwordError) setPasswordError('');
+                            }}
                             secureTextEntry={!showPassword}
                         />
-                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>                            
-                                <EyeIcon />                            
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            {passwordError ? (
+                                <View style={styles.errorIconWrapper}>
+                                    <ErrorIcon />
+                                </View>
+                            ) : null}
+                            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeIcon}>
+                                {showPassword ? (
+                                    <Ionicons name="eye-off-outline" size={24} color="#71717A" />
+                                ) : (
+                                    <EyeIcon />
+                                )}
+                            </TouchableOpacity>
+                        </View>
                     </View>
+                    {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
 
                     {isSignupMode && (
                         <>
                             <Text style={styles.label}>Confirm Password</Text>
-                            <View style={styles.inputWrapper}>
+                            <View style={[styles.inputWrapper, confirmPasswordError ? styles.inputWrapperError : null]}>
                                 <TextInput
                                     style={styles.input}
                                     placeholder="Confirm password"
                                     placeholderTextColor="#71717A"
                                     value={confirmPassword}
-                                    onChangeText={setConfirmPassword}
+                                    onChangeText={(text) => {
+                                        setConfirmPassword(text);
+                                        if (confirmPasswordError) setConfirmPasswordError('');
+                                    }}
                                     secureTextEntry={!showConfirmPassword}
                                 />
-                                <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeIcon}>
-                                    <EyeIcon />
-                                </TouchableOpacity>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                    {confirmPasswordError ? (
+                                        <View style={styles.errorIconWrapper}>
+                                            <ErrorIcon />
+                                        </View>
+                                    ) : null}
+                                    <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} style={styles.eyeIcon}>
+                                        {showConfirmPassword ? (
+                                            <Ionicons name="eye-off-outline" size={24} color="#71717A" />
+                                        ) : (
+                                            <EyeIcon />
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
                             </View>
+                            {confirmPasswordError ? <Text style={styles.errorText}>{confirmPasswordError}</Text> : null}
                         </>
                     )}
                 </View>
@@ -419,6 +545,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 // --- Screen 4: Phone ---
 export const JoinPhoneScreen = ({ navigation, route }) => {
     const [phone, setPhone] = useState('');
+    const [error, setError] = useState('');
     const [isPickerVisible, setPickerVisible] = useState(false);
     const [selectedCountry, setSelectedCountry] = useState(COUNTRIES.find(c => c.name === 'Netherlands') || COUNTRIES[0]);
     const previousData = route.params || {};
@@ -454,10 +581,18 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = () => {
-        const fullPhone = `${selectedCountry.code}${phone}`;
-        navigation.navigate('JoinProfilePicture', { ...previousData, phone: fullPhone });
+        if (!phone || phone.trim().length < 6) {
+            setError('Please enter a valid phone number.');
+            return;
+        }
+        const fullPhone = `${selectedCountry.code}${phone.trim()}`;
+        navigation.navigate('JoinProfilePicture', { 
+            ...previousData, 
+            phone: fullPhone,
+            phoneCode: selectedCountry.code,
+            phoneNumber: phone.trim() 
+        });
     };
-
 
     const selectCountry = (country) => {
         setSelectedCountry(country);
@@ -468,30 +603,39 @@ export const JoinPhoneScreen = ({ navigation, route }) => {
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             label="Phone number"
             onContinue={handleContinue}
-            isValid={phone.length > 5}
         >
             <View style={styles.phoneRow}>
                 <TouchableOpacity
-                    style={[styles.inputWrapper, styles.countryCode]}
+                    style={[styles.inputWrapper, styles.countryCode, error ? styles.inputWrapperError : null]}
                     onPress={() => setPickerVisible(true)}
                 >
                     <Text style={styles.inputText} numberOfLines={1}>{selectedCountry.flag} {selectedCountry.code}</Text>
                     <Ionicons name="chevron-down" size={16} color="#FFF" style={{ marginLeft: 5 }} />
                 </TouchableOpacity>
-                <View style={[styles.inputWrapper, { flex: 1 }]}>
+                <View style={[styles.inputWrapper, { flex: 1 }, error ? styles.inputWrapperError : null]}>
                     <TextInput
                         style={styles.input}
                         placeholder="Enter your phone number"
                         placeholderTextColor="#71717A"
                         value={phone}
-                        onChangeText={(text) => setPhone(text.replace(/[^0-9]/g, ''))}
+                        onChangeText={(text) => {
+                            setPhone(text.replace(/[^0-9]/g, ''));
+                            if (error) setError('');
+                        }}
                         keyboardType="phone-pad"
+                        autoFocus={true}
                     />
+                    {error ? (
+                        <View style={styles.errorIconWrapper}>
+                            <ErrorIcon />
+                        </View>
+                    ) : null}
                 </View>
             </View>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
             <Modal
                 isVisible={isPickerVisible}
@@ -638,7 +782,11 @@ const CustomSlider = ({ value, onChange, min = 1, max = 3 }) => {
 // --- Screen 5: Profile Picture ---
 export const JoinProfilePictureScreen = ({ navigation, route }) => {
     const [image, setImage] = useState(null);
+    const [error, setError] = useState('');
     const previousData = route.params || {};
+
+    // Photo source modal state
+    const [showSourceModal, setShowSourceModal] = useState(false);
 
     // Image cropping states
     const [cropModalVisible, setCropModalVisible] = useState(false);
@@ -700,8 +848,119 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
         })
     ).current;
 
-    const pickImage = async () => {
-        // Explicitly request permissions to favor gallery access
+    const openCropper = (uri, width, height) => {
+        const w = Number(width) || CROP_SIZE;
+        const h = Number(height) || CROP_SIZE;
+        
+        setSelectedImage({
+            uri,
+            width: w,
+            height: h,
+        });
+        setZoom(1);
+        
+        const base = getBaseDimensions(w, h);
+        const initialX = -(base.width - CROP_SIZE) / 2;
+        const initialY = -(base.height - CROP_SIZE) / 2;
+        setPan({ x: isNaN(initialX) ? 0 : initialX, y: isNaN(initialY) ? 0 : initialY });
+        
+        setCropModalVisible(true);
+    };
+
+    const resizeAndOpen = async (uri, origWidth, origHeight) => {
+        let w = Number(origWidth) || 0;
+        let h = Number(origHeight) || 0;
+        let localUri = uri;
+
+        // Resolve non-file URIs (like ph:// on iOS) by copying them to the local app cache
+        if (uri && !uri.startsWith('file://') && !uri.startsWith('http://') && !uri.startsWith('https://')) {
+            try {
+                const filename = uri.split('/').pop() || 'temp_picked_image';
+                const ext = uri.includes('ext=') ? uri.split('ext=').pop()?.split('&')[0] : 'jpg';
+                const targetPath = `${FileSystem.cacheDirectory}${filename}.${ext}`;
+                await FileSystem.copyAsync({
+                    from: uri,
+                    to: targetPath
+                });
+                localUri = targetPath;
+            } catch (copyErr) {
+                console.warn("Failed to copy asset to local file cache:", copyErr);
+            }
+        }
+
+        if (w > 1200 || h > 1200 || w <= 0 || h <= 0) {
+            try {
+                if (w <= 0 || h <= 0) {
+                    await new Promise((resolve) => {
+                        Image.getSize(
+                            localUri,
+                            (width, height) => {
+                                w = width;
+                                h = height;
+                                resolve();
+                            },
+                            () => {
+                                w = CROP_SIZE;
+                                h = CROP_SIZE;
+                                resolve();
+                            }
+                        );
+                    });
+                }
+                
+                const ratio = w / h;
+                let targetWidth = w;
+                let targetHeight = h;
+                
+                if (w > 1200 || h > 1200) {
+                    if (ratio > 1) {
+                        targetWidth = 1200;
+                        targetHeight = Math.round(1200 / ratio);
+                    } else {
+                        targetHeight = 1200;
+                        targetWidth = Math.round(1200 * ratio);
+                    }
+                }
+
+                const manip = await manipulateAsync(
+                    localUri,
+                    [{ resize: { width: targetWidth, height: targetHeight } }],
+                    { compress: 0.9, format: SaveFormat.JPEG }
+                );
+                
+                openCropper(manip.uri, manip.width, manip.height);
+            } catch (err) {
+                console.warn("Error processing/downscaling image:", err);
+                openCropper(localUri, w || CROP_SIZE, h || CROP_SIZE);
+            }
+        } else {
+            openCropper(localUri, w, h);
+        }
+    };
+
+    const takePhotoFromCamera = async () => {
+        setShowSourceModal(false);
+        const { status } = await ImagePicker.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Needed', 'Please allow camera access to take a photo.');
+            return;
+        }
+
+        let result = await ImagePicker.launchCameraAsync({
+            allowsEditing: false,
+            quality: 1,
+        });
+
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            const asset = result.assets[0];
+            setTimeout(() => {
+                resizeAndOpen(asset.uri, asset.width, asset.height);
+            }, 500);
+        }
+    };
+
+    const pickImageFromGallery = async () => {
+        setShowSourceModal(false);
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
             Alert.alert('Permission Needed', 'Please allow access to your gallery to upload a photo.');
@@ -709,109 +968,21 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
         }
 
         let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'], // Modern way to specify types
+            mediaTypes: ['images'],
             allowsEditing: false,
             quality: 1,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
             const asset = result.assets[0];
-            
-            const openCropper = (uri, width, height) => {
-                const w = Number(width) || CROP_SIZE;
-                const h = Number(height) || CROP_SIZE;
-                
-                setSelectedImage({
-                    uri,
-                    width: w,
-                    height: h,
-                });
-                setZoom(1);
-                
-                const base = getBaseDimensions(w, h);
-                const initialX = -(base.width - CROP_SIZE) / 2;
-                const initialY = -(base.height - CROP_SIZE) / 2;
-                setPan({ x: isNaN(initialX) ? 0 : initialX, y: isNaN(initialY) ? 0 : initialY });
-                
-                setCropModalVisible(true);
-            };
-
-            const resizeAndOpen = async (uri, origWidth, origHeight) => {
-                let w = Number(origWidth) || 0;
-                let h = Number(origHeight) || 0;
-                let localUri = uri;
-
-                // Resolve non-file URIs (like ph:// on iOS) by copying them to the local app cache
-                if (uri && !uri.startsWith('file://') && !uri.startsWith('http://') && !uri.startsWith('https://')) {
-                    try {
-                        const filename = uri.split('/').pop() || 'temp_picked_image';
-                        const ext = uri.includes('ext=') ? uri.split('ext=').pop()?.split('&')[0] : 'jpg';
-                        const targetPath = `${FileSystem.cacheDirectory}${filename}.${ext}`;
-                        await FileSystem.copyAsync({
-                            from: uri,
-                            to: targetPath
-                        });
-                        localUri = targetPath;
-                    } catch (copyErr) {
-                        console.warn("Failed to copy asset to local file cache:", copyErr);
-                    }
-                }
-
-                if (w > 1200 || h > 1200 || w <= 0 || h <= 0) {
-                    try {
-                        if (w <= 0 || h <= 0) {
-                            await new Promise((resolve) => {
-                                Image.getSize(
-                                    localUri,
-                                    (width, height) => {
-                                        w = width;
-                                        h = height;
-                                        resolve();
-                                    },
-                                    () => {
-                                        w = CROP_SIZE;
-                                        h = CROP_SIZE;
-                                        resolve();
-                                    }
-                                );
-                            });
-                        }
-                        
-                        const ratio = w / h;
-                        let targetWidth = w;
-                        let targetHeight = h;
-                        
-                        if (w > 1200 || h > 1200) {
-                            if (ratio > 1) {
-                                targetWidth = 1200;
-                                targetHeight = Math.round(1200 / ratio);
-                            } else {
-                                targetHeight = 1200;
-                                targetWidth = Math.round(1200 * ratio);
-                            }
-                        }
-
-                        const manip = await manipulateAsync(
-                            localUri,
-                            [{ resize: { width: targetWidth, height: targetHeight } }],
-                            { compress: 0.9, format: SaveFormat.JPEG }
-                        );
-                        
-                        openCropper(manip.uri, manip.width, manip.height);
-                    } catch (err) {
-                        console.warn("Error processing/downscaling image:", err);
-                        openCropper(localUri, w || CROP_SIZE, h || CROP_SIZE);
-                    }
-                } else {
-                    openCropper(localUri, w, h);
-                }
-            };
-
-            // On iOS, waiting for the ImagePicker modal to dismiss before opening our cropper modal prevents the app from hanging.
             setTimeout(() => {
                 resizeAndOpen(asset.uri, asset.width, asset.height);
             }, 500);
         }
+    };
+
+    const pickImage = () => {
+        setShowSourceModal(true);
     };
 
     const handleSaveCrop = async () => {
@@ -864,6 +1035,7 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
             );
 
             setImage(manipResult.uri);
+            if (error) setError('');
             setCropModalVisible(false);
         } catch (error) {
             console.error("Error cropping image:", error);
@@ -872,19 +1044,21 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
     };
 
     const handleContinue = () => {
+        if (!image) {
+            setError('Profile picture is required.');
+            return;
+        }
         navigation.navigate('JoinTerms', { ...previousData, image });
     };
-
 
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             label="Profile Picture"
             onContinue={handleContinue}
-            isValid={!!image} // Require image? The screenshot shows "Continue" active maybe even if empty? Assuming required.
         >
-            <View style={styles.uploadContainer}>
+            <View style={[styles.uploadContainer, error ? styles.uploadContainerError : null]}>
                 {image ? (
                     <TouchableOpacity style={styles.uploadedImage} onPress={pickImage}>
                         <Image source={{ uri: image }} style={styles.uploadedImage} />
@@ -905,6 +1079,7 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
                     </View>
                 )}
             </View>
+            {error ? <Text style={[styles.errorText, { textAlign: 'center', marginTop: -8, marginBottom: 15 }]}>{error}</Text> : null}
 
             {/* Custom Image Cropper Modal */}
             <RNModal
@@ -947,11 +1122,11 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
                         )}
                     </View>
 
-                    {/* SVG Square cutout mask */}
+                    {/* SVG Circular cutout mask */}
                     <Svg height="100%" width="100%" style={StyleSheet.absoluteFill} pointerEvents="none">
                         <Path
                             fillRule="evenodd"
-                            d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2 - CROP_SIZE / 2} ${Dimensions.get('window').height / 2 - 40 - CROP_SIZE / 2} h ${CROP_SIZE} v ${CROP_SIZE} h -${CROP_SIZE} Z`}
+                            d={`M 0 0 h ${Dimensions.get('window').width} v ${Dimensions.get('window').height} h -${Dimensions.get('window').width} Z M ${Dimensions.get('window').width / 2} ${Dimensions.get('window').height / 2 - 40 - CROP_SIZE / 2} a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 0 ${CROP_SIZE} a ${CROP_SIZE / 2} ${CROP_SIZE / 2} 0 1 0 0 -${CROP_SIZE} Z`}
                             fill="rgba(26, 30, 33, 0.85)"
                         />
                     </Svg>
@@ -965,6 +1140,7 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
                                 top: (Dimensions.get('window').height - CROP_SIZE) / 2 - 41,
                                 width: CROP_SIZE + 2,
                                 height: CROP_SIZE + 2,
+                                borderRadius: (CROP_SIZE + 2) / 2,
                             }
                         ]}
                         pointerEvents="none"
@@ -992,6 +1168,81 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
                     </View>
                 </View>
             </RNModal>
+
+            {/* Upload Source Action Sheet Modal */}
+            <Modal
+                isVisible={showSourceModal}
+                onBackdropPress={() => setShowSourceModal(false)}
+                onBackButtonPress={() => setShowSourceModal(false)}
+                onSwipeComplete={() => setShowSourceModal(false)}
+                swipeDirection="down"
+                swipeThreshold={100}
+                useNativeDriver={false}
+                useNativeDriverForBackdrop={true}
+                hideModalContentWhileAnimating={true}
+                style={{ margin: 0, justifyContent: 'flex-end' }}
+            >
+                <View style={styles.sourceModalContent}>
+                    <View style={styles.modalHandleContainer}>
+                        <View style={styles.modalHandle} />
+                    </View>
+
+                    <View style={styles.sourceModalHeader}>
+                        <Text style={styles.sourceModalTitle}>Upload Photo</Text>
+                        <TouchableOpacity
+                            onPress={() => setShowSourceModal(false)}
+                            style={styles.sourceModalCloseButton}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        >
+                            <Ionicons name="close" size={20} color="#A1A1AA" />
+                        </TouchableOpacity>
+                    </View>
+
+                    <Text style={styles.sourceModalSubtitle}>
+                        Choose where you want to upload your photo from
+                    </Text>
+
+                    <View style={styles.sourceOptionList}>
+                        <TouchableOpacity
+                            style={styles.sourceOptionButton}
+                            onPress={takePhotoFromCamera}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.sourceOptionIconWrapper}>
+                                <Ionicons name="camera" size={22} color="#B99A4A" />
+                            </View>
+                            <View style={styles.sourceOptionTextContainer}>
+                                <Text style={styles.sourceOptionTitle}>Take Photo</Text>
+                                <Text style={styles.sourceOptionDescription}>Capture directly with your camera</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color="#71717A" />
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.sourceOptionButton}
+                            onPress={pickImageFromGallery}
+                            activeOpacity={0.8}
+                        >
+                            <View style={styles.sourceOptionIconWrapper}>
+                                <Ionicons name="images" size={22} color="#B99A4A" />
+                            </View>
+                            <View style={styles.sourceOptionTextContainer}>
+                                <Text style={styles.sourceOptionTitle}>Choose from Gallery</Text>
+                                <Text style={styles.sourceOptionDescription}>Select from device photos or files</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={18} color="#71717A" />
+                        </TouchableOpacity>
+                    </View>
+
+                    <TouchableOpacity
+                        style={styles.sourceCancelButton}
+                        onPress={() => setShowSourceModal(false)}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.sourceCancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                </View>
+            </Modal>
         </JoinLayout>
     );
 };
@@ -999,11 +1250,16 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
 // --- Screen 6: Terms ---
 export const JoinTermsScreen = ({ navigation, route }) => {
     const [accepted, setAccepted] = useState(false);
+    const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const previousData = route.params || {};
 
     const handleContinue = async () => {
         if (isLoading) return;
+        if (!accepted && !route.params?.isExistingUser) {
+            setError('Please accept the Terms & Privacy to continue.');
+            return;
+        }
         setIsLoading(true);
         try {
             let photoURL = previousData.photoURL;
@@ -1012,54 +1268,100 @@ export const JoinTermsScreen = ({ navigation, route }) => {
 
             // S22: Upload image to Storage if present as local URI
             if (previousData.image && auth.currentUser) {
+                let blob = null;
                 try {
-                    const response = await fetch(previousData.image);
-                    const blob = await response.blob();
+                    // Use XMLHttpRequest to get the local URI blob stably in React Native
+                    blob = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.onload = function () {
+                            resolve(xhr.response);
+                        };
+                        xhr.onerror = function (e) {
+                            console.log("[JoinTerms] XHR failed for URI:", previousData.image, e);
+                            reject(new TypeError("Network request failed"));
+                        };
+                        xhr.responseType = "blob";
+                        xhr.open("GET", previousData.image, true);
+                        xhr.send(null);
+                    });
+
                     const picRef = storageRef(storage, `users/${auth.currentUser.uid}/profile_pic.jpg`);
                     await uploadBytes(picRef, blob);
                     photoURL = await getDownloadURL(picRef);
                     console.log("[JoinTerms] Storage upload successful. photoURL:", photoURL);
                 } catch (imgError) {
                     console.warn("[JoinTerms] Storage Upload Error:", imgError);
+                } finally {
+                    if (blob) {
+                        try {
+                            blob.close();
+                        } catch (e) {
+                            console.log("[JoinTerms] Error closing blob:", e);
+                        }
+                    }
                 }
             }
 
-            const redeemInvite = httpsCallable(functions, 'redeemInvitation');
-            const result = await redeemInvite({
-                inviteCode: previousData.invitationCode,
-                voiceConsent: accepted || route.params?.isExistingUser,
-                locationConsent: accepted || route.params?.isExistingUser,
-                firstName: previousData.firstName,
-                lastName: previousData.lastName,
-                phone: previousData.phone,
-                photoURL: photoURL,
-            });
+            if (previousData.isTeamInvite) {
+                const redeemTeam = httpsCallable(functions, 'redeemTeamInvitation');
+                const result = await redeemTeam({
+                    token: previousData.teamInviteToken,
+                    firstName: previousData.firstName,
+                    lastName: previousData.lastName,
+                    phoneCode: previousData.phoneCode || "+1",
+                    phoneNumber: previousData.phoneNumber || previousData.phone,
+                    photoURL: photoURL,
+                });
+
+                if (auth.currentUser) {
+                    await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
+                }
+
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                await AsyncStorage.removeItem('mfa_lock');
+
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Home' }],
+                });
+            } else {
+                const redeemInvite = httpsCallable(functions, 'redeemInvitation');
+                const result = await redeemInvite({
+                    inviteCode: previousData.invitationCode,
+                    voiceConsent: accepted || route.params?.isExistingUser,
+                    locationConsent: accepted || route.params?.isExistingUser,
+                    firstName: previousData.firstName,
+                    lastName: previousData.lastName,
+                    phone: previousData.phone,
+                    photoURL: photoURL,
+                });
 
 
 
 
-            const tripId = result.data?.tripId;
+                const tripId = result.data?.tripId;
 
-            // Clear the Join Flow flag in database so global navigation is restored
-            if (auth.currentUser) {
-                // S22: Set current_trip so Home/App knows which trip to anchor to
-                await set(dbRef(database, `users/${auth.currentUser.uid}/current_trip`), tripId);
-                await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
+                // Clear the Join Flow flag in database so global navigation is restored
+                if (auth.currentUser) {
+                    // S22: Set current_trip so Home/App knows which trip to anchor to
+                    await set(dbRef(database, `users/${auth.currentUser.uid}/current_trip`), tripId);
+                    await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
+                }
+
+                // S22: Navigate to TripOverview with explicit IDs
+                navigation.reset({
+                    index: 0,
+                    routes: [{ 
+                        name: 'TripOverview', 
+                        params: { 
+                            tripId: tripId, 
+                            orgId: result.data?.orgId,
+                            invitationCode: previousData.invitationCode,
+                            isAdmin: false 
+                        } 
+                    }],
+                });
             }
-
-            // S22: Navigate to TripOverview with explicit IDs
-            navigation.reset({
-                index: 0,
-                routes: [{ 
-                    name: 'TripOverview', 
-                    params: { 
-                        tripId: tripId, 
-                        orgId: result.data?.orgId,
-                        invitationCode: previousData.invitationCode,
-                        isAdmin: false 
-                    } 
-                }],
-            });
 
 
         } catch (error) {
@@ -1083,16 +1385,20 @@ export const JoinTermsScreen = ({ navigation, route }) => {
     return (
         <JoinLayout
             navigation={navigation}
-            title="Join as Participant"
+            title={previousData.isTeamInvite ? "Join the Team" : "Join as Participant"}
             onContinue={handleContinue}
-            isValid={accepted && !isLoading}
+            isValid={!isLoading}
             buttonText={isLoading ? "Please wait..." : "Continue"}
         >
-            <View
-                style={styles.termsContainer}
-
-            >
-                <TouchableOpacity onPress={() => setAccepted(!accepted)} activeOpacity={1} style={[styles.checkbox, accepted && styles.checkboxChecked]}>
+            <View style={styles.termsContainer}>
+                <TouchableOpacity 
+                    onPress={() => {
+                        setAccepted(!accepted);
+                        if (error) setError('');
+                    }} 
+                    activeOpacity={1} 
+                    style={[styles.checkbox, accepted && styles.checkboxChecked, error ? styles.checkboxError : null]}
+                >
                     {accepted && (
                         <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                             <Rect x="3" y="3" width="18" height="18" rx="6" fill="#B99A4A" />
@@ -1104,6 +1410,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                     I accept <Text style={styles.linkText}>Terms & Privacy</Text> and consent to live voice and, if enabled, recording, location sharing is controllable in app.
                 </Text>
             </View>
+            {error ? <Text style={[styles.errorText, { marginTop: 12, marginBottom: 0 }]}>{error}</Text> : null}
         </JoinLayout>
     );
 };
@@ -1157,11 +1464,124 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         marginBottom: 20,
     },
+    inputWrapperError: {
+        borderColor: '#EF4444',
+    },
+    errorIconWrapper: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
+    },
+    errorText: {
+        color: '#EF4444',
+        fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
+        marginTop: -12,
+        marginBottom: 16,
+        marginLeft: 4,
+    },
+    cropperSaveText: {
+        color: '#FFF',
+        fontSize: responsiveFontSize(16),
+        fontFamily: Typography.sans.bold,
+    },
+    // Photo Source Modal Styles
+    sourceModalContent: {
+        backgroundColor: '#1C1C1E',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingHorizontal: 20,
+        paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+        borderBottomWidth: 0,
+    },
+    modalHandleContainer: {
+        width: '100%',
+        alignItems: 'center',
+        paddingTop: 8,
+        paddingBottom: 4,
+    },
+    sourceModalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    sourceModalTitle: {
+        fontSize: responsiveFontSize(18),
+        fontFamily: Typography.sans.bold,
+        color: '#FFF',
+    },
+    sourceModalCloseButton: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    sourceModalSubtitle: {
+        fontSize: responsiveFontSize(13),
+        fontFamily: Typography.sans.regular,
+        color: '#A1A1AA',
+        marginTop: 4,
+        marginBottom: 16,
+    },
+    sourceOptionList: {
+        gap: 12,
+        marginBottom: 16,
+    },
+    sourceOptionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 14,
+        backgroundColor: 'rgba(255, 255, 255, 0.04)',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+    },
+    sourceOptionIconWrapper: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        backgroundColor: 'rgba(185, 154, 74, 0.15)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 14,
+    },
+    sourceOptionTextContainer: {
+        flex: 1,
+    },
+    sourceOptionTitle: {
+        fontSize: responsiveFontSize(15),
+        fontFamily: Typography.sans.bold,
+        color: '#FFF',
+    },
+    sourceOptionDescription: {
+        fontSize: responsiveFontSize(12),
+        fontFamily: Typography.sans.regular,
+        color: '#A1A1AA',
+        marginTop: 2,
+    },
+    sourceCancelButton: {
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: 'rgba(255, 255, 255, 0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.08)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    sourceCancelButtonText: {
+        fontSize: responsiveFontSize(15),
+        fontFamily: Typography.sans.semiBold,
+        color: '#D4D4D8',
+    },
     input: {
         color: '#FFF',
         fontSize: responsiveFontSize(16),
         fontFamily: Typography.sans.bold,
-        width: '80%',
+        flex: 1,
         height: '100%',
     },
     inputText: {
@@ -1188,16 +1608,21 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: '#B99A4A',
         borderStyle: 'dashed',
-        borderRadius: 20,
+        borderRadius: 9999,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'transparent',
         marginBottom: 20,
         overflow: 'hidden',
     },
+    uploadContainerError: {
+        borderColor: '#EF4444',
+        backgroundColor: 'rgba(239, 68, 68, 0.04)',
+    },
     uploadedImage: {
         width: '100%',
         height: '100%',
+        borderRadius: 9999,
     },
     uploadPlaceholder: {
         alignItems: 'center',
@@ -1249,6 +1674,9 @@ const styles = StyleSheet.create({
     checkboxChecked: {
         backgroundColor: 'transparent',
         borderColor: 'transparent',
+    },
+    checkboxError: {
+        borderColor: '#EF4444',
     },
     termsText: {
         color: '#E0E0E0',

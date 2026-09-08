@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
+const { createStripeCustomer, deleteStripeCustomer } = require("../services/stripeService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -97,28 +98,41 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
     created_at: now,
   };
 
-  // Create Stripe Customer safely (non-blocking)
+  // Create Stripe Customer safely with phone, country, currency, timezone, and business name
   let stripeCustomerId = null;
   try {
-    const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-    const customer = await stripe.customers.create({
+    stripeCustomerId = await createStripeCustomer({
+      orgId,
+      companyName: data.companyName,
       email: data.email,
-      name: data.companyName,
-      metadata: {
-        orgId: orgId
-      }
+      firstName: data.firstName,
+      lastName: data.lastName,
+      phoneCode: data.phoneCode,
+      phoneNumber: data.phoneNumber,
+      country: data.country,
     });
-    stripeCustomerId = customer.id;
-    newOrg.stripe_customer_id = stripeCustomerId;
-    console.log(`✅ Stripe Customer created: ${stripeCustomerId} for Org ${orgId}`);
+    if (stripeCustomerId) {
+      newOrg.stripe_customer_id = stripeCustomerId;
+      newUser.stripe_customer_id = stripeCustomerId;
+      console.log(`✅ Stripe Customer ID ${stripeCustomerId} saved to Org ${orgId} and User ${uid}`);
+    }
   } catch (stripeErr) {
     console.warn("⚠️ Stripe Customer creation failed during org signup (non-blocking):", stripeErr);
   }
+
+  // Generate secure single-use auth handoff token for mobile app onboarding
+  const handoffToken = crypto.randomBytes(32).toString("hex");
 
   // Atomic multi-path write
   const updates = {
     [`orgs/${orgId}`]: newOrg,
     [`users/${uid}`]: newUser,
+    [`auth_handoff_tokens/${handoffToken}`]: {
+      uid: uid,
+      createdAt: now,
+      expiresAt: Date.now() + 15 * 60 * 1000,
+      used: false,
+    },
   };
   await db.ref().update(updates);
 
@@ -130,8 +144,9 @@ exports.createOrganization = onCall({ region: "europe-west1" }, async (request) 
     ipAddress: request.rawRequest?.ip,
   });
 
-  return { orgId, uid };
+  return { orgId, uid, handoffToken };
 });
+
 
 // ── Update Member Role (Admin only) ──────────────────────────────────────────
 // S6: Only admin can change roles. S8: Target user must belong to caller's org.
@@ -192,6 +207,13 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
       "Please re-authenticate before deleting your organization."
     );
   }
+
+  // Delete associated Stripe customer
+  const orgSnap = await db.ref(`orgs/${callerOrgId}`).get();
+  const orgData = orgSnap.val() || {};
+  const stripeCustomerId = orgData.stripe_customer_id;
+  const adminEmail = orgData.email || request.auth.token.email;
+  await deleteStripeCustomer(stripeCustomerId, adminEmail, callerOrgId);
 
   // Soft-delete: mark org as deleted, clean-up scheduled by dataCleanupCron
   await db.ref(`orgs/${callerOrgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);

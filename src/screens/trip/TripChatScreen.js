@@ -12,9 +12,11 @@ import {
     KeyboardAvoidingView,
     Platform,
     TouchableWithoutFeedback,
-    Keyboard
+    Keyboard,
+    Modal as RNModal,
 } from 'react-native';
 import Modal from '../../components/CompatModal';
+import { useEvent } from 'expo';
 import { Svg, Path } from 'react-native-svg';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
@@ -28,11 +30,15 @@ import { database, auth } from '../../config/firebase';
 import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as ImagePicker from 'expo-image-picker';
+import { VideoView, useVideoPlayer } from 'expo-video';
+import * as VideoThumbnails from 'expo-video-thumbnails';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
 import { createAudioPlayer, useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { storage } from '../../config/firebase';
-import { ActivityIndicator, Linking, Vibration } from 'react-native';
+import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
+import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width, height } = Dimensions.get('window');
 const SCREEN_WIDTH = width;
@@ -135,17 +141,19 @@ const getParticipantColor = (senderId) => {
     return colors[index];
 };
 
-const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress }) => {
+const thumbnailCache = new Map();
+
+const ChatMessage = React.memo(({ item, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
-        <View style={[styles.metaRow, isShortText && { marginTop: 0, marginLeft: 12 }, isImage && styles.imageMetaOverlay]}>
-            <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }, isImage && { color: 'rgba(255,255,255,0.9)' }]}>{item.time}</Text>
+        <View style={[styles.metaRow, isShortText && { marginTop: 0, marginLeft: 12 }, isMedia && styles.imageMetaOverlay]}>
+            <Text style={[styles.timeText, isMe && { color: 'rgba(0,0,0,0.5)' }, isMedia && { color: 'rgba(255,255,255,0.9)' }]}>{item.time}</Text>
             {isMe && (() => {
                 const buffer = 5000;
                 const isSeenByEveryone = currentParticipants.length > 0 &&
                     currentParticipants.every(uid => (readPointers[uid] || 0) >= (item.rawTimestamp - buffer));
-                const tickColor = isSeenByEveryone ? "#2196F3" : (isImage ? "rgba(255,255,255,0.9)" : "#A1A1AA");
+                const tickColor = isSeenByEveryone ? "#2196F3" : (isMedia ? "rgba(255,255,255,0.9)" : "#A1A1AA");
                 return (
                     <MaterialCommunityIcons name="check-all" size={16} color={tickColor} style={{ marginLeft: 4 }} />
                 );
@@ -180,17 +188,16 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                     <Image
                         source={{
                             uri: participantProfiles[item.sender_id]?.avatar ||
-                                (item.avatar && !item.avatar.includes('ui-avatars.com') ? item.avatar : null) ||
-                                `https://ui-avatars.com/api/?name=${encodeURIComponent(item.senderName || 'User')}&background=B99A4A&color=fff`
+                                `https://ui-avatars.com/api/?name=${encodeURIComponent(participantProfiles[item.sender_id]?.name?.[0] || item.senderName?.[0] || 'U')}&background=B99A4A&color=fff`
                         }}
                         style={styles.messageAvatar}
                     />
                 )}
 
-                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther, isImage && { padding: 0, overflow: 'hidden' }]}>
+                <View style={[styles.messageBubble, isMe ? styles.bubbleMe : styles.bubbleOther, isMedia && { padding: 0, overflow: 'hidden' }]}>
                     {/* Reply Preview */}
                     {item.replyTo && (
-                        <View style={[styles.replyContainer, isImage && { marginHorizontal: 12, marginTop: 8 }]}>
+                        <View style={[styles.replyContainer, isMedia && { marginHorizontal: 12, marginTop: 8 }]}>
                             <View style={[styles.replyLine, { backgroundColor: item.replyTo.color || '#B99A4A' }]} />
                             <View style={styles.replyContent}>
                                 <Text style={[styles.replySender, { color: item.replyTo.color || '#B99A4A' }]}>{item.replyTo.sender}</Text>
@@ -203,13 +210,13 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                         <Text style={[
                             styles.senderName,
                             { color: item.color || getParticipantColor(item.sender_id) },
-                            isImage && { paddingHorizontal: 12, paddingTop: 8 }
+                            isMedia && { paddingHorizontal: 12, paddingTop: 8 }
                         ]}>
                             {participantProfiles[item.sender_id]?.name || item.senderName || item.sender_name || 'Participant'}
                         </Text>
                     )}
 
-                    <View style={(isShortText && !isImage) ? { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' } : {}}>
+                    <View style={(isShortText && !isMedia) ? { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' } : {}}>
                         {item.type === 'image' ? (
                             <View>
                                 <TouchableOpacity
@@ -223,6 +230,20 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                                     {/* Only show meta on image if no caption, otherwise show below */}
                                     {!item.text && renderMeta()}
                                 </TouchableOpacity>
+                                {item.text ? (
+                                    <View style={{ marginTop: 4, paddingHorizontal: 4 }}>
+                                        <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
+                                    </View>
+                                ) : null}
+                            </View>
+                        ) : item.type === 'video' ? (
+                            <View>
+                                <VideoBubble
+                                    uri={item.video_url || item.media_url}
+                                    thumbnailUrl={item.thumbnail_url}
+                                    onOpenFullscreen={() => onVideoPress(item.video_url || item.media_url)}
+                                />
+                                {!item.text && renderMeta()}
                                 {item.text ? (
                                     <View style={{ marginTop: 4, paddingHorizontal: 4 }}>
                                         <Text style={[styles.messageText, isMe && { color: '#131314' }]}>{item.text}</Text>
@@ -254,17 +275,212 @@ const ChatMessage = React.memo(({ item, isMe, isImage, isShortText, setReplyingT
                         {isShortText && renderMeta()}
                     </View>
 
-                    {((!isShortText && !isImage) || (isImage && item.text)) && renderMeta()}
+                    {((!isShortText && !isMedia) || (isMedia && item.text)) && renderMeta()}
                 </View>
             </View>
         </Swipeable>
     );
 });
 
+const getVideoThumbnail = async (videoUri) => {
+    if (!videoUri) return null;
+
+    if (thumbnailCache.has(videoUri)) {
+        return thumbnailCache.get(videoUri);
+    }
+
+    // 1. Try local or remote directly with time: 0
+    try {
+        const result = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 0, quality: 0.7 });
+        if (result?.uri) {
+            thumbnailCache.set(videoUri, result.uri);
+            return result.uri;
+        }
+    } catch (_) {}
+
+    // 2. For remote URLs, download to local cache and generate thumbnail with time: 0
+    if (videoUri.startsWith('http://') || videoUri.startsWith('https://')) {
+        try {
+            const urlWithoutQuery = videoUri.split('?')[0];
+            const rawFilename = urlWithoutQuery.split('/').pop() || 'temp_video';
+            const sanitizedFilename = `thumb_${rawFilename.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+            const localCachedVideoPath = `${FileSystem.cacheDirectory}${sanitizedFilename}`;
+
+            const fileInfo = await FileSystem.getInfoAsync(localCachedVideoPath);
+            if (!fileInfo.exists) {
+                await FileSystem.downloadAsync(videoUri, localCachedVideoPath);
+            }
+
+            const result = await VideoThumbnails.getThumbnailAsync(localCachedVideoPath, { time: 0, quality: 0.7 });
+            if (result?.uri) {
+                thumbnailCache.set(videoUri, result.uri);
+                return result.uri;
+            }
+        } catch (err) {
+            console.log("[VideoBubble] Cache thumbnail extraction failed:", videoUri, err);
+        }
+    }
+
+    return null;
+};
+
+// ── Video Bubble ──────────────────────────────────────────────────────────────
+const VideoBubble = React.memo(({ uri, thumbnailUrl, onOpenFullscreen }) => {
+    const cachedThumb = uri ? thumbnailCache.get(uri) : null;
+    const [thumbnail, setThumbnail] = useState(thumbnailUrl || cachedThumb || null);
+    const [loading, setLoading] = useState(!thumbnailUrl && !cachedThumb && !!uri);
+
+    const player = useVideoPlayer(uri, p => {
+        p.loop = false;
+    });
+
+    const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player?.playing || false });
+
+    useEffect(() => {
+        let isMounted = true;
+        if (thumbnailUrl) {
+            setThumbnail(thumbnailUrl);
+            setLoading(false);
+            if (uri) thumbnailCache.set(uri, thumbnailUrl);
+            return;
+        }
+
+        if (uri) {
+            if (thumbnailCache.has(uri)) {
+                setThumbnail(thumbnailCache.get(uri));
+                setLoading(false);
+                return;
+            }
+
+            setLoading(true);
+            getVideoThumbnail(uri)
+                .then((thumbUri) => {
+                    if (isMounted && thumbUri) {
+                        setThumbnail(thumbUri);
+                    }
+                })
+                .catch((err) => {
+                    console.log("[VideoBubble] Error retrieving thumbnail:", err);
+                })
+                .finally(() => {
+                    if (isMounted) setLoading(false);
+                });
+        }
+
+        return () => {
+            isMounted = false;
+        };
+    }, [uri, thumbnailUrl]);
+
+    const handlePlayPress = () => {
+        if (!player) return;
+        if (isPlaying) {
+            player.pause();
+        } else {
+            player.play();
+        }
+    };
+
+    return (
+        <View style={styles.videoWrapper}>
+            {isPlaying ? (
+                <VideoView
+                    player={player}
+                    style={styles.messageVideoImage}
+                    contentFit="cover"
+                    nativeControls={true}
+                    allowsFullscreen={true}
+                    allowsPictureInPicture={true}
+                />
+            ) : (
+                <TouchableOpacity
+                    style={StyleSheet.absoluteFill}
+                    onPress={handlePlayPress}
+                    activeOpacity={0.88}
+                >
+                    {thumbnail ? (
+                        <Image
+                            source={{ uri: thumbnail }}
+                            style={styles.messageVideoImage}
+                            resizeMode="cover"
+                        />
+                    ) : (
+                        <VideoView
+                            player={player}
+                            style={styles.messageVideoImage}
+                            contentFit="cover"
+                            nativeControls={false}
+                        />
+                    )}
+
+                    {/* Dark gradient / tint overlay for contrast when paused */}
+                    <View style={styles.videoPlayOverlay} pointerEvents="none">
+                        <View style={styles.playButtonCircle}>
+                            <Ionicons name="play" size={26} color="#FFFFFF" style={{ marginLeft: 3 }} />
+                        </View>
+                    </View>
+
+                    {/* Video badge in top-left */}
+                    <View style={styles.videoBadge} pointerEvents="none">
+                        <Ionicons name="videocam" size={12} color="#FFF" />
+                        <Text style={styles.videoBadgeText}>Video</Text>
+                    </View>
+                </TouchableOpacity>
+            )}
+
+            {/* Floating fullscreen expand button */}
+            <TouchableOpacity
+                style={styles.videoExpandBtn}
+                onPress={() => {
+                    player?.pause();
+                    onOpenFullscreen?.();
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                activeOpacity={0.8}
+            >
+                <Ionicons name="expand" size={16} color="#FFF" />
+            </TouchableOpacity>
+        </View>
+    );
+});
+
+// ── Fullscreen Video Viewer Content ───────────────────────────────────────────
+const VideoViewerContent = ({ uri, onClose }) => {
+    const player = useVideoPlayer(uri, p => {
+        p.loop = false;
+        p.play();
+    });
+
+    return (
+        <View style={styles.fullscreenModalContainer}>
+            <SafeAreaView style={styles.fullscreenModalHeader} edges={['top']}>
+                <TouchableOpacity
+                    style={styles.fullscreenCloseBtn}
+                    onPress={onClose}
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                >
+                    <Ionicons name="close" size={28} color="#FFF" />
+                </TouchableOpacity>
+            </SafeAreaView>
+
+            <View style={styles.fullscreenVideoWrapper}>
+                <VideoView
+                    player={player}
+                    style={styles.fullViewerVideo}
+                    contentFit="contain"
+                    nativeControls={true}
+                    allowsFullscreen={true}
+                    allowsPictureInPicture={true}
+                />
+            </View>
+        </View>
+    );
+};
+
 const TripChatScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
-    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
+    const { trip, invitationCode: directCode, isAdmin: passedIsAdmin, userRole } = route.params || {};
     const tripId = trip?.id || trip?.tripId;
     const orgId = trip?.org_id || trip?.orgId;
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
@@ -288,16 +504,60 @@ const TripChatScreen = () => {
     const [isUploading, setIsUploading] = useState(false);
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const [isRecording, setIsRecording] = useState(false);
+    const recorderReady = useRef(false); // tracks whether prepareToRecordAsync has been called
     const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
     const [replyingTo, setReplyingTo] = useState(null);
     const [pendingImageUri, setPendingImageUri] = useState(null);
     const [imageCaption, setImageCaption] = useState('');
     const [viewerImage, setViewerImage] = useState(null);
+    const [viewerVideo, setViewerVideo] = useState(null);
     const [currentUserAvatar, setCurrentUserAvatar] = useState(null);
+    const [staffData, setStaffData] = useState({});
+    const [organizerId, setOrganizerId] = useState(null);
+    const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
 
 
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
+
+    // Pre-warm audio recording so the first press is instant
+    useEffect(() => {
+        const prewarmRecorder = async () => {
+            try {
+                const { status } = await requestRecordingPermissionsAsync();
+                if (status !== 'granted') return;
+                await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+                await recorder.prepareToRecordAsync();
+                recorderReady.current = true;
+            } catch (e) {
+                // Non-fatal: recording will fall back to on-demand setup
+            }
+        };
+        prewarmRecorder();
+    }, []);
+
+    useEffect(() => {
+        if (!tripId || !resolvedOrgId) return;
+
+        const tripRef = ref(database, `orgs/${resolvedOrgId}/trips/${tripId}`);
+        get(tripRef).then((snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                if (data.endDate) {
+                    const endTime = typeof data.endDate === 'number'
+                        ? data.endDate
+                        : new Date(data.endDate).getTime();
+                    if (Date.now() > endTime) {
+                        Alert.alert("Trip Expired", "Chat is not available for this trip as it has expired.", [
+                            { text: "OK", onPress: () => navigation.goBack() }
+                        ]);
+                    }
+                }
+            }
+        }).catch((err) => {
+            console.log("Error checking trip expiration in Chat:", err);
+        });
+    }, [tripId, resolvedOrgId]);
 
     // Auto-focus keyboard on mount and start listening to DB
     useEffect(() => {
@@ -323,9 +583,10 @@ const TripChatScreen = () => {
 
         // Fetch current user's name first
         const fetchUserName = async () => {
-            if (auth.currentUser) {
+            const myUid = auth.currentUser?.uid;
+            if (myUid) {
                 try {
-                    const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+                    const userSnap = await get(ref(database, `users/${myUid}`));
                     if (userSnap.exists()) {
                         const userData = userSnap.val();
                         setCurrentUserFullName(userData.full_name || 'User');
@@ -334,6 +595,7 @@ const TripChatScreen = () => {
                         }
                     }
                 } catch (err) {
+                    console.log("[TripChatScreen] Error fetching user name:", err);
                 }
             }
 
@@ -384,8 +646,12 @@ const TripChatScreen = () => {
                     };
 
                     setMessages((prev) => {
-                        // Avoid duplicates
-                        if (prev.find(m => m.id === msg.id)) return prev;
+                        const existingIndex = prev.findIndex(m => m.id === msg.id);
+                        if (existingIndex >= 0) {
+                            const updated = [...prev];
+                            updated[existingIndex] = { ...updated[existingIndex], ...msg };
+                            return updated;
+                        }
                         // Prepend for inverted list (newest first in array)
                         return [msg, ...prev];
                     });
@@ -400,8 +666,20 @@ const TripChatScreen = () => {
                     });
 
                     // Update our read pointer since we just "saw" a new message
-                    if (auth.currentUser) {
+                    if (auth.currentUser?.uid) {
                         set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
+                    }
+                }
+            });
+
+            // Listen to trip data (organizer & visibility config)
+            const tripRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
+            const unsubTrip = onValue(tripRef, (snap) => {
+                if (snap.exists()) {
+                    const tData = snap.val() || {};
+                    setOrganizerId(tData.organizer_id || null);
+                    if (tData.visibility_config) {
+                        setGlobalVisibilityConfig(tData.visibility_config);
                     }
                 }
             });
@@ -418,6 +696,7 @@ const TripChatScreen = () => {
                 // Also get current staff to merge
                 get(staffRef).then(staffSnap => {
                     const staffVal = staffSnap.val() ?? {};
+                    setStaffData(staffVal);
                     const staffUids = Array.isArray(staffVal) ? staffVal.filter(v => v !== null) : Object.keys(staffVal);
 
                     const combinedUids = Array.from(new Set([
@@ -433,6 +712,7 @@ const TripChatScreen = () => {
             // Also listen to staff specifically so it's live if an admin is added
             const unsubStaff = onValue(staffRef, (snap) => {
                 const staffVal = snap.val() ?? {};
+                setStaffData(staffVal);
                 const staffUids = Array.isArray(staffVal) ? staffVal.filter(v => v !== null) : Object.keys(staffVal);
 
                 get(pRef).then(pSnap => {
@@ -460,15 +740,26 @@ const TripChatScreen = () => {
             const unsubTemplates = onValue(templatesRef, (snap) => {
                 if (!isAdmin) return; // S18: Participants should not see/use templates
                 const val = snap.val() ?? {};
-                const dbTemplates = Object.entries(val).map(([id, t]) => ({
-                    id,
-                    label: t.name,
-                    content: t.message,
-                    icon: 'custom',
-                    color: '#FFFFFF',
-                    bg: '#2A2D33',
-                    isAdded: true
-                }));
+                
+                // Deduplicate by normalized name and message
+                const seenKeys = new Set();
+                const dbTemplates = [];
+                for (const [id, t] of Object.entries(val)) {
+                    if (!t || !t.name) continue;
+                    const dedupKey = `${t.name.trim().toLowerCase()}:::${(t.message || '').trim()}`;
+                    if (!seenKeys.has(dedupKey)) {
+                        seenKeys.add(dedupKey);
+                        dbTemplates.push({
+                            id,
+                            label: t.name.trim(),
+                            content: t.message || '',
+                            icon: 'custom',
+                            color: '#FFFFFF',
+                            bg: '#2A2D33',
+                            isAdded: true
+                        });
+                    }
+                }
 
                 setOptions(prev => {
                     // Start with static tools only (photo, camera, etc.)
@@ -482,12 +773,13 @@ const TripChatScreen = () => {
             });
 
             // Initial read pointer update
-            if (auth.currentUser) {
+            if (auth.currentUser?.uid) {
                 set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
             }
 
             return () => {
                 off(chatRef);
+                unsubTrip();
                 unsubP();
                 unsubStaff();
                 unsubPointers();
@@ -505,16 +797,51 @@ const TripChatScreen = () => {
 
             try {
                 const profilePromises = currentParticipants.map(async (uid) => {
-                    const fullNameSnap = await get(ref(database, `users/${uid}/full_name`));
-                    const profileSnap = await get(ref(database, `users/${uid}/profile`));
+                    const [fullNameSnap, profileSnap, visSnap, photoSnap] = await Promise.all([
+                        get(ref(database, `users/${uid}/full_name`)),
+                        get(ref(database, `users/${uid}/profile`)),
+                        get(ref(database, `users/${uid}/participant_visibility/${tripId}`)),
+                        get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+                    ]);
 
-                    const fullName = fullNameSnap.val() || 'Participant';
-                    const profile = profileSnap.val() || {};
+                    const fullName = fullNameSnap.val();
+                    const rawProfile = profileSnap.val() || {};
+                    const photoUrl = photoSnap?.val();
+                    const profile = {
+                        ...rawProfile,
+                        photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
+                    };
+                    const visibility = visSnap.val() || {};
+                    const targetRole = staffData?.[uid];
+                    const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdmin;
+
+                    const displayName = getParticipantDisplayName({
+                        profile,
+                        fullName,
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfig,
+                        personalVisibility: visibility
+                    });
+
+                    const displayImage = getParticipantDisplayPhoto({
+                        profile,
+                        displayName,
+                        targetUid: uid,
+                        viewerUid: auth.currentUser?.uid,
+                        isViewerStaff,
+                        isTargetStaff,
+                        globalConfig: globalVisibilityConfig,
+                        personalVisibility: visibility
+                    });
 
                     return {
                         uid,
-                        name: uid === auth.currentUser?.uid ? 'You' : fullName,
-                        avatar: profile.photoURL
+                        name: displayName,
+                        avatar: displayImage
                     };
                 });
 
@@ -540,7 +867,7 @@ const TripChatScreen = () => {
         };
 
         fetchProfiles();
-    }, [currentParticipants]);
+    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId]);
 
     // Handle results if the activity was killed in the background (Android crash fix)
     useEffect(() => {
@@ -550,7 +877,9 @@ const TripChatScreen = () => {
                 if (result && result.length > 0) {
                     const firstResult = result[0];
                     if (!firstResult.canceled && firstResult.assets && firstResult.assets.length > 0) {
-                        uploadAndSendMedia(firstResult.assets[0].uri, 'image');
+                        const asset = firstResult.assets[0];
+                        const mediaType = asset.type === 'video' ? 'video' : 'image';
+                        uploadAndSendMedia(asset.uri, mediaType);
                     }
                 }
             } catch (err) {
@@ -603,6 +932,7 @@ const TripChatScreen = () => {
             messageData.replyTo = {
                 sender: replySenderName,
                 text: replyingTo.type === 'image' ? '📷 Photo' :
+                    replyingTo.type === 'video' ? '🎬 Video' :
                     replyingTo.type === 'location' ? '📍 Location' :
                         replyingTo.type === 'voice' ? '🎤 Voice Message' :
                             replyingTo.text,
@@ -624,10 +954,15 @@ const TripChatScreen = () => {
     const [templateModalVisible, setTemplateModalVisible] = useState(false);
     const [templateName, setTemplateName] = useState('');
     const [templateContent, setTemplateContent] = useState('');
+    const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+    const isSubmittingTemplateRef = useRef(false);
 
     const triggerTemplateBroadcast = async (message) => {
-        if (!orgId || !tripId) return;
+        const targetOrgId = resolvedOrgId || orgId;
+        if (!targetOrgId || !tripId) return;
         try {
+            const timestamp = Date.now();
+            const senderName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
             const participantsRef = ref(database, `trips_participants/${tripId}`);
             const participantsSnap = await get(participantsRef);
 
@@ -636,20 +971,20 @@ const TripChatScreen = () => {
                 // S22: Correctly extract UIDs (keys) and ensure they are unique to prevent spamming
                 const rawUids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
                 const uids = Array.from(new Set(rawUids.filter(id => typeof id === 'string')));
-                const adminName = currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'Admin';
-                const timestamp = serverTimestamp();
-                const targetOrgId = resolvedOrgId || orgId;
-                if (!targetOrgId) return;
+                const myUid = auth.currentUser?.uid;
 
-                const broadcastPromises = uids.map(uid => {
-                    const userNotifRef = ref(database, `trips_active/${targetOrgId}/${tripId}/notifications/${uid}`);
-                    return push(userNotifRef, {
-                        name: adminName,
-                        message: message,
-                        timestamp: timestamp,
-                        type: 'alert'
+                const broadcastPromises = uids
+                    .filter(uid => uid !== myUid)
+                    .map(uid => {
+                        const userNotifRef = ref(database, `trips_active/${targetOrgId}/${tripId}/notifications/${uid}`);
+                        return push(userNotifRef, {
+                            name: senderName,
+                            message: message,
+                            timestamp: timestamp,
+                            type: 'alert',
+                            senderUid: myUid
+                        });
                     });
-                });
                 await Promise.all(broadcastPromises);
             }
         } catch (error) {
@@ -659,6 +994,8 @@ const TripChatScreen = () => {
 
     const handleOptionPress = (item) => {
         if (item.id === 'add_template') {
+            setTemplateName('');
+            setTemplateContent('');
             setTemplateModalVisible(true);
         } else if (item.content) {
             // This is a saved template from DB - Send immediately!
@@ -678,7 +1015,7 @@ const TripChatScreen = () => {
             triggerTemplateBroadcast(item.content);
 
         } else if (item.id === 'photo') {
-            handlePickImage();
+            handlePickMedia();
         } else if (item.id === 'camera') {
             handleTakePhoto();
         } else if (item.id === 'location') {
@@ -688,7 +1025,7 @@ const TripChatScreen = () => {
     };
 
 
-    const handlePickImage = async () => {
+    const handlePickMedia = async () => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
             alert('Sorry, we need camera roll permissions to make this work!');
@@ -696,14 +1033,20 @@ const TripChatScreen = () => {
         }
 
         let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
+            mediaTypes: ['images', 'videos'],
             allowsEditing: false,
             quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            setPendingImageUri(result.assets[0].uri);
-            setImageCaption('');
+            const asset = result.assets[0];
+            if (asset.type === 'video') {
+                // Send video directly (no caption preview for videos)
+                uploadAndSendMedia(asset.uri, 'video');
+            } else {
+                setPendingImageUri(asset.uri);
+                setImageCaption('');
+            }
         }
     };
 
@@ -731,35 +1074,97 @@ const TripChatScreen = () => {
         setIsUploading(true);
         setShowAttachments(false);
 
+        let blob = null;
         try {
-            const response = await fetch(uri);
-            const blob = await response.blob();
+            // Use XMLHttpRequest to get the local URI blob stably in React Native
+            blob = await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.onload = function () {
+                    resolve(xhr.response);
+                };
+                xhr.onerror = function (e) {
+                    console.log("[TripChatScreen] XHR failed for URI:", uri, e);
+                    reject(new TypeError("Network request failed"));
+                };
+                xhr.responseType = "blob";
+                xhr.open("GET", uri, true);
+                xhr.send(null);
+            });
 
             const isVoice = type === 'voice';
-            const extension = isVoice ? 'm4a' : 'jpg';
-            const contentType = isVoice ? 'audio/m4a' : 'image/jpeg';
+            const isVideo = type === 'video';
+            const extension = isVoice ? 'm4a' : isVideo ? 'mp4' : 'jpg';
+            const contentType = isVoice ? 'audio/m4a' : isVideo ? 'video/mp4' : 'image/jpeg';
 
-            const filename = `${Date.now()}_${auth.currentUser.uid}.${extension}`;
+            const senderUid = auth.currentUser?.uid;
+            if (!senderUid) {
+                alert("You must be logged in to send media.");
+                return;
+            }
+
+            const timestamp = Date.now();
+            const filename = `${timestamp}_${senderUid}.${extension}`;
             const fileRef = storageRef(storage, `chat_media/${tripId}/${filename}`);
             const metadata = { contentType };
 
             await uploadBytes(fileRef, blob, metadata);
             const downloadUrl = await getDownloadURL(fileRef);
 
+            let thumbnailDownloadUrl = null;
+            if (isVideo) {
+                try {
+                    const thumbResult = await VideoThumbnails.getThumbnailAsync(uri, {
+                        time: 0,
+                        quality: 0.8,
+                    });
+                    if (thumbResult?.uri) {
+                        const thumbBlob = await new Promise((resolve, reject) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.onload = function () {
+                                resolve(xhr.response);
+                            };
+                            xhr.onerror = function (e) {
+                                console.log("[TripChatScreen] Thumb XHR failed:", e);
+                                reject(new TypeError("Thumbnail request failed"));
+                            };
+                            xhr.responseType = "blob";
+                            xhr.open("GET", thumbResult.uri, true);
+                            xhr.send(null);
+                        });
+                        const thumbFilename = `thumb_${timestamp}_${senderUid}.jpg`;
+                        const thumbRef = storageRef(storage, `chat_media/${tripId}/${thumbFilename}`);
+                        await uploadBytes(thumbRef, thumbBlob, { contentType: 'image/jpeg' });
+                        thumbnailDownloadUrl = await getDownloadURL(thumbRef);
+                        try { thumbBlob.close(); } catch (e) {}
+                    }
+                } catch (thumbErr) {
+                    console.log("[TripChatScreen] Could not generate/upload video thumbnail:", thumbErr);
+                }
+            }
+
             const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
             const messageData = {
                 type: type,
-                sender_id: auth.currentUser.uid,
-                sender_name: currentUserFullName || auth.currentUser.email?.split('@')[0] || 'User',
+                sender_id: senderUid,
+                sender_name: currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
                 avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
                 timestamp: serverTimestamp(),
             };
 
             if (type === 'image') {
                 messageData.image_url = downloadUrl;
+                messageData.media_url = downloadUrl;
                 if (caption) messageData.text = caption;
             } else if (type === 'voice') {
                 messageData.audio_url = downloadUrl;
+                messageData.media_url = downloadUrl;
+            } else if (type === 'video') {
+                messageData.video_url = downloadUrl;
+                messageData.media_url = downloadUrl;
+                if (thumbnailDownloadUrl) {
+                    messageData.thumbnail_url = thumbnailDownloadUrl;
+                }
+                if (caption) messageData.text = caption;
             } else {
                 messageData.media_url = downloadUrl;
             }
@@ -767,8 +1172,16 @@ const TripChatScreen = () => {
             await push(chatListRef, messageData);
 
         } catch (error) {
+            console.error("[TripChatScreen] Failed to upload/send media:", error);
             alert("Failed to send media. Please try again.");
         } finally {
+            if (blob) {
+                try {
+                    blob.close();
+                } catch (e) {
+                    console.log("[TripChatScreen] Error closing blob:", e);
+                }
+            }
             setIsUploading(false);
         }
     };
@@ -777,6 +1190,12 @@ const TripChatScreen = () => {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
             alert('Permission to access location was denied');
+            return;
+        }
+
+        const senderUid = auth.currentUser?.uid;
+        if (!senderUid) {
+            alert("You must be logged in to share location.");
             return;
         }
 
@@ -792,7 +1211,7 @@ const TripChatScreen = () => {
                 type: 'location',
                 latitude,
                 longitude,
-                sender_id: auth.currentUser.uid,
+                sender_id: senderUid,
                 sender_name: currentUserFullName || 'User',
                 avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
                 timestamp: serverTimestamp(),
@@ -808,23 +1227,24 @@ const TripChatScreen = () => {
         if (isRecording) return;
 
         try {
-            const { status } = await requestRecordingPermissionsAsync();
-            if (status !== 'granted') {
-                alert('Microphone permission is required to record voice messages.');
-                return;
+            if (!recorderReady.current) {
+                // Fallback: setup on-demand if pre-warm didn't finish
+                const { status } = await requestRecordingPermissionsAsync();
+                if (status !== 'granted') {
+                    alert('Microphone permission is required to record voice messages.');
+                    return;
+                }
+                await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+                await recorder.prepareToRecordAsync();
+                recorderReady.current = true;
             }
 
-            await setAudioModeAsync({
-                allowsRecording: true,
-                playsInSilentMode: true,
-            });
-
-            Vibration.vibrate(50); // Haptic feedback for recording start
-            await recorder.prepareToRecordAsync();
+            Vibration.vibrate(50);
             recorder.record();
             setIsRecording(true);
         } catch (err) {
             setIsRecording(false);
+            recorderReady.current = false;
             console.error("Error starting recording:", err);
         }
     };
@@ -840,43 +1260,83 @@ const TripChatScreen = () => {
             if (uri) {
                 uploadAndSendMedia(uri, 'voice');
             }
+
+            // Re-prepare so the next press is also instant
+            recorderReady.current = false;
+            recorder.prepareToRecordAsync().then(() => {
+                recorderReady.current = true;
+            }).catch(() => {});
         } catch (error) {
             console.error("Error stopping recording:", error);
         }
     };
 
     const handleAddTemplate = async () => {
-        if (templateName.trim() && templateContent.trim() && orgId && tripId) {
-            try {
-                // 1. Save to templates node for future use
-                const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
-                await push(templatesRef, {
-                    name: templateName,
-                    message: templateContent,
-                    created_by: auth.currentUser?.uid,
-                    timestamp: serverTimestamp()
-                });
+        if (isSubmittingTemplateRef.current) return;
 
-                // 2. Also send as a message to the chat immediately
-                const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
-                await push(chatListRef, {
-                    type: 'text',
-                    text: templateContent,
-                    sender_id: auth.currentUser?.uid,
-                    sender_name: currentUserFullName || 'Admin',
-                    timestamp: serverTimestamp(),
-                });
+        const effectiveOrgId = resolvedOrgId || orgId;
+        const trimmedName = templateName.trim();
+        const trimmedContent = templateContent.trim();
 
-                // 3. BROADCAST to all participants (the "Notification" block)
-                await triggerTemplateBroadcast(templateContent);
+        if (!trimmedName || !trimmedContent || !effectiveOrgId || !tripId) {
+            return;
+        }
 
-                // Reset and close
-                setTemplateName('');
-                setTemplateContent('');
-                setTemplateModalVisible(false);
-            } catch (error) {
-                alert("Failed to create and broadcast template.");
+        isSubmittingTemplateRef.current = true;
+        setIsCreatingTemplate(true);
+
+        try {
+            const templatesRef = ref(database, `trips_active/${effectiveOrgId}/${tripId}/templates`);
+
+            // 1. Check if an identical template already exists to prevent duplicates
+            const existingSnap = await get(templatesRef);
+            if (existingSnap.exists()) {
+                const existingData = existingSnap.val() || {};
+                const isDuplicate = Object.values(existingData).some(t =>
+                    t && t.name && t.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+                    (t.message || '').trim() === trimmedContent
+                );
+
+                if (isDuplicate) {
+                    Alert.alert("Template Exists", "A template with this name and message already exists.");
+                    setTemplateName('');
+                    setTemplateContent('');
+                    setTemplateModalVisible(false);
+                    return;
+                }
             }
+
+            // 2. Save to templates node for future use
+            await push(templatesRef, {
+                name: trimmedName,
+                message: trimmedContent,
+                created_by: auth.currentUser?.uid,
+                timestamp: serverTimestamp()
+            });
+
+            // 3. Also send as a message to the chat immediately
+            const chatListRef = ref(database, `trips_active/${effectiveOrgId}/${tripId}/chat`);
+            await push(chatListRef, {
+                type: 'text',
+                text: trimmedContent,
+                sender_id: auth.currentUser?.uid,
+                sender_name: currentUserFullName || 'Admin',
+                timestamp: serverTimestamp(),
+            });
+
+            // 4. BROADCAST to all participants (the "Notification" block)
+            await triggerTemplateBroadcast(trimmedContent);
+
+            // Reset and close
+            setTemplateName('');
+            setTemplateContent('');
+            setTemplateModalVisible(false);
+        } catch (error) {
+            console.error("Failed to create template:", error);
+            Alert.alert("Error", "Failed to create and broadcast template.");
+        } finally {
+            isSubmittingTemplateRef.current = false;
+            setIsCreatingTemplate(false);
         }
     };
 
@@ -888,14 +1348,14 @@ const TripChatScreen = () => {
 
     const renderMessage = React.useCallback(({ item }) => {
         const isMe = item.sender === 'me';
-        const isImage = item.type === 'image';
+        const isMedia = item.type === 'image' || item.type === 'video';
         const isShortText = (item.type === 'text' || !item.type) && (item.text || '').length < 16 && !item.replyTo;
 
         return (
             <ChatMessage
                 item={item}
                 isMe={isMe}
-                isImage={isImage}
+                isMedia={isMedia}
                 isShortText={isShortText}
                 setReplyingTo={setReplyingTo}
                 inputRef={inputRef}
@@ -903,6 +1363,7 @@ const TripChatScreen = () => {
                 readPointers={readPointers}
                 participantProfiles={participantProfiles}
                 onImagePress={setViewerImage}
+                onVideoPress={setViewerVideo}
             />
         );
     }, [currentParticipants, readPointers, participantProfiles]);
@@ -970,142 +1431,160 @@ const TripChatScreen = () => {
                     </LinearGradient>
                 </View>
 
+                {/* Static Background Layer (covers full screen height and never resizes or shifts) */}
+                <View 
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: SCREEN_WIDTH,
+                        height: SCREEN_HEIGHT,
+                        backgroundColor: '#1A1E21',
+                    }}
+                    pointerEvents="none"
+                >
+                    <ImageBackground
+                        source={{ uri: 'https://www.transparenttextures.com/patterns/dark-matter.png' }}
+                        style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}
+                        imageStyle={{ opacity: 0.1 }}
+                        resizeMode="repeat"
+                    >
+                        <View style={styles.backgroundLogoContainer}>
+                            <Logo 
+                                width={SCREEN_WIDTH * 0.55} 
+                                height={SCREEN_WIDTH * 0.55} 
+                                color="rgba(185, 154, 74, 0.15)" 
+                                style={{ width: SCREEN_WIDTH * 0.55, height: SCREEN_WIDTH * 0.55 }}
+                            />
+                        </View>
+                    </ImageBackground>
+                </View>
+
                 <KeyboardAvoidingView
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     style={{ flex: 1 }}
                     keyboardVerticalOffset={0}
                 >
-                    <ImageBackground
-                        source={{ uri: 'https://www.transparenttextures.com/patterns/dark-matter.png' }}
-                        style={styles.chatBackground}
-                        imageStyle={{ opacity: 0.1 }}
-                    >
-                        <View style={{ flex: 1 }}>
-                            <View style={styles.backgroundLogoContainer} pointerEvents="none">
-                                <Logo 
-                                    width={SCREEN_WIDTH * 0.5} 
-                                    height={SCREEN_WIDTH * 0.5} 
-                                    color="rgba(185, 154, 74, 0.2)" 
-                                    style={{ width: SCREEN_WIDTH * 0.5, height: SCREEN_WIDTH * 0.5 }}
-                                />
+                    <FlatList
+                        ref={flatListRef}
+                        data={messages}
+                        renderItem={renderMessage}
+                        keyExtractor={item => item.id}
+                        inverted={true}
+                        style={{ flex: 1, backgroundColor: 'transparent' }}
+                        contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
+                        onScrollBeginDrag={dismissAll}
+                        keyboardDismissMode="interactive"
+                        initialNumToRender={15}
+                        maxToRenderPerBatch={10}
+                        windowSize={10}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                    />
+
+                    {/* Input Bar - wrapped in SafeAreaView */}
+                    <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
+                        {/* Reply Preview */}
+                        {replyingTo && (
+                            <View style={styles.replyPreviewContainer}>
+                                <View style={[styles.replyLine, { backgroundColor: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]} />
+                                <View style={styles.replyPreviewContent}>
+                                    <Text style={[styles.replySender, { color: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]}>
+                                        {replyingTo.senderName || replyingTo.sender_name || 'Participant'}
+                                    </Text>
+                                    <Text style={styles.replyPreviewText} numberOfLines={1}>
+                                        {replyingTo.type === 'image' ? '📷 Photo' :
+                                            replyingTo.type === 'location' ? '📍 Location' :
+                                                replyingTo.type === 'voice' ? '🎤 Voice Message' :
+                                                    replyingTo.text}
+                                    </Text>
+                                </View>
+                                <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.closeReplyBtn}>
+                                    <Ionicons name="close-circle" size={24} color="#A1A1AA" />
+                                </TouchableOpacity>
                             </View>
-                            <FlatList
-                                ref={flatListRef}
-                                data={messages}
-                                renderItem={renderMessage}
-                                keyExtractor={item => item.id}
-                                inverted={true}
-                                contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
-                                onScrollBeginDrag={dismissAll}
-                                keyboardDismissMode="interactive"
-                                initialNumToRender={15}
-                                maxToRenderPerBatch={10}
-                                windowSize={10}
-                                removeClippedSubviews={Platform.OS === 'android'}
+                        )}
+
+                        {/* Input Bar */}
+                        <View style={[styles.inputBar, (showAttachments || replyingTo) && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: replyingTo ? 0 : 20, borderTopRightRadius: replyingTo ? 0 : 20 }]}>
+                            <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
+                                {showAttachments ? (
+                                    <MaterialCommunityIcons name="keyboard" size={24} color="#FFF" />
+                                ) : (
+                                    // "Plus" or Grid icon for attachments
+                                    <MaterialCommunityIcons name="plus" size={28} color="#FFF" />
+                                )}
+                            </TouchableOpacity>
+
+                            <TextInput
+                                ref={inputRef}
+                                style={styles.textInput}
+                                placeholder=""
+                                placeholderTextColor="#666"
+                                value={inputText}
+                                onChangeText={setInputText}
+                                onFocus={handleInputFocus}
+                                multiline={true}
+                                blurOnSubmit={false}
                             />
+
+                            <TouchableOpacity style={styles.iconBtn} onPress={handleTakePhoto}>
+                                <Ionicons name="camera-outline" size={24} color="#FFF" />
+                            </TouchableOpacity>
+
+
+                            <TouchableOpacity
+                                style={[
+                                    styles.sendButton,
+                                    // isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
+                                ]}
+                                onPress={handleSendMessage}
+                                // onPressIn={inputText.trim().length === 0 ? startRecording : null}
+                                // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                disabled={isUploading || inputText.trim().length === 0}
+                            >
+                                {isUploading ? (
+                                    <ActivityIndicator size="small" color="#FFF" />
+                                ) : (
+                                    <Ionicons
+                                        name="send" // Forced to "send" for now
+                                        // name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
+                                        size={20}
+                                        color="#FFF"
+                                    />
+                                )}
+                            </TouchableOpacity>
+
                         </View>
 
-                        {/* Input Bar - wrapped in SafeAreaView */}
-                        <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
-                            {/* Reply Preview */}
-                            {replyingTo && (
-                                <View style={styles.replyPreviewContainer}>
-                                    <View style={[styles.replyLine, { backgroundColor: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]} />
-                                    <View style={styles.replyPreviewContent}>
-                                        <Text style={[styles.replySender, { color: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]}>
-                                            {replyingTo.senderName || replyingTo.sender_name || 'Participant'}
-                                        </Text>
-                                        <Text style={styles.replyPreviewText} numberOfLines={1}>
-                                            {replyingTo.type === 'image' ? '📷 Photo' :
-                                                replyingTo.type === 'location' ? '📍 Location' :
-                                                    replyingTo.type === 'voice' ? '🎤 Voice Message' :
-                                                        replyingTo.text}
-                                        </Text>
-                                    </View>
-                                    <TouchableOpacity onPress={() => setReplyingTo(null)} style={styles.closeReplyBtn}>
-                                        <Ionicons name="close-circle" size={24} color="#A1A1AA" />
-                                    </TouchableOpacity>
+                        {/* Attachment Drawer */}
+                        {showAttachments && (
+                            <View style={styles.attachmentDrawer}>
+                                <View style={styles.optionsGrid}>
+                                    {options.map(renderOptionItem)}
                                 </View>
-                            )}
 
-                            {/* Input Bar */}
-                            <View style={[styles.inputBar, (showAttachments || replyingTo) && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: replyingTo ? 0 : 20, borderTopRightRadius: replyingTo ? 0 : 20 }]}>
-                                <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
-                                    {showAttachments ? (
-                                        <MaterialCommunityIcons name="keyboard" size={24} color="#FFF" />
-                                    ) : (
-                                        // "Plus" or Grid icon for attachments
-                                        <MaterialCommunityIcons name="plus" size={28} color="#FFF" />
-                                    )}
-                                </TouchableOpacity>
-
-                                <TextInput
-                                    ref={inputRef}
-                                    style={styles.textInput}
-                                    placeholder=""
-                                    placeholderTextColor="#666"
-                                    value={inputText}
-                                    onChangeText={setInputText}
-                                    onFocus={handleInputFocus}
-                                    multiline={true}
-                                    blurOnSubmit={false}
-                                />
-
-                                <TouchableOpacity style={styles.iconBtn} onPress={handleTakePhoto}>
-                                    <Ionicons name="camera-outline" size={24} color="#FFF" />
-                                </TouchableOpacity>
-
-
-                                <TouchableOpacity
-                                    style={[
-                                        styles.sendButton,
-                                        // isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
-                                    ]}
-                                    onPress={handleSendMessage}
-                                    // onPressIn={inputText.trim().length === 0 ? startRecording : null}
-                                    // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
-                                    disabled={isUploading || inputText.trim().length === 0}
-                                >
-                                    {isUploading ? (
-                                        <ActivityIndicator size="small" color="#FFF" />
-                                    ) : (
-                                        <Ionicons
-                                            name="send" // Forced to "send" for now
-                                            // name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
-                                            size={20}
-                                            color="#FFF"
-                                        />
-                                    )}
-                                </TouchableOpacity>
-
+                                {/* Pagination Dots - Only show if more than one page (8 items) is needed */}
+                                {options.length > 8 && (
+                                    <View style={styles.paginationDots}>
+                                        <View style={[styles.dot, styles.activeDot]} />
+                                        <View style={styles.dot} />
+                                    </View>
+                                )}
                             </View>
-
-                            {/* Attachment Drawer */}
-                            {showAttachments && (
-                                <View style={styles.attachmentDrawer}>
-                                    <View style={styles.optionsGrid}>
-                                        {options.map(renderOptionItem)}
-                                    </View>
-
-                                    {/* Pagination Dots - Only show if more than one page (8 items) is needed */}
-                                    {options.length > 8 && (
-                                        <View style={styles.paginationDots}>
-                                            <View style={[styles.dot, styles.activeDot]} />
-                                            <View style={styles.dot} />
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-                        </SafeAreaView>
-                    </ImageBackground>
+                        )}
+                    </SafeAreaView>
                 </KeyboardAvoidingView>
 
                 {/* Template Creation Modal */}
                 <Modal
                     isVisible={templateModalVisible}
-                    onBackdropPress={() => setTemplateModalVisible(false)}
-                    onSwipeComplete={() => setTemplateModalVisible(false)}
-                    swipeDirection="down"
+                    onBackdropPress={() => {
+                        if (!isCreatingTemplate) setTemplateModalVisible(false);
+                    }}
+                    onSwipeComplete={() => {
+                        if (!isCreatingTemplate) setTemplateModalVisible(false);
+                    }}
+                    swipeDirection={isCreatingTemplate ? [] : "down"}
                     style={{ margin: 0, justifyContent: 'flex-end' }}
                     useNativeDriver={true}
                     hideModalContentWhileAnimating={true}
@@ -1121,6 +1600,7 @@ const TripChatScreen = () => {
                             placeholderTextColor="#666"
                             value={templateName}
                             onChangeText={setTemplateName}
+                            editable={!isCreatingTemplate}
                         />
 
                         <Text style={styles.inputLabel}>Message Content</Text>
@@ -1132,13 +1612,20 @@ const TripChatScreen = () => {
                             onChangeText={setTemplateContent}
                             multiline={true}
                             textAlignVertical="top"
+                            editable={!isCreatingTemplate}
                         />
 
                         <TouchableOpacity
-                            style={styles.addButton}
+                            style={[styles.addButton, isCreatingTemplate && { opacity: 0.7 }]}
                             onPress={handleAddTemplate}
+                            disabled={isCreatingTemplate}
+                            activeOpacity={0.8}
                         >
-                            <Text style={styles.addButtonText}>Add Template</Text>
+                            {isCreatingTemplate ? (
+                                <ActivityIndicator size="small" color="#FFFFFF" />
+                            ) : (
+                                <Text style={styles.addButtonText}>Add Template</Text>
+                            )}
                         </TouchableOpacity>
                     </View>
                 </Modal>
@@ -1215,6 +1702,21 @@ const TripChatScreen = () => {
                         )}
                     </View>
                 </Modal>
+
+                {/* Native Fullscreen Video Viewer Modal */}
+                <RNModal
+                    visible={!!viewerVideo}
+                    animationType="fade"
+                    transparent={false}
+                    onRequestClose={() => setViewerVideo(null)}
+                >
+                    {viewerVideo && (
+                        <VideoViewerContent
+                            uri={viewerVideo}
+                            onClose={() => setViewerVideo(null)}
+                        />
+                    )}
+                </RNModal>
 
             </View >
         </GestureHandlerRootView>
@@ -1325,6 +1827,111 @@ const styles = StyleSheet.create({
         position: 'relative',
         borderRadius: 10,
         overflow: 'hidden',
+    },
+    videoWrapper: {
+        position: 'relative',
+        width: 250,
+        height: 280,
+        borderRadius: 16,
+        overflow: 'hidden',
+        backgroundColor: '#1E2328',
+    },
+    messageVideoImage: {
+        width: '100%',
+        height: '100%',
+    },
+    videoFallbackBox: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#1E2328',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    videoPlayOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.22)',
+    },
+    playButtonCircle: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 255, 255, 0.6)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.5,
+        shadowRadius: 4,
+        elevation: 4,
+    },
+    videoBadge: {
+        position: 'absolute',
+        top: 8,
+        left: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 8,
+        gap: 4,
+    },
+    videoBadgeText: {
+        color: '#FFF',
+        fontSize: 11,
+        fontFamily: Typography.sans.medium,
+    },
+    videoExpandBtn: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10,
+    },
+    fullscreenModalContainer: {
+        flex: 1,
+        backgroundColor: '#000000',
+    },
+    fullscreenModalHeader: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 20,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        paddingHorizontal: 16,
+        paddingTop: 8,
+    },
+    fullscreenCloseBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    fullscreenVideoWrapper: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    fullViewerVideo: {
+        width: '100%',
+        height: '100%',
     },
     imageMetaOverlay: {
         position: 'absolute',
@@ -1567,9 +2174,15 @@ const styles = StyleSheet.create({
         marginBottom: 10,
     },
     backgroundLogoContainer: {
-        ...StyleSheet.absoluteFillObject,
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
         justifyContent: 'center',
         alignItems: 'center',
+        zIndex: 0,
+        elevation: 0,
     },
     // Preview Modal Styles
     previewContainer: {

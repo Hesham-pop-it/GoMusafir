@@ -15,9 +15,12 @@ import { Colors } from '../constants/Colors';
 import { Typography } from '../constants/Typography';
 import { useState } from 'react';
 import { Alert, ActivityIndicator } from 'react-native';
-import { functions } from '../config/firebase';
+import { functions, auth, database } from '../config/firebase';
 import { httpsCallable } from 'firebase/functions';
+import { ref, get } from 'firebase/database';
 import EmailConfirmationModal from './EmailConfirmationModal';
+import IAPSeatSelectionModal from './IAPSeatSelectionModal';
+import PaymentSuccessModal from './PaymentSuccessModal';
 
 const { width } = Dimensions.get('window');
 
@@ -54,18 +57,67 @@ const CustomBottomTabBar = ({ state, navigation }) => {
     // We'll pass `activeRoute` name.
 
     const activeRoute = state; // 'Home' or 'Participants'
+    const HOME_ROUTES = ['Home', 'Participants'];
+    const currentIndex = HOME_ROUTES.indexOf(activeRoute);
+
+    const getTransitionParams = (targetRoute) => {
+        const targetIndex = HOME_ROUTES.indexOf(targetRoute);
+        if (currentIndex !== -1 && targetIndex !== -1 && targetIndex !== currentIndex) {
+            return {
+                animation: targetIndex < currentIndex ? 'slide_from_left' : 'slide_from_right'
+            };
+        }
+        return {};
+    };
+
     const [emailModalVisible, setEmailModalVisible] = useState(false);
+    const [iapModalVisible, setIapModalVisible] = useState(false);
+    const [paymentSuccessModalVisible, setPaymentSuccessModalVisible] = useState(false);
     const [isRequesting, setIsRequesting] = useState(false);
+    const [tripCreationUrl, setTripCreationUrl] = useState(null);
 
     const handleFabPress = async () => {
         setIsRequesting(true);
         try {
+            const user = auth.currentUser;
+            let prepaidSeats = 0;
+            if (!user) {
+                Alert.alert("Authentication Required", "Please log in to create new trips.");
+                setIsRequesting(false);
+                return;
+            }
+
+            // Force refresh token so the backend receives the latest custom claims (role and orgId)
+            const tokenResult = await user.getIdTokenResult(true);
+            const orgId = tokenResult?.claims?.orgId;
+            const role = tokenResult?.claims?.role;
+
+            if (!role || !['admin', 'manager', 'co-host'].includes(role)) {
+                Alert.alert("Permission Denied", "Only Organization Admins, Managers, or Co-Hosts can create new trips.");
+                setIsRequesting(false);
+                return;
+            }
+
+            if (orgId) {
+                const orgSnap = await get(ref(database, `orgs/${orgId}/prepaid_seats`));
+                prepaidSeats = orgSnap.val() || 0;
+            }
+
             const requestLink = httpsCallable(functions, 'requestTripLink');
             await requestLink();
-            setEmailModalVisible(true);
+
+            if (prepaidSeats > 0) {
+                setEmailModalVisible(true);
+            } else {
+                // Silent background email; open IAP checkout modal directly!
+                setIapModalVisible(true);
+            }
         } catch (error) {
             console.warn("Failed to request trip link:", error);
-            Alert.alert("Link Request Failed", error.message || "Please try again later.");
+            const msg = (error.code === 'permission-denied' || error.code === 'functions/permission-denied')
+                ? "Permission denied: Your account role does not have permission to create trips. Please contact your organization admin."
+                : (error.message || "Please try again later.");
+            Alert.alert("Link Request Failed", msg);
         } finally {
             setIsRequesting(false);
         }
@@ -81,7 +133,7 @@ const CustomBottomTabBar = ({ state, navigation }) => {
                 {/* Home Tab */}
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('Home')}
+                    onPress={() => navigation.navigate('Home', getTransitionParams('Home'))}
                     activeOpacity={0.8}
                 >
                     <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -102,7 +154,7 @@ const CustomBottomTabBar = ({ state, navigation }) => {
                 {/* Participant Tab */}
                 <TouchableOpacity
                     style={styles.navItem}
-                    onPress={() => navigation.navigate('Participants')}
+                    onPress={() => navigation.navigate('Participants', getTransitionParams('Participants'))}
                     activeOpacity={0.8}
                 >
                     <Svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -144,6 +196,22 @@ const CustomBottomTabBar = ({ state, navigation }) => {
             <EmailConfirmationModal
                 visible={emailModalVisible}
                 onClose={() => setEmailModalVisible(false)}
+            />
+
+            <IAPSeatSelectionModal
+                visible={iapModalVisible}
+                onClose={() => setIapModalVisible(false)}
+                onSuccess={(data) => {
+                    setIapModalVisible(false);
+                    setTripCreationUrl(data?.webLink || null);
+                    setPaymentSuccessModalVisible(true);
+                }}
+            />
+
+            <PaymentSuccessModal
+                visible={paymentSuccessModalVisible}
+                onClose={() => setPaymentSuccessModalVisible(false)}
+                webLink={tripCreationUrl}
             />
         </View>
     );

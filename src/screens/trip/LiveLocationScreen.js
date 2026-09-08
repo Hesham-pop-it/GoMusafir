@@ -29,6 +29,8 @@ import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { Typography } from '../../constants/Typography';
 import { database, auth } from '../../config/firebase';
 import { ref, onValue, set, off, serverTimestamp, get, remove } from 'firebase/database';
+import { isStaffMember, checkPIIVisibility, normalizeVisibilityOption, getFieldSetting, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -84,10 +86,16 @@ const LiveLocationScreen = () => {
     const navigation = useNavigation();
     const mapRef = useRef(null);
     const route = useRoute();
-    const { trip, isAdmin: passedIsAdmin } = route.params || {};
-    const [isAdmin, setIsAdmin] = useState(passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false));
-    const tripId = trip?.id || trip?.tripId;
-    const orgId = trip?.orgId || trip?.org_id;
+    const { trip: passedTrip, isAdmin: passedIsAdmin } = route.params || {};
+    const tripId = route.params?.tripId || passedTrip?.id || passedTrip?.tripId;
+    const orgId = route.params?.orgId || passedTrip?.orgId || passedTrip?.org_id;
+    const [isAdmin, setIsAdmin] = useState(() => {
+        if (passedIsAdmin !== undefined) {
+            return typeof passedIsAdmin === 'string' ? passedIsAdmin === 'true' : passedIsAdmin;
+        }
+        return passedTrip?.isAdmin !== undefined ? passedTrip.isAdmin : false;
+    });
+    const trip = passedTrip || { id: tripId, orgId: orgId, org_id: orgId, tripId: tripId, isAdmin: isAdmin };
 
     const [userLocation, setUserLocation] = useState(null);
     const [participants, setParticipants] = useState({});
@@ -113,6 +121,8 @@ const LiveLocationScreen = () => {
     const [locationPermissions, setLocationPermissions] = useState({});
     const [activeParticipantUids, setActiveParticipantUids] = useState([]);
     const [tracksViewChanges, setTracksViewChanges] = useState(true);
+    const [staffData, setStaffData] = useState({});
+    const lastHandledNotifIdRef = useRef(null);
 
 
     // Swipe down to close logic for modals - Interactive version
@@ -163,12 +173,37 @@ const LiveLocationScreen = () => {
     const googleMapsSwipe = createDraggableResponder(setGoogleMapsModal, panYGoogleMaps);
     const requestSentSwipe = createDraggableResponder(setRequestSentVisible, panYRequestSent);
 
+    // Expiration check fallback for deep links & direct loads
+    useEffect(() => {
+        if (!tripId || !resolvedOrgId) return;
+
+        const tripRef = ref(database, `orgs/${resolvedOrgId}/trips/${tripId}`);
+        get(tripRef).then((snapshot) => {
+            if (snapshot.exists()) {
+                const data = snapshot.val();
+                if (data.endDate) {
+                    const endTime = typeof data.endDate === 'number'
+                        ? data.endDate
+                        : new Date(data.endDate).getTime();
+                    if (Date.now() > endTime) {
+                        Alert.alert("Trip Expired", "Live location sharing is not available for this trip as it has expired.", [
+                            { text: "OK", onPress: () => navigation.goBack() }
+                        ]);
+                    }
+                }
+            }
+        }).catch((err) => {
+            console.log("Error checking trip expiration in LiveLocation:", err);
+        });
+    }, [tripId, resolvedOrgId]);
+
     // Robust ID Resolution: If orgId is missing, try to find it in the user's joined_trips
     useEffect(() => {
         const resolveIds = async () => {
-            if (!resolvedOrgId && tripId && auth.currentUser) {
+            const myUid = auth.currentUser?.uid;
+            if (!resolvedOrgId && tripId && myUid) {
                 try {
-                    const joinedTripRef = ref(database, `users/${auth.currentUser.uid}/joined_trips/${tripId}`);
+                    const joinedTripRef = ref(database, `users/${myUid}/joined_trips/${tripId}`);
                     const snap = await get(joinedTripRef);
                     if (snap.exists()) {
                         const val = snap.val();
@@ -191,9 +226,10 @@ const LiveLocationScreen = () => {
     // Fetch Current User Name and Role
     useEffect(() => {
         const fetchUserData = async () => {
-            if (auth.currentUser) {
+            const user = auth.currentUser;
+            if (user?.uid) {
                 // 1. Fetch Profile for Name
-                const myProfileRef = ref(database, `users/${auth.currentUser.uid}/profile`);
+                const myProfileRef = ref(database, `users/${user.uid}/profile`);
                 get(myProfileRef).then((snap) => {
                     if (snap.exists()) {
                         const profile = snap.val();
@@ -203,7 +239,7 @@ const LiveLocationScreen = () => {
 
                 // 2. Fetch Role
                 try {
-                    const tokenResult = await auth.currentUser.getIdTokenResult();
+                    const tokenResult = await user.getIdTokenResult();
                     const role = tokenResult.claims.role || 'participant';
                     setUserRole(role);
                     setIsAdmin(role === 'admin' || role === 'co-host' || role === 'manager');
@@ -215,6 +251,8 @@ const LiveLocationScreen = () => {
     }, []);
 
     const profileCache = useRef({});
+    const staffListRef = useRef({});
+    const organizerIdRef = useRef(null);
 
     // 0. Fetch Global Visibility Config
     useEffect(() => {
@@ -244,6 +282,17 @@ const LiveLocationScreen = () => {
         }, 3000);
         return () => clearTimeout(timer);
     }, [participantsList]);
+
+    useEffect(() => {
+        if (!tripId || !resolvedOrgId) return;
+
+        const staffRef = ref(database, `orgs/${resolvedOrgId}/staff`);
+        const unsubscribeStaff = onValue(staffRef, (snapshot) => {
+            setStaffData(snapshot.val() || {});
+        });
+
+        return () => unsubscribeStaff();
+    }, [tripId, resolvedOrgId]);
 
     const [hasAutoCentered, setHasAutoCentered] = useState(false);
 
@@ -316,7 +365,7 @@ const LiveLocationScreen = () => {
                     });
                     
                     // Add "Me" to participants list locally so it shows on map even before sync
-                    if (auth.currentUser) {
+                    if (auth.currentUser?.uid) {
                         const uid = auth.currentUser.uid;
                         setParticipants(prev => ({
                             ...prev,
@@ -329,7 +378,11 @@ const LiveLocationScreen = () => {
                     fetchIpBasedRegion();
                 }
                 
-                // 3. Start continuous tracking
+                // 3. Start continuous tracking (Foreground + Background)
+                if (resolvedOrgId && tripId) {
+                    startLiveLocationTracking(resolvedOrgId, tripId);
+                }
+
                 locationWatcher = await Location.watchPositionAsync(
                     {
                         accuracy: Location.Accuracy.High,
@@ -345,7 +398,7 @@ const LiveLocationScreen = () => {
                         setUserLocation(newCoords);
 
                         // Sync to state immediately for responsiveness
-                        if (auth.currentUser) {
+                        if (auth.currentUser?.uid) {
                             const uid = auth.currentUser.uid;
                             setParticipants(prev => ({
                                 ...prev,
@@ -401,41 +454,65 @@ const LiveLocationScreen = () => {
             });
 
             // Listen for Incoming Requests
-            if (auth.currentUser) {
+            if (auth.currentUser?.uid) {
                 notifRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/notifications/${auth.currentUser.uid}`);
                 onValue(notifRef, (snap) => {
                     if (snap.exists()) {
-                        const notifs = snap.val();
-                        const latest = Object.values(notifs).sort((a,b) => b.timestamp - a.timestamp)[0];
-                        if (latest && latest.type === 'location_request' && (!incomingRequest || latest.timestamp > incomingRequest.timestamp)) {
-                            setIncomingRequest(latest);
+                        const notifs = snap.val() || {};
+                        const notifEntries = Object.entries(notifs).map(([id, val]) => ({
+                            id,
+                            ...(val || {}),
+                            timestamp: Number(val?.timestamp) || 0
+                        }));
+
+                        // Find the latest pending location request
+                        const pendingReqs = notifEntries
+                            .filter(n => 
+                                n.type === 'location_request' && 
+                                n.status !== 'accepted' && 
+                                n.status !== 'declined' && 
+                                n.status !== 'dismissed' &&
+                                (n.senderUid ? n.senderUid !== auth.currentUser?.uid : true)
+                            )
+                            .sort((a, b) => b.timestamp - a.timestamp);
+
+                        const latestReq = pendingReqs[0];
+                        if (latestReq && (!lastHandledNotifIdRef.current || lastHandledNotifIdRef.current !== latestReq.id)) {
+                            setIncomingRequest(latestReq);
                             setLocationRequestModal(true);
                         }
+                    } else {
+                        setIncomingRequest(null);
                     }
+                }, (err) => {
+                    console.log("[LiveLocation] Notifications listener error:", err?.message);
                 });
             }
 
             // Listen for Official Participants List (to filter out deleted users)
             const officialParticipantsRef = ref(database, `trips_participants/${tripId}`);
             const staffRef = resolvedOrgId ? ref(database, `orgs/${resolvedOrgId}/staff`) : null;
+            const tripDataRef = resolvedOrgId ? ref(database, `orgs/${resolvedOrgId}/trips/${tripId}`) : null;
+
+            if (tripDataRef) {
+                get(tripDataRef).then(snap => {
+                    if (snap.exists()) {
+                        organizerIdRef.current = snap.val().organizer_id;
+                    }
+                });
+            }
+
             onValue(officialParticipantsRef, (snap) => {
                 const val = snap.val() || {};
                 const uids = Array.isArray(val) ? val.filter(v => v !== null) : Object.keys(val);
-                if (staffRef) {
-                    get(staffRef).then(staffSnap => {
-                        const staffList = staffSnap.val() || {};
-                        const teamMemberUids = Object.keys(staffList).filter(uid => {
-                            const role = staffList[uid];
-                            return role === 'admin' || role === 'co-host' || role === 'manager';
-                        });
-                        const combined = Array.from(new Set([...uids, ...teamMemberUids]));
-                        setActiveParticipantUids(combined);
-                    }).catch(() => {
-                        setActiveParticipantUids(uids);
-                    });
-                } else {
-                    setActiveParticipantUids(uids);
-                }
+                const staffList = staffData;
+                staffListRef.current = staffList;
+                const teamMemberUids = Object.keys(staffList).filter(uid => {
+                    const role = staffList[uid];
+                    return role === 'admin' || role === 'co-host' || role === 'manager';
+                });
+                const combined = Array.from(new Set([...uids, ...teamMemberUids]));
+                setActiveParticipantUids(combined);
             });
         }
 
@@ -448,13 +525,13 @@ const LiveLocationScreen = () => {
             const officialParticipantsRef = ref(database, `trips_participants/${tripId}`);
             off(officialParticipantsRef);
         };
-    }, [resolvedOrgId, tripId]);
+    }, [resolvedOrgId, tripId, staffData]);
 
     // Listener for Location Permissions
     useEffect(() => {
-        if (!resolvedOrgId || !tripId || !auth.currentUser) return;
+        const myUid = auth.currentUser?.uid;
+        if (!resolvedOrgId || !tripId || !myUid) return;
 
-        const myUid = auth.currentUser.uid;
         const permsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/location_permissions`);
         
         const unsubscribe = onValue(permsRef, (snapshot) => {
@@ -480,69 +557,67 @@ const LiveLocationScreen = () => {
         if (uidsToFetch.length === 0 || !tripId) return;
 
         uidsToFetch.forEach(async (uid) => {
-            // Skip if already in cache and not forced (or just once per session)
-            if (profileCache.current[uid]) return;
-
             try {
                 const profileRef = ref(database, `users/${uid}/profile`);
                 const nameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
                 
-                const [userSnap, nameSnap, visSnap] = await Promise.all([
+                const [userSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
                     get(profileRef),
                     get(nameRef),
-                    get(visibilityRef)
+                    get(visibilityRef),
+                    get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
                 ]);
 
-                const profile = userSnap.val() || {};
+                const rawProfile = userSnap.val() || {};
+                const photoUrl = photoSnap?.val();
+                const profile = {
+                    ...rawProfile,
+                    photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
+                };
                 const fullName = nameSnap.val();
                 const visibility = visSnap.val() || {};
-                const isCurrentUser = uid === auth.currentUser?.uid;
-                const amIAdmin = isAdmin;
+                const targetRole = staffListRef.current?.[uid];
+                const isTargetStaff = isStaffMember(uid, staffListRef.current, organizerIdRef.current, targetRole);
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffListRef.current, organizerIdRef.current, userRole) || isAdmin;
 
-                const canSeePII = (field) => {
-                    if (isCurrentUser) return true;
-                    
-                    // 1. Check Global Admin Config
-                    const globalSetting = globalVisibilityConfig[field] || 'Show to everyone';
-                    
-                    if (globalSetting === 'Do not show') return false;
-                    if (globalSetting === 'Show to organizer') return amIAdmin;
-                    if (globalSetting === 'Show to everyone') return true;
-                    
-                    // 2. If 'Custom choice', check personal choice
-                    if (globalSetting === 'Custom choice') {
-                        const personalSetting = visibility[field] || 'Show to organizer';
-                        if (personalSetting === 'Do not show') return false;
-                        if (personalSetting === 'Show to organizer') return amIAdmin;
-                        if (personalSetting === 'Show to everyone') return true;
-                    }
-                    
-                    return false;
-                };
+                const displayName = getParticipantDisplayName({
+                    profile,
+                    fullName,
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
 
-                let displayName = 'User';
-                if (canSeePII('name')) {
-                    if (profile.firstName || profile.lastName) {
-                        displayName = `${profile.firstName || ''} ${profile.lastName || ''}`.trim();
-                    } else if (fullName) {
-                        displayName = fullName;
-                    } else if (isCurrentUser) {
-                        displayName = auth.currentUser.displayName || auth.currentUser.email?.split('@')[0] || 'You';
-                    }
-                } else if (isCurrentUser) {
-                    displayName = 'You';
-                }
+                const displayImage = getParticipantDisplayPhoto({
+                    profile,
+                    displayName,
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
 
-                const displayImage = canSeePII('photo') && profile.photoURL 
-                    ? profile.photoURL 
-                    : `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName[0] || 'U')}&background=B99A4A&color=fff`;
+                const canSeeLocation = checkPIIVisibility({
+                    field: 'location',
+                    targetUid: uid,
+                    viewerUid: auth.currentUser?.uid,
+                    isViewerStaff,
+                    isTargetStaff,
+                    globalConfig: globalVisibilityConfig,
+                    personalVisibility: visibility
+                });
 
                 const pData = {
                     id: uid,
                     name: displayName,
                     image: displayImage,
-                    canSeeLocation: canSeePII('location'),
+                    canSeeLocation: canSeeLocation,
                     visibility: visibility
                 };
 
@@ -557,7 +632,7 @@ const LiveLocationScreen = () => {
             } catch (err) {
             }
         });
-    }, [activeParticipantUids, tripId, isAdmin, globalVisibilityConfig]);
+    }, [activeParticipantUids, tripId, isAdmin, userRole, globalVisibilityConfig]);
 
 
     const centerOnUser = () => {
@@ -570,10 +645,53 @@ const LiveLocationScreen = () => {
         }
     };
 
+    // Fetch Staff Data
+    useEffect(() => {
+        if (!resolvedOrgId) return;
+        const staffRef = ref(database, `orgs/${resolvedOrgId}/staff`);
+        const unsubscribe = onValue(staffRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setStaffData(snapshot.val());
+            }
+        });
+        return () => unsubscribe();
+    }, [resolvedOrgId]);
+
+    // Fetch Global Privacy Configuration
+    useEffect(() => {
+        if (!resolvedOrgId) return;
+        const privacyRef = ref(database, `orgs/${resolvedOrgId}/settings/privacy`);
+        const unsubscribe = onValue(privacyRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setGlobalVisibilityConfig(snapshot.val());
+            }
+        });
+        return () => unsubscribe();
+    }, [resolvedOrgId]);
+
+    // Handler for Toggling Safety Center Check-in
+    const toggleSafetyCenter = async () => {
+        const activeOrgId = resolvedOrgId || orgId;
+        if (!activeOrgId || !tripId || !userLocation || !auth.currentUser?.uid) return;
+
+        const safetyRef = ref(database, `trips_active/${activeOrgId}/${tripId}/safety_locations/${auth.currentUser.uid}`);
+        if (safetyCenterLocations[auth.currentUser.uid]) {
+            await remove(safetyRef);
+        } else {
+            await set(safetyRef, {
+                lat: userLocation.latitude,
+                lng: userLocation.longitude,
+                created_at: serverTimestamp(),
+                by: auth.currentUser.uid
+            });
+        }
+    };
+
     const toggleSafetyPoint = async () => {
-        if (!isAdmin || !userLocation || !orgId || !tripId) return;
+        const activeOrgId = resolvedOrgId || orgId;
+        if (!isAdmin || !userLocation || !activeOrgId || !tripId) return;
         
-        const safetyRef = ref(database, `trips_active/${orgId}/${tripId}/safety_point`);
+        const safetyRef = ref(database, `trips_active/${activeOrgId}/${tripId}/safety_point`);
         if (isSafetyActive) {
             await remove(safetyRef);
         } else {
@@ -588,7 +706,7 @@ const LiveLocationScreen = () => {
 
     const pinLocationToDB = async () => {
         const resolvedOrg = resolvedOrgId || orgId;
-        if (!isAdmin || !droppedPin || !resolvedOrg || !tripId) return;
+        if (!isAdmin || !droppedPin || !resolvedOrg || !tripId || !auth.currentUser?.uid) return;
         try {
             const pinRef = ref(database, `trips_active/${resolvedOrg}/${tripId}/pinned_location`);
             await set(pinRef, {
@@ -632,32 +750,35 @@ const LiveLocationScreen = () => {
     }, [pinnedLocation]);
 
     const checkLocationPermission = async (participant) => {
-        if (!orgId || !tripId || !auth.currentUser) return false;
+        const myUid = auth.currentUser?.uid;
+        const activeOrgId = resolvedOrgId || orgId;
+        if (!activeOrgId || !tripId || !myUid || !participant) return false;
 
-        const myUid = auth.currentUser.uid;
         const targetUid = participant.id;
-        const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
+        if (targetUid === myUid) return true;
 
-        // 1. Check Global Setting
-        const globalSetting = globalVisibilityConfig?.location || 'Show to everyone';
-        
-        // "Do not show" for Everyone
-        if (globalSetting === 'Do not show') {
-            // Need to check explicit permission
-        } else if (globalSetting === 'Show to everyone') {
-            return true;
-        } else if (globalSetting === 'Show to organizer') {
-            if (isStaff) return true;
-        } else if (globalSetting === 'Custom choice') {
-            const pProfile = participantsList.find(p => p.id === targetUid);
-            const personalSetting = pProfile?.visibility?.location || 'Show to organizer';
-            if (personalSetting === 'Show to everyone') return true;
-            if (personalSetting === 'Show to organizer' && isStaff) return true;
-        }
+        const isViewerStaff = isAdmin || isStaffMember(myUid, staffData, organizerIdRef.current, userRole);
+        const isTargetStaff = isStaffMember(targetUid, staffData, organizerIdRef.current, participant.status);
+        const pProfile = participantsList.find(p => p.id === targetUid) || profileCache.current[targetUid];
 
-        // 2. Check explicit permission
+        // 1. Check PII Visibility
+        const isPermittedByConfig = checkPIIVisibility({
+            field: 'location',
+            targetUid,
+            viewerUid: myUid,
+            isViewerStaff,
+            isTargetStaff,
+            globalConfig: globalVisibilityConfig,
+            personalVisibility: pProfile?.visibility || {}
+        });
+
+        if (isPermittedByConfig) return true;
+
+        // 2. Check explicit permission (granted via location request)
+        if (locationPermissions[targetUid] === true) return true;
+
         try {
-            const permRef = ref(database, `trips_active/${orgId}/${tripId}/location_permissions/${targetUid}/${myUid}`);
+            const permRef = ref(database, `trips_active/${activeOrgId}/${tripId}/location_permissions/${targetUid}/${myUid}`);
             const permSnap = await get(permRef);
             return permSnap.exists() && permSnap.val() === true;
         } catch (e) {
@@ -666,6 +787,27 @@ const LiveLocationScreen = () => {
     };
 
     const handleQuestionPress = async (participant) => {
+        let activeOrgId = resolvedOrgId || orgId;
+        const myUid = auth.currentUser?.uid;
+
+        // If activeOrgId is not resolved yet, attempt to resolve from joined trips
+        if (!activeOrgId && tripId && myUid) {
+            try {
+                const joinedTripSnap = await get(ref(database, `users/${myUid}/joined_trips/${tripId}`));
+                if (joinedTripSnap.exists()) {
+                    const val = joinedTripSnap.val();
+                    activeOrgId = val.org_id || val.orgId;
+                    if (activeOrgId) setResolvedOrgId(activeOrgId);
+                }
+            } catch (e) {}
+        }
+
+        if (!activeOrgId || !tripId || !myUid || !participant?.id) {
+            console.log("[LiveLocation] Cannot send request, missing params:", { activeOrgId, tripId, myUid, participant });
+            Alert.alert("Error", "Unable to send location request right now. Please try again.");
+            return;
+        }
+
         const hasPerm = await checkLocationPermission(participant);
         
         if (hasPerm) {
@@ -673,19 +815,85 @@ const LiveLocationScreen = () => {
             handleLocationPress(participant, true);
         } else {
             // Send request
-            if (!orgId || !tripId || !auth.currentUser) return;
             const targetUid = participant.id;
             try {
-                await set(ref(database, `trips_active/${orgId}/${tripId}/notifications/${targetUid}/${Date.now()}`), {
-                    fromUid: auth.currentUser.uid,
-                    name: userName,
+                const senderName = userName || auth.currentUser?.displayName || 'Participant';
+                const notifKey = String(Date.now());
+                await set(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${targetUid}/${notifKey}`), {
+                    id: notifKey,
+                    fromUid: myUid,
+                    senderUid: myUid,
+                    name: senderName,
+                    title: 'Location Request',
+                    message: `${senderName} is asking for your live location.`,
                     type: 'location_request',
                     timestamp: serverTimestamp(),
                 });
                 setRequestSentVisible(true);
             } catch (error) {
+                console.log("[LiveLocation] Error sending location request:", error);
+                Alert.alert("Error", "Could not send location request. Please try again.");
             }
         }
+    };
+
+    const handleAcceptLocationRequest = async () => {
+        setLocationRequestModal(false);
+        const myUid = auth.currentUser?.uid;
+        const activeOrgId = resolvedOrgId || orgId;
+        const requesterUid = incomingRequest?.fromUid || incomingRequest?.senderUid || incomingRequest?.sender_id;
+        const notifId = incomingRequest?.id;
+
+        if (notifId) {
+            lastHandledNotifIdRef.current = notifId;
+        }
+
+        if (!myUid || !activeOrgId || !tripId || !requesterUid) return;
+
+        try {
+            // 1. Grant explicit permission in RTDB for the requester
+            await set(ref(database, `trips_active/${activeOrgId}/${tripId}/location_permissions/${myUid}/${requesterUid}`), true);
+
+            // 2. Ensure live location tracking is active for current user so requester receives coordinates
+            startLiveLocationTracking(activeOrgId, tripId);
+            syncCurrentUserLocationNow(activeOrgId, tripId);
+
+            // 3. Clean up notification from RTDB so it does not repeat
+            if (notifId) {
+                await remove(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${myUid}/${notifId}`)).catch(() => {});
+            }
+
+            // 4. Send confirmation notification back to requester
+            const senderName = userName || auth.currentUser?.displayName || 'Participant';
+            await set(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${requesterUid}/${Date.now()}`), {
+                fromUid: myUid,
+                senderUid: myUid,
+                name: senderName,
+                title: 'Location Request Accepted',
+                message: `${senderName} is now sharing their live location with you.`,
+                type: 'alert',
+                timestamp: serverTimestamp(),
+            });
+        } catch (err) {
+            console.log("[LiveLocation] Error accepting location request:", err);
+        }
+    };
+
+    const handleDeclineLocationRequest = async () => {
+        setLocationRequestModal(false);
+        const myUid = auth.currentUser?.uid;
+        const activeOrgId = resolvedOrgId || orgId;
+        const notifId = incomingRequest?.id;
+
+        if (notifId) {
+            lastHandledNotifIdRef.current = notifId;
+            if (myUid && activeOrgId && tripId) {
+                try {
+                    await remove(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${myUid}/${notifId}`)).catch(() => {});
+                } catch (e) {}
+            }
+        }
+        setIncomingRequest(null);
     };
 
     const handleMapPress = async (e) => {
@@ -769,10 +977,11 @@ const LiveLocationScreen = () => {
     };
 
     const isStaff = isAdmin || userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
-    const globalLocationSetting = globalVisibilityConfig?.location || 'Show to everyone';
+    const rawGlobalLoc = getFieldSetting(globalVisibilityConfig, 'location') || 'show to everyone';
+    const globalLocationSetting = normalizeVisibilityOption(rawGlobalLoc);
     const isLocationHiddenGlobally = 
-        globalLocationSetting === 'Do not show' ||
-        (globalLocationSetting === 'Show to organizer' && !isStaff);
+        globalLocationSetting === 'do not show' ||
+        (globalLocationSetting === 'show to organizer' && !isStaff);
 
     return (
         <View style={styles.container}>
@@ -890,6 +1099,7 @@ const LiveLocationScreen = () => {
                                 key={`safety-point-${safetyPoint.lat}-${safetyPoint.lng}`}
                                 coordinate={{ latitude: safetyPoint.lat, longitude: safetyPoint.lng }}
                                 style={{ width: 64, height: 64 }}
+                                anchor={{ x: 0.5, y: 0.5 }}
                                 title="Safe Point"
                                 onPress={() => {
                                     const url = `https://www.google.com/maps/dir/?api=1&destination=${safetyPoint.lat},${safetyPoint.lng}`;
@@ -899,7 +1109,7 @@ const LiveLocationScreen = () => {
                                 tracksViewChanges={true}
                             >
                                 <View style={{ width: 64, height: 64, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(148, 47, 49, 0.2)', borderRadius: 32 }}>
-                                    <View style={[styles.markerCircle, { borderColor: '#942F31' }]}>
+                                    <View style={[styles.markerCircle, { borderColor: '#942F31', alignItems: 'center', justifyContent: 'center' }]}>
                                         <SafetyIcon color="#942F31" size={30} />
                                     </View>
                                 </View>
@@ -910,28 +1120,36 @@ const LiveLocationScreen = () => {
                         {/* Participant Markers */}
                         {Object.entries(participants)
                             .filter(([uid, loc]) => {
-                                if (!loc.lat || !loc.lng) return false;
+                                const lat = loc?.lat ?? loc?.latitude;
+                                const lng = loc?.lng ?? loc?.longitude;
+                                if (lat === undefined || lat === null || lng === undefined || lng === null || isNaN(Number(lat)) || isNaN(Number(lng))) return false;
                                 
                                 const isMe = uid === auth.currentUser?.uid;
                                 if (isMe) return true;
 
                                 const hasExplicitPermission = locationPermissions[uid] === true;
+                                if (hasExplicitPermission) return true;
 
-                                if (isLocationHiddenGlobally && !hasExplicitPermission) {
-                                    return false;
-                                }
-
-                                // NEW: Filter by active participant list
+                                // Filter by active participant list
                                 if (activeParticipantUids.length > 0 && !activeParticipantUids.includes(uid)) {
                                     return false;
                                 }
 
-                                const profile = profileCache.current[uid];
-                                // If PII for location is blocked, hide the marker unless we have explicit permission
-                                if (profile && profile.canSeeLocation === false && !hasExplicitPermission) {
-                                    return false;
-                                }
-                                return true;
+                                const p = participantsList.find(part => part.id === uid) || profileCache.current[uid];
+                                const isTargetStaff = isStaffMember(uid, staffData, organizerIdRef.current);
+                                const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
+                                
+                                const canSee = checkPIIVisibility({
+                                    field: 'location',
+                                    targetUid: uid,
+                                    viewerUid: auth.currentUser?.uid,
+                                    isViewerStaff,
+                                    isTargetStaff,
+                                    globalConfig: globalVisibilityConfig,
+                                    personalVisibility: p?.visibility || {}
+                                });
+
+                                return canSee;
                             })
                             .map(([uid, loc]) => {
                                 const isMe = uid === auth.currentUser?.uid;
@@ -1098,6 +1316,7 @@ const LiveLocationScreen = () => {
                         style={{ margin: 0, justifyContent: 'flex-end' }}
                         useNativeDriver={true}
                         hideModalContentWhileAnimating={true}
+                        avoidKeyboard={true}
                     >
                         <Animated.View
                             style={[
@@ -1127,11 +1346,8 @@ const LiveLocationScreen = () => {
                                     .filter((uid) => {
                                         const isMe = uid === auth.currentUser?.uid;
                                         if (isMe) return false;
-                                        if (isLocationHiddenGlobally) {
-                                            return false;
-                                        }
                                         if (searchQuery.trim().length > 0) {
-                                            const p = participantsList.find(part => part.id === uid);
+                                            const p = participantsList.find(part => part.id === uid) || profileCache.current[uid];
                                             const name = p?.name || `User (${uid.substring(0, 5)})`;
                                             if (!name.toLowerCase().includes(searchQuery.toLowerCase())) {
                                                 return false;
@@ -1141,48 +1357,85 @@ const LiveLocationScreen = () => {
                                     })
                                     .map((uid) => {
                                         const loc = participants[uid];
-                                        const p = participantsList.find(part => part.id === uid);
-                                        const hasLocation = loc && loc.lat && loc.lng;
+                                        const p = participantsList.find(part => part.id === uid) || profileCache.current[uid];
+                                        const hasLat = loc && (loc.lat !== undefined && loc.lat !== null ? !isNaN(Number(loc.lat)) : (loc.latitude !== undefined && loc.latitude !== null ? !isNaN(Number(loc.latitude)) : false));
+                                        const hasLng = loc && (loc.lng !== undefined && loc.lng !== null ? !isNaN(Number(loc.lng)) : (loc.longitude !== undefined && loc.longitude !== null ? !isNaN(Number(loc.longitude)) : false));
+                                        const hasLocation = Boolean(hasLat && hasLng);
+
+                                        const lat = hasLocation ? Number(loc.lat ?? loc.latitude) : null;
+                                        const lng = hasLocation ? Number(loc.lng ?? loc.longitude) : null;
+
+                                        const hasExplicitPermission = locationPermissions[uid] === true;
+                                        const isTargetStaff = isStaffMember(uid, staffData, organizerIdRef.current);
+                                        const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
+                                        
+                                        const canSee = checkPIIVisibility({
+                                            field: 'location',
+                                            targetUid: uid,
+                                            viewerUid: auth.currentUser?.uid,
+                                            isViewerStaff,
+                                            isTargetStaff,
+                                            globalConfig: globalVisibilityConfig,
+                                            personalVisibility: p?.visibility || {}
+                                        });
+
+                                        const isPermitted = hasExplicitPermission || canSee;
 
                                         return (
                                             <TouchableOpacity
                                                 key={uid}
                                                 style={styles.participantItem}
                                                 onPress={() => {
-                                                    if (hasLocation) {
-                                                        const activePart = { id: uid, latitude: Number(loc.lat), longitude: Number(loc.lng) };
+                                                    if (isPermitted && hasLocation) {
+                                                        const activePart = { id: uid, latitude: lat, longitude: lng };
                                                         setSelectedMarker(activePart);
                                                         setShowParticipantsList(false);
                                                         if (mapRef.current) {
                                                             mapRef.current.animateToRegion({
-                                                                latitude: Number(loc.lat),
-                                                                longitude: Number(loc.lng),
+                                                                latitude: lat,
+                                                                longitude: lng,
                                                                 latitudeDelta: 0.01,
                                                                 longitudeDelta: 0.01,
                                                             }, 1000);
                                                         }
+                                                    } else if (isPermitted && !hasLocation) {
+                                                        Alert.alert("Location Unavailable", `${p?.name || 'Participant'} has not shared live location data yet.`);
+                                                    } else {
+                                                        handleQuestionPress({ id: uid });
                                                     }
                                                 }}
-                                                disabled={!hasLocation}
-                                                activeOpacity={hasLocation ? 0.7 : 1}
+                                                activeOpacity={0.7}
                                             >
-                                                
                                                 <Image
                                                     source={{ uri: p?.image || `https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff` }}
                                                     style={styles.participantAvatar}
                                                 />
                                                 <View style={{ flex: 1, height: 60, justifyContent: 'center' }}>
                                                     <Text style={[styles.participantName, { flex: 0 }]}>{p?.name || `User (${uid.substring(0, 5)})`}</Text>
+                                                    {isPermitted && !hasLocation && (
+                                                        <Text style={{ fontSize: 11, color: '#A1A1AA', fontFamily: Typography.sans.regular, marginTop: 2 }}>
+                                                            Location unavailable
+                                                        </Text>
+                                                    )}
                                                 </View>
 
                                                 <View style={styles.actionButtons}>
-                                                    {hasLocation && (locationPermissions[uid] || (globalVisibilityConfig?.location === 'Show to everyone') || (isAdmin && globalVisibilityConfig?.location === 'Show to organizer')) ? (
-                                                        <TouchableOpacity
-                                                            style={styles.locateBtn}
-                                                            onPress={() => handleLocationPress({ id: uid, latitude: loc.lat, longitude: loc.lng })}
-                                                        >
-                                                            <LocationPinIcon />
-                                                        </TouchableOpacity>
+                                                    {isPermitted ? (
+                                                        hasLocation ? (
+                                                            <TouchableOpacity
+                                                                style={styles.locateBtn}
+                                                                onPress={() => handleLocationPress({ id: uid, latitude: lat, longitude: lng }, true)}
+                                                            >
+                                                                <LocationPinIcon />
+                                                            </TouchableOpacity>
+                                                        ) : (
+                                                            <TouchableOpacity
+                                                                style={[styles.locateBtn, { opacity: 0.5, borderColor: '#52525B' }]}
+                                                                onPress={() => Alert.alert("Location Unavailable", `${p?.name || 'Participant'} has not shared live location data yet.`)}
+                                                            >
+                                                                <LocationPinIcon color="#A1A1AA" />
+                                                            </TouchableOpacity>
+                                                        )
                                                     ) : (
                                                         <TouchableOpacity
                                                             style={styles.questionBtn}
@@ -1203,8 +1456,8 @@ const LiveLocationScreen = () => {
                     {/* Location Request Modal */}
                     <Modal
                         isVisible={locationRequestModal}
-                        onBackdropPress={() => setLocationRequestModal(false)}
-                        onSwipeComplete={() => setLocationRequestModal(false)}
+                        onBackdropPress={handleDeclineLocationRequest}
+                        onSwipeComplete={handleDeclineLocationRequest}
                         swipeDirection="down"
                         backdropOpacity={0.7}
                         style={{ margin: 0, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40 }}
@@ -1219,13 +1472,13 @@ const LiveLocationScreen = () => {
                             {...locationRequestSwipe.panHandlers}
                         >
                             <View style={styles.modalHandle} />
-                            <Text style={styles.alertTitle}>Location requested</Text>
+                            <Text style={styles.alertTitle}>Location Request</Text>
                             <Text style={{ color: '#A1A1AA', textAlign: 'center', marginBottom: 20 }}>
-                                {incomingRequest?.name} is asking for your live location.
+                                {incomingRequest?.name || 'A participant'} is asking for your live location.
                             </Text>
                             <TouchableOpacity
                                 style={styles.gradientButtonWrapper}
-                                onPress={() => setLocationRequestModal(false)}
+                                onPress={handleAcceptLocationRequest}
                             >
 
                                 <LinearGradient
@@ -1235,9 +1488,16 @@ const LiveLocationScreen = () => {
                                     style={styles.gradientBorder}
                                 >
                                     <View style={styles.buttonInner}>
-                                        <Text style={styles.okButtonText}>OK</Text>
+                                        <Text style={styles.okButtonText}>Share Location</Text>
                                     </View>
                                 </LinearGradient>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={{ marginTop: 12, paddingVertical: 8, alignItems: 'center' }}
+                                onPress={handleDeclineLocationRequest}
+                            >
+                                <Text style={{ color: '#A1A1AA', fontSize: 14, fontFamily: Typography.sans.medium }}>Not Now</Text>
                             </TouchableOpacity>
                         </Animated.View>
                     </Modal>
@@ -1405,18 +1665,21 @@ const styles = StyleSheet.create({
         borderWidth: 3,
         borderColor: '#B99A4A',
         backgroundColor: '#1E2124',
+        alignItems: 'center',
+        justifyContent: 'center',
         overflow: 'hidden',
         // Force circular shape on Android
         borderStyle: 'solid',
     },
     markerAvatar: {
-        width: '100%',
-        height: '100%',
-        borderRadius: 30,
+        width: 54,
+        height: 54,
+        borderRadius: 27,
     },
     markerInitialsContainer: {
-        width: '100%',
-        height: '100%',
+        width: 54,
+        height: 54,
+        borderRadius: 27,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: '#B99A4A',
@@ -1890,13 +2153,16 @@ const ParticipantMarker = ({
     setDroppedPin,
     userName
 }) => {
+    const lat = Number(loc?.lat ?? loc?.latitude);
+    const lng = Number(loc?.lng ?? loc?.longitude);
+
     return (
         <Marker
             key={`participant-${uid}`}
             identifier={uid}
             coordinate={{
-                latitude: Number(loc.lat),
-                longitude: Number(loc.lng),
+                latitude: lat,
+                longitude: lng,
             }}
             style={{ width: 64, height: 64 }}
             zIndex={isSelected ? 100 : (isMe ? 50 : 10)}

@@ -30,7 +30,10 @@ const createOrgSchema = z.object({
   lastName: z.string().min(1).max(50),
   phoneCode: z.string().regex(/^\+\d{1,4}$/),
   phoneNumber: z.string().min(5).max(20),
-  country: z.object({ name: z.string(), code: z.string() }),
+  country: z.union([
+    z.string(),
+    z.object({ name: z.string().optional().nullable(), code: z.string().optional().nullable() }),
+  ]).optional().nullable(),
   password: z.string().min(8),
   isAuthorized: z.literal(true),
   photoURL: z.string().url().optional().nullable(),

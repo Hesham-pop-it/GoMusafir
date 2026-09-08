@@ -15,6 +15,7 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Typography } from '../../constants/Typography';
 import GlowBackground from '../../components/GlowBackground';
+import * as WebBrowser from 'expo-web-browser';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -394,6 +395,16 @@ const HelpSupportScreen = () => {
         }
     };
 
+    const handleContactSupport = async () => {
+        try {
+            await WebBrowser.openBrowserAsync('https://bugs.popitgroup.com', {
+                presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+            });
+        } catch (error) {
+            console.error('Error opening support link:', error);
+        }
+    };
+
     const filteredSections = getDisplayData();
 
     return (
@@ -431,7 +442,7 @@ const HelpSupportScreen = () => {
                             showTitle={isAdmin} // Only show section titles for admins
                         />
                     ))}
-                    <TouchableOpacity style={styles.contactButton}>
+                    <TouchableOpacity style={styles.contactButton} onPress={handleContactSupport}>
                         <Text style={styles.contactButtonText}>Contact Support</Text>
                     </TouchableOpacity>
                 </ScrollView>

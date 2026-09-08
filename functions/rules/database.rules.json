@@ -9,6 +9,14 @@
           ".read": "auth != null && auth.token.orgId == $orgId",
           ".write": "false"
         },
+        "dashboard_stats": {
+          ".read": "auth != null && auth.token.orgId == $orgId",
+          ".write": "false"
+        },
+        "checkout_sessions": {
+          ".read": "auth != null && auth.token.orgId == $orgId",
+          ".write": "false"
+        },
         "staff": {
           ".read": "auth != null && auth.token.orgId == $orgId",
           ".write": "auth != null && auth.token.role == 'admin' && auth.token.orgId == $orgId"

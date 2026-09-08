@@ -27,43 +27,28 @@ exports.auditLogger = onValueCreated(
 );
 
 // ── Daily Cleanup Cron ────────────────────────────────────────────────────────
-// Purges expired invites, revoked sessions, and old logs (>90 days)
+// Purges expired invites and old data
 exports.dataCleanupCron = onSchedule(
   { schedule: "every 24 hours", region: "europe-west1" },
   async () => {
     const now = Date.now();
-    const ninetyDaysAgo = now - 90 * 24 * 60 * 60 * 1000;
 
-    // 1. Remove expired invites
-    const invitesSnap = await db.ref("invites").once("value");
-    if (invitesSnap.exists()) {
-      const updates = {};
-      invitesSnap.forEach((child) => {
-        const invite = child.val();
-        if (invite.expires_at && invite.expires_at < now) {
-          updates[`invites/${child.key}`] = null;
-        }
-      });
-      if (Object.keys(updates).length > 0) await db.ref().update(updates);
+    // 1. Remove expired invites using targeted query
+    try {
+      const invitesSnap = await db.ref("invites").orderByChild("expires_at").endAt(now).once("value");
+      if (invitesSnap.exists()) {
+        const updates = {};
+        invitesSnap.forEach((child) => {
+          const invite = child.val();
+          if (invite && invite.expires_at && invite.expires_at < now) {
+            updates[`invites/${child.key}`] = null;
+          }
+        });
+        if (Object.keys(updates).length > 0) await db.ref().update(updates);
+      }
+    } catch (e) {
+      console.log("Error cleaning up invites:", e.message);
     }
-
-    // 2. Remove revoked sessions older than 30 days
-    const usersSnap = await db.ref("users").once("value");
-    if (usersSnap.exists()) {
-      const updates = {};
-      usersSnap.forEach((userChild) => {
-        const sessions = userChild.val().active_sessions;
-        if (sessions) {
-          Object.entries(sessions).forEach(([sid, session]) => {
-            if (session.revoked && session.last_seen && session.last_seen < ninetyDaysAgo) {
-              updates[`users/${userChild.key}/active_sessions/${sid}`] = null;
-            }
-          });
-        }
-      });
-      if (Object.keys(updates).length > 0) await db.ref().update(updates);
-    }
-
   }
 );
 // ── Secure Cleanup PII (Maintenance) ──────────────────────────────────────────
