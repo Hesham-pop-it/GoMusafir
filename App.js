@@ -90,7 +90,7 @@ export default function App() {
         // S15: Check if app was opened via auth-handoff deep link (cold start)
         try {
           const initialUrl = await Linking.getInitialURL();
-          if (initialUrl && (initialUrl.includes('auth-handoff') || initialUrl.includes('auth/handoff'))) {
+          if (initialUrl && (initialUrl.includes('auth-handoff') || initialUrl.includes('auth/handoff') || (initialUrl.includes('token=') && initialUrl.includes('gomusafir://')))) {
             console.log('[App] Detected initial auth-handoff URL:', initialUrl);
             await handleAuthHandoffUrl(initialUrl);
           }
@@ -196,7 +196,7 @@ export default function App() {
                   // If navigation container is already mounted and user was on auth screens, smoothly transition
                   if (navigationRef.isReady()) {
                     const currentRoute = navigationRef.getCurrentRoute()?.name;
-                    if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "Signup") {
+                    if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "BusinessLogin" || currentRoute === "Signup") {
                       navigationRef.reset({
                         index: 0,
                         routes: [{ name: targetScreen }]
@@ -252,7 +252,7 @@ export default function App() {
         WebBrowser.dismissBrowser();
       } catch (e) {}
 
-      if (event?.url && (event.url.includes('auth-handoff') || event.url.includes('auth/handoff'))) {
+      if (event?.url && (event.url.includes('auth-handoff') || event.url.includes('auth/handoff') || (event.url.includes('token=') && event.url.includes('gomusafir://')))) {
         console.log('[App] Received runtime auth-handoff URL:', event.url);
         handleAuthHandoffUrl(event.url);
       }

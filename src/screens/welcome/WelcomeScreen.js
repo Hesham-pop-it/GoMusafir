@@ -12,6 +12,7 @@ import {
     AppState,
     Modal,
     Pressable,
+    ActivityIndicator,
 } from 'react-native';
 import { StatusBar } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -24,6 +25,7 @@ import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-ic
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { Typography } from '../../constants/Typography';
+import { subscribeToAuthHandoff, getAuthHandoffState } from '../../utils/authHandoff';
 // import Logo from '../../components/Logo'; // Removed as per request
 import { responsiveFontSize } from '../../utils/responsive';
 import { Dimensions } from 'react-native';
@@ -324,6 +326,18 @@ const WelcomeScreen = ({ navigation }) => {
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);
     const [selectedLanguage, setSelectedLanguage] = React.useState('EN');
+    const [handoffState, setHandoffState] = React.useState(getAuthHandoffState());
+
+    React.useEffect(() => {
+        const unsubscribe = subscribeToAuthHandoff((state) => {
+            setHandoffState(state);
+            if (state.isLoggingIn) {
+                setJoinMethodVisible(false);
+                setModalVisible(false);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
 
     const renderLanguageItem = ({ item }) => (
         <TouchableOpacity
@@ -369,14 +383,23 @@ const WelcomeScreen = ({ navigation }) => {
                     {/* Buttons Section */}
                     <View style={styles.buttonContainer}>
                         <TouchableOpacity
-                            style={{ backgroundColor: '#B99A4A', ...styles.button }}
+                            style={[
+                                { backgroundColor: '#B99A4A', ...styles.button },
+                                handoffState.isLoggingIn && { opacity: 0.5 }
+                            ]}
+                            disabled={handoffState.isLoggingIn}
                             onPress={() => setJoinMethodVisible(true)}
                         >
                             <Text style={styles.primaryButtonText}>Join as Participant</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
-                            style={[styles.button, styles.secondaryButton]}
+                            style={[
+                                styles.button, 
+                                styles.secondaryButton,
+                                handoffState.isLoggingIn && { opacity: 0.5 }
+                            ]}
+                            disabled={handoffState.isLoggingIn}
                             onPress={async () => {
                                 safePause(player);
                                 await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', {
@@ -393,8 +416,9 @@ const WelcomeScreen = ({ navigation }) => {
 
                         <GradientBorderButton
                             onPress={() => navigation.navigate('BusinessLogin')}
-                            style={{ borderRadius: 30, marginBottom: 20 }}
+                            style={{ borderRadius: 30, marginBottom: handoffState.isLoggingIn ? 8 : 20 }}
                             innerBg="transparent"
+                            disabled={handoffState.isLoggingIn}
                         >
                             <Text style={{
                                 color: '#FFF',
@@ -404,6 +428,15 @@ const WelcomeScreen = ({ navigation }) => {
                                 Log In With Your Business Account
                             </Text>
                         </GradientBorderButton>
+
+                        {handoffState.isLoggingIn && (
+                            <View style={styles.loggingInIndicator}>
+                                <ActivityIndicator size="small" color="#B99A4A" style={{ marginRight: 8 }} />
+                                <Text style={styles.loggingInText}>
+                                    We are logging you in...
+                                </Text>
+                            </View>
+                        )}
                     </View>
                 </SafeAreaView>
             </View>
@@ -646,6 +679,18 @@ const styles = StyleSheet.create({
         textShadowColor: 'rgba(0, 0, 0, 0.8)',
         textShadowOffset: { width: -1, height: 1 },
         textShadowRadius: 10,
+    },
+    loggingInIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 6,
+        marginBottom: 14,
+    },
+    loggingInText: {
+        color: '#B99A4A',
+        fontFamily: Typography.sans.medium,
+        fontSize: responsiveFontSize(14),
     },
 });
 
