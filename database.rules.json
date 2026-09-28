@@ -38,7 +38,7 @@
            "trips": {
               ".read": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
               "$tripId": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager'",
                  "visibility_config": {
                     ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
@@ -76,7 +76,7 @@
     },
     "trips_participants": {
          "$tripId": {
-            ".read": "auth.uid !== null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).exists() || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).exists() || root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('staff').child(auth.uid).exists())",
+            ".read": "auth.uid !== null && ((root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).exists() || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).exists() || root.child('orgs').child(root.child('users').child(auth.uid).child('staff_org_id').val()).child('staff').child(auth.uid).exists())",
            "$uid": {
               ".write": false
            }
@@ -86,7 +86,7 @@
         "$orgId": {
            "$tripId": {
               "locations": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  "$uid": {
                     ".write": "auth.uid === $uid"
                  }
@@ -98,25 +98,25 @@
                  }
               },
               "chat": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
-                 ".write": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".write": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  ".indexOn": ["timestamp"],
                  "$messageId": {
                     ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && (newData.hasChild('text') || newData.hasChild('type')) && (newData.child('sender_id').val() == auth.uid || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
                  }
               },
               "read_pointers": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  "$uid": {
                     ".write": "auth.uid === $uid"
                  }
               },
               "templates": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
               },
               "location_permissions": {
-                 ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                 ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                  "$targetUid": {
                     "$requesterUid": {
                        ".write": "auth.uid === $targetUid"
@@ -124,10 +124,10 @@
                  }
               },
                "voice_channel": {
-                   ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
+                   ".read": "auth != null && ((root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || auth.token.orgId == $orgId || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId)",
                    ".write": "auth != null && ( (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host')) || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId )",
                    "activeSpeaker": {
-                       ".write": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+                       ".write": "auth != null && ((root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
                    },
                    "presence": {
                        ".read": "auth != null",
@@ -147,11 +147,11 @@
                    ".write": "auth != null"
                },
                 "pinned_location": {
-                   ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                   ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                    ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
                 },
                "safety_point": {
-                  ".read": "root.child('trips_participants').child($tripId).child(auth.uid).exists() || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
+                  ".read": "(root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active') || root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()",
                   ".write": "root.child('orgs').child($orgId).child('staff').child(auth.uid).exists()"
                }
            }

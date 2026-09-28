@@ -79,3 +79,74 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
         await signOut(authInstance);
     }
 };
+
+/**
+ * Checks whether a given user has at least one valid/active trip.
+ * Staff members (admins, co-hosts, managers) always return true.
+ * Participants return true ONLY if they belong to at least one active, non-closed trip.
+ *
+ * @param {string} uid User ID to check
+ * @returns {Promise<boolean>}
+ */
+export const hasValidActiveTrip = async (uid) => {
+    if (!uid) return false;
+    try {
+        const userSnap = await get(ref(database, `users/${uid}`));
+        if (!userSnap.exists()) return false;
+        const userData = userSnap.val() || {};
+
+        // Staff check: Admins, co-hosts, managers, or staff_org_id bypass participant trip checks
+        const userObj = auth.currentUser;
+        if (userObj && userObj.uid === uid) {
+            try {
+                const tokenResult = await userObj.getIdTokenResult();
+                const role = tokenResult?.claims?.role;
+                if (role === 'admin' || role === 'co-host' || role === 'manager' || userData.staff_org_id) {
+                    return true;
+                }
+            } catch (e) {}
+        }
+        if (userData.staff_org_id) {
+            return true;
+        }
+
+        // Participant check: Must have at least one active trip in joined_trips
+        const joinedTrips = userData.joined_trips || {};
+        const tripIds = Object.keys(joinedTrips);
+        if (tripIds.length === 0) {
+            return false;
+        }
+
+        for (const tripId of tripIds) {
+            const joinedData = joinedTrips[tripId];
+            let orgId = joinedData?.org_id || joinedData?.orgId;
+
+            if (!orgId) {
+                const orgSnap = await get(ref(database, `trips_orgs/${tripId}`));
+                orgId = orgSnap.val();
+            }
+
+            if (!orgId) continue;
+
+            // Check if participant is still in trips_participants
+            const participantSnap = await get(ref(database, `trips_participants/${tripId}/${uid}`));
+            if (!participantSnap.exists()) continue;
+
+            // Check trip status in orgs/orgId/trips/tripId
+            const tripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}`));
+            if (tripSnap.exists()) {
+                const trip = tripSnap.val();
+                const isClosed = trip.status === 'closed' || trip.status === 'ended';
+                if (!isClosed) {
+                    return true; // Found at least one valid active trip
+                }
+            }
+        }
+
+        return false;
+    } catch (err) {
+        console.warn("[hasValidActiveTrip] Error checking trip validity:", err);
+        return false;
+    }
+};
+

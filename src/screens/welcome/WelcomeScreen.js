@@ -404,6 +404,11 @@ const WelcomeScreen = ({ navigation }) => {
                                 safePause(player);
                                 await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', {
                                     presentationStyle: WebBrowser.WebBrowserPresentationStyle.CURRENT_CONTEXT,
+                                    toolbarColor: Colors.dark.background,
+                                    secondaryToolbarColor: Colors.dark.background,
+                                    navigationBarColor: Colors.dark.background,
+                                    navigationBarDividerColor: Colors.dark.background,
+                                    controlsColor: '#FFFFFF',
                                 });
                                 if (isMountedRef.current && isFocused) {
                                     safePlay(player);

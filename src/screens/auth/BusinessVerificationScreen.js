@@ -23,6 +23,7 @@ import { auth, database, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { ref, set, update } from 'firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { safeSignOut } from '../../utils/authUtils';
 
 const BusinessVerificationScreen = ({ route }) => {
     const navigation = useNavigation();
@@ -43,7 +44,20 @@ const BusinessVerificationScreen = ({ route }) => {
     const [isError, setIsError] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [resendLoading, setResendLoading] = useState(false);
+    const [resendTimer, setResendTimer] = useState(30);
     const inputRef = useRef(null);
+
+    useEffect(() => {
+        let interval = null;
+        if (resendTimer > 0) {
+            interval = setInterval(() => {
+                setResendTimer((prev) => prev - 1);
+            }, 1000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
+    }, [resendTimer]);
 
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -228,7 +242,7 @@ const BusinessVerificationScreen = ({ route }) => {
     };
 
     const handleResend = async () => {
-        if (resendLoading || !userEmail) return;
+        if (resendLoading || resendTimer > 0 || !userEmail) return;
         setResendLoading(true);
         try {
             const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
@@ -238,17 +252,25 @@ const BusinessVerificationScreen = ({ route }) => {
                 isMobile: true
             });
             Alert.alert("Code Sent", "A new verification code has been sent to your business email.");
+            setResendTimer(30);
         } catch (error) {
             console.warn("OTP Resend Error:", error);
             const errMsg = error.message || "";
             if (error.code === 'resource-exhausted' || errMsg.includes('too-many-requests') || errMsg.includes('resource-exhausted')) {
                 Alert.alert("Rate Limit Exceeded", "Please wait a minute before requesting another code.");
+                setResendTimer(60);
             } else {
                 Alert.alert("Error", error.message || "Failed to resend code. Please check your internet connection.");
             }
         } finally {
             setResendLoading(false);
         }
+    };
+
+    const getResendText = () => {
+        if (resendLoading) return "Sending...";
+        if (resendTimer > 0) return `Resend in ${resendTimer}s`;
+        return resendText;
     };
 
     const renderDigit = (index) => {
@@ -264,12 +286,23 @@ const BusinessVerificationScreen = ({ route }) => {
         );
     };
 
+    const handleBack = async () => {
+        try {
+            await AsyncStorage.removeItem('mfa_lock').catch(() => {});
+            if (userUid) {
+                await set(ref(database, `users/${userUid}/mfa_pending`), false).catch(() => {});
+            }
+            await safeSignOut(auth).catch(() => {});
+        } catch (e) {}
+        navigation.goBack();
+    };
+
     return (
         <GlowBackground>
             <SafeAreaView style={styles.safeArea}>
                 {/* Header */}
                 <View style={styles.header}>
-                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                    <TouchableOpacity onPress={handleBack} style={styles.backButton}>
                         <Ionicons name="chevron-back" size={22} color="#FFF" />
                     </TouchableOpacity>
                 </View>
@@ -330,10 +363,10 @@ const BusinessVerificationScreen = ({ route }) => {
                         }
                     ]}>
                         <GradientBorderButton
-                            text={resendLoading ? "Sending..." : resendText}
+                            text={getResendText()}
                             onPress={handleResend}
                             innerBg="#1A1E21"
-                            disabled={resendLoading}
+                            disabled={resendLoading || resendTimer > 0}
                         />
 
                         <TouchableOpacity

@@ -14,6 +14,7 @@ import { Typography } from '../constants/Typography';
 import GradientBorderButton from './GradientBorderButton';
 import { Ionicons } from '@expo/vector-icons';
 import * as WebBrowser from 'expo-web-browser';
+import { Colors } from '../constants/Colors';
 
 const { width, height: screenHeight } = Dimensions.get('window');
 
@@ -100,6 +101,11 @@ const PaymentSuccessModal = ({ visible, onClose, webLink }) => {
                                         setBrowserOpenState(true);
                                         await WebBrowser.openBrowserAsync(webLink, {
                                             presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+                                            toolbarColor: Colors.dark.background,
+                                            secondaryToolbarColor: Colors.dark.background,
+                                            navigationBarColor: Colors.dark.background,
+                                            navigationBarDividerColor: Colors.dark.background,
+                                            controlsColor: '#FFFFFF',
                                         });
                                         setBrowserOpenState(false);
                                     } catch (err) {

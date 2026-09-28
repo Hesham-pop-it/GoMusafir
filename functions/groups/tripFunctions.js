@@ -250,6 +250,47 @@ exports.updateLiveLocation = onCall({ region: "europe-west1" }, async (request) 
   return { success: true };
 });
 
+// Helper to check and revoke participant session if they have no remaining active trips
+const checkAndRevokeInactiveParticipant = async (targetUid) => {
+  try {
+    const userSnap = await db.ref(`users/${targetUid}`).get();
+    if (!userSnap.exists()) return;
+    const userData = userSnap.val() || {};
+
+    // Do not revoke staff sessions
+    if (userData.staff_org_id) return;
+    try {
+      const userRecord = await admin.auth().getUser(targetUid);
+      const role = userRecord.customClaims?.role;
+      if (['admin', 'co-host', 'manager'].includes(role)) return;
+    } catch (e) {}
+
+    const joinedTrips = userData.joined_trips || {};
+    let hasOtherActiveTrip = false;
+
+    for (const tId of Object.keys(joinedTrips)) {
+      const tOrgId = joinedTrips[tId]?.org_id || joinedTrips[tId]?.orgId;
+      if (!tOrgId) continue;
+
+      const pSnap = await db.ref(`trips_participants/${tId}/${targetUid}`).get();
+      if (!pSnap.exists()) continue;
+
+      const tripSnap = await db.ref(`orgs/${tOrgId}/trips/${tId}`).get();
+      if (tripSnap.exists() && tripSnap.val().status === 'active') {
+        hasOtherActiveTrip = true;
+        break;
+      }
+    }
+
+    if (!hasOtherActiveTrip) {
+      await admin.auth().revokeRefreshTokens(targetUid);
+      await db.ref(`users/${targetUid}/active_device_id`).remove().catch(() => {});
+    }
+  } catch (err) {
+    console.error(`Error in checkAndRevokeInactiveParticipant for ${targetUid}:`, err);
+  }
+};
+
 // ── Close Trip ────────────────────────────────────────────────────────────────
 // S15: Invalidates the invite code when trip is closed.
 exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
@@ -268,6 +309,10 @@ exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
   const trip = tripSnap.val();
   const inviteCode = trip.invitation_code;
 
+  // Get participant list to revoke sessions for ended trip
+  const participantsSnap = await db.ref(`trips_participants/${tripId}`).get();
+  const participantIds = participantsSnap.exists() ? Object.keys(participantsSnap.val() || {}) : [];
+
   const updates = {
     [`orgs/${orgId}/trips/${tripId}/status`]: "closed",
     [`orgs/${orgId}/trips/${tripId}/live_data`]: null, // clear live data
@@ -276,6 +321,9 @@ exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
   };
 
   await db.ref().update(updates);
+
+  // Revoke session for participants who have no other active trips
+  await Promise.all(participantIds.map(pid => checkAndRevokeInactiveParticipant(pid)));
 
   await writeAuditLog(orgId, {
     action: "TRIP_CLOSED",
@@ -382,6 +430,8 @@ exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (re
   };
 
   await db.ref().update(updates);
+
+  await checkAndRevokeInactiveParticipant(targetUid);
 
   await writeAuditLog(orgId, {
     action: "PARTICIPANT_REMOVED",
@@ -505,6 +555,9 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
   });
 
   await db.ref().update(updates);
+
+  // Revoke session for participants who have no other active trips
+  await Promise.all(participantIds.map(pid => checkAndRevokeInactiveParticipant(pid)));
 
   // Write audit log
   await writeAuditLog(orgId, {

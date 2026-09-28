@@ -3,6 +3,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import { Colors } from '../constants/Colors';
 
 // Import organized screens
 import WelcomeScreen from '../screens/welcome/WelcomeScreen';
@@ -102,6 +103,11 @@ const checkAndOpenWebUrl = async (url) => {
                     try {
                         await WebBrowser.openBrowserAsync(url, {
                             presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+                            toolbarColor: Colors.dark.background,
+                            secondaryToolbarColor: Colors.dark.background,
+                            navigationBarColor: Colors.dark.background,
+                            navigationBarDividerColor: Colors.dark.background,
+                            controlsColor: '#FFFFFF',
                         });
                     } finally {
                         setBrowserOpenState(false);
@@ -124,6 +130,11 @@ const checkAndOpenWebUrl = async (url) => {
             try {
                 await WebBrowser.openBrowserAsync(url, {
                     presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+                    toolbarColor: Colors.dark.background,
+                    secondaryToolbarColor: Colors.dark.background,
+                    navigationBarColor: Colors.dark.background,
+                    navigationBarDividerColor: Colors.dark.background,
+                    controlsColor: '#FFFFFF',
                 });
             } finally {
                 setBrowserOpenState(false);

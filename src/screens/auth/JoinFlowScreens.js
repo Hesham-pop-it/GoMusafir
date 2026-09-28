@@ -34,6 +34,7 @@ import { httpsCallable } from 'firebase/functions';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, fetchSignInMethodsForEmail, signOut } from 'firebase/auth';
 import { ref as dbRef, set, remove, update, serverTimestamp, get } from 'firebase/database';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { safeSignOut, hasValidActiveTrip } from '../../utils/authUtils';
 
 
 // --- Shared Components ---
@@ -347,6 +348,18 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                             setEmailError('This business account cannot be used to join as a participant.');
                             setIsLoading(false);
                             return;
+                        }
+
+                        // Check if participant has a valid active trip (unless they are joining a new trip with an invite code/token)
+                        const isJoiningNewTrip = !!previousData.invitationCode || !!previousData.teamInviteToken;
+                        if (!isJoiningNewTrip) {
+                            const hasActiveTrip = await hasValidActiveTrip(currentUserId);
+                            if (!hasActiveTrip) {
+                                await safeSignOut(auth);
+                                setEmailError('Your trip has ended. Access is blocked until you join a valid trip.');
+                                setIsLoading(false);
+                                return;
+                            }
                         }
 
                         // Set flags in database to prevent App.js from redirecting to Home instantly

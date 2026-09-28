@@ -27,7 +27,7 @@
         },
         "trips": {
           "$tripId": {
-            ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || root.child('trips_participants').child($tripId).child(auth.uid).exists())",
+            ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || (root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active'))",
             ".write": "auth != null && auth.token.email_verified == true && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host') && auth.token.orgId == $orgId",
             "live_data": {
               "$busId": {
@@ -75,7 +75,7 @@
     },
     "trips_participants": {
       "$tripId": {
-        ".read": "auth != null && root.child('trips_participants').child($tripId).child(auth.uid).exists()",
+        ".read": "auth != null && (root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('trips').child($tripId).child('status').val() === 'active')",
         "$uid": {
           ".write": "false"
         }
@@ -84,7 +84,7 @@
     "trips_active": {
       "$orgId": {
         "$tripId": {
-          ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || root.child('trips_participants').child($tripId).child(auth.uid).exists())",
+          ".read": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId || (root.child('trips_participants').child($tripId).child(auth.uid).exists() && root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active'))",
           ".write": "auth != null && auth.token.email_verified == true && (auth.token.orgId == $orgId && (auth.token.role == 'admin' || auth.token.role == 'manager' || auth.token.role == 'co-host'))"
         }
       }

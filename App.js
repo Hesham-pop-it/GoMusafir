@@ -21,7 +21,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { ref, set, onValue, off, get } from 'firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { handleAuthHandoffUrl } from './src/utils/authHandoff';
-import { safeSignOut } from './src/utils/authUtils';
+import { safeSignOut, hasValidActiveTrip } from './src/utils/authUtils';
 
 import { registerForPushNotificationsAsync, unregisterForPushNotificationsAsync } from './src/services/notificationService';
 import { LanguageProvider } from './src/context/LanguageContext';
@@ -121,19 +121,25 @@ export default function App() {
             const isVerifiedUser = user && (user.emailVerified || idTokenResultInitial?.claims?.email_verified || idTokenResultInitial?.claims?.handoff);
 
             if (isVerifiedUser) {
+              if (!currentDeviceId) {
+                currentDeviceId = await getDeviceId();
+              }
               const deviceRef = ref(database, `users/${user.uid}/active_device_id`);
-              await set(deviceRef, currentDeviceId);
 
-              // Guard flag to prevent multiple simultaneous forced sign-out attempts
+              // Guard flags to prevent multiple simultaneous forced sign-out attempts
               let isForceSigningOut = false;
+              let hasConfirmedSession = false;
+
+              await set(deviceRef, currentDeviceId);
+              hasConfirmedSession = true;
 
               unsubscribeDevice = onValue(deviceRef, (snapshot) => {
                 const activeId = snapshot.val();
-                if (activeId && activeId !== currentDeviceId && !isForceSigningOut) {
+                if (activeId === currentDeviceId) {
+                  hasConfirmedSession = true;
+                } else if (activeId && activeId !== currentDeviceId && hasConfirmedSession && !isForceSigningOut) {
                   isForceSigningOut = true;
 
-                  // Eagerly unsubscribe the device listener so it doesn't fire again
-                  // while the async sign-out is in progress
                   if (unsubscribeDevice) {
                     unsubscribeDevice();
                     unsubscribeDevice = null;
@@ -146,15 +152,10 @@ export default function App() {
                     { cancelable: false }
                   );
 
-                  // Clear any local session artifacts before signing out
                   AsyncStorage.multiRemove(['mfa_lock']).catch(() => {});
 
-                  // Safely sign out (clears RTDB presence, stops notifications/location)
                   safeSignOut(auth).catch(err => {
                     console.warn("Auto sign out failed:", err);
-                    // Even if Firebase sign-out fails (e.g. offline), reset the
-                    // navigation to the Welcome screen so the UI reflects the
-                    // evicted session state.
                     setInitialRoute("Welcome");
                     setAppIsReady(true);
                   });
@@ -170,7 +171,6 @@ export default function App() {
                 try {
                   const userData = snapshot.val() || {};
                   
-                  // If user has been deleted or is null, exit early to avoid token actions
                   if (!snapshot.exists()) {
                     return;
                   }
@@ -189,6 +189,42 @@ export default function App() {
                     isJoining = false;
                   }
 
+                  // Participant Trip Access Check: Non-staff users must have a valid active trip
+                  if (!isStaff && !isJoining && !userData.mfa_pending && !mfaLock) {
+                    const hasActiveTrip = await hasValidActiveTrip(user.uid);
+                    if (!hasActiveTrip && !isForceSigningOut) {
+                      isForceSigningOut = true;
+
+                      if (unsubscribeUser) {
+                        unsubscribeUser();
+                        unsubscribeUser = null;
+                      }
+
+                      Alert.alert(
+                        "Trip Ended",
+                        "Your trip has ended or you are no longer part of an active trip. You have been logged out.",
+                        [{ text: "OK" }],
+                        { cancelable: false }
+                      );
+
+                      AsyncStorage.multiRemove(['mfa_lock']).catch(() => {});
+
+                      safeSignOut(auth).catch(err => {
+                        console.warn("Participant auto sign out failed:", err);
+                      }).finally(() => {
+                        setInitialRoute("Welcome");
+                        setAppIsReady(true);
+                        if (navigationRef.isReady()) {
+                          navigationRef.reset({
+                            index: 0,
+                            routes: [{ name: "Welcome" }]
+                          });
+                        }
+                      });
+                      return;
+                    }
+                  }
+
                   let targetScreen = "Welcome";
                   if (userData.mfa_pending || mfaLock) {
                     targetScreen = "BusinessVerification";
@@ -204,7 +240,6 @@ export default function App() {
                     setInitialRoute(targetScreen);
                   }
 
-                  // If navigation container is already mounted and user was on auth screens, smoothly transition
                   if (navigationRef.isReady()) {
                     const currentRoute = navigationRef.getCurrentRoute()?.name;
                     if (currentRoute === "Welcome" || currentRoute === "Login" || currentRoute === "Signup") {
@@ -220,7 +255,6 @@ export default function App() {
                   }, 300);
                 } catch (error) {
                   console.warn("[App] Error in user data listener:", error);
-                  // Ensure the app doesn't hang in ready state on auth/token errors
                   setAppIsReady(true);
                 }
               }, (err) => {

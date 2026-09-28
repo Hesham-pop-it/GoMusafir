@@ -16,6 +16,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Typography } from '../../constants/Typography';
 import GlowBackground from '../../components/GlowBackground';
 import * as WebBrowser from 'expo-web-browser';
+import { Colors } from '../../constants/Colors';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -399,6 +400,11 @@ const HelpSupportScreen = () => {
         try {
             await WebBrowser.openBrowserAsync('https://bugs.popitgroup.com', {
                 presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+                toolbarColor: Colors.dark.background,
+                secondaryToolbarColor: Colors.dark.background,
+                navigationBarColor: Colors.dark.background,
+                navigationBarDividerColor: Colors.dark.background,
+                controlsColor: '#FFFFFF',
             });
         } catch (error) {
             console.error('Error opening support link:', error);
