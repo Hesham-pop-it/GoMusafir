@@ -1,3 +1,4 @@
+import { brandedBrowserOptions } from '../utils/browserOptions';
 import React from 'react';
 import {
     View,
@@ -99,14 +100,7 @@ const PaymentSuccessModal = ({ visible, onClose, webLink }) => {
                                     try {
                                         const { setBrowserOpenState } = require('../navigation/RootNavigator');
                                         setBrowserOpenState(true);
-                                        await WebBrowser.openBrowserAsync(webLink, {
-                                            presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-                                            toolbarColor: Colors.dark.background,
-                                            secondaryToolbarColor: Colors.dark.background,
-                                            navigationBarColor: Colors.dark.background,
-                                            navigationBarDividerColor: Colors.dark.background,
-                                            controlsColor: '#FFFFFF',
-                                        });
+                                        await WebBrowser.openBrowserAsync(webLink, brandedBrowserOptions);
                                         setBrowserOpenState(false);
                                     } catch (err) {
                                         console.warn("Failed to open link in in-app browser:", err);

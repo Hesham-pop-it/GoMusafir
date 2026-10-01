@@ -1,7 +1,8 @@
 // ─── Dashboard Stats Functions ────────────────────────────────────────────────
 // Recalculates organization metrics and stores them in the Realtime Database.
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { onValueWritten } = require("firebase-functions/v2/database");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { admin, db } = require("../admin");

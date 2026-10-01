@@ -6,7 +6,6 @@
     "rules": "storage.rules"
   },
   "functions": [
-
     {
       "source": "functions",
       "codebase": "default",
@@ -40,7 +39,7 @@
     },
     {
       "target": "api",
-      "public": "public", 
+      "public": "public",
       "rewrites": [
         {
           "source": "**",
@@ -53,10 +52,30 @@
     }
   ],
   "emulators": {
-    "auth": { "port": 9099 },
-    "functions": { "port": 5001 },
-    "database": { "port": 9000 },
-    "storage": { "port": 9199 },
-    "ui": { "enabled": true, "port": 4000 }
+    "auth": {
+      "port": 9099
+    },
+    "functions": {
+      "port": 5001
+    },
+    "database": {
+      "port": 9000
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "firestore": {
+      "port": 8080
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "react-native": {
+    "messaging_ios_foreground_presentation_options": []
   }
 }

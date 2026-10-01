@@ -38,6 +38,7 @@ import { createAudioPlayer, useAudioRecorder, RecordingPresets, requestRecording
 import { storage } from '../../config/firebase';
 import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
+import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width, height } = Dimensions.get('window');
@@ -143,7 +144,7 @@ const getParticipantColor = (senderId) => {
 
 const thumbnailCache = new Map();
 
-const ChatMessage = React.memo(({ item, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
+const ChatMessage = React.memo(({ item, staffRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
@@ -206,7 +207,18 @@ const ChatMessage = React.memo(({ item, isMe, isMedia, isShortText, setReplyingT
                         </View>
                     )}
 
-                    {!isMe && (
+                    {staffRole ? (
+                        <View style={[styles.staffSenderRow, isMedia && { paddingHorizontal: 12, paddingTop: 8 }]}>
+                            <Text numberOfLines={1} style={[styles.senderName, styles.staffSenderName, isMe && { color: '#30250C' }]}>
+                                {isMe ? 'You' : (participantProfiles[item.sender_id]?.name || item.senderName || item.sender_name || 'Journey team')}
+                            </Text>
+                            <View accessible accessibilityLabel="Journey team"
+                                style={[styles.staffBadge, isMe && styles.staffBadgeMe]}>
+                                <Ionicons name="shield-checkmark-outline" size={11} color={isMe ? '#30250C' : '#E5C875'} />
+                                <Text style={[styles.staffBadgeText, isMe && { color: '#30250C' }]}>Journey team</Text>
+                            </View>
+                        </View>
+                    ) : !isMe && (
                         <Text style={[
                             styles.senderName,
                             { color: item.color || getParticipantColor(item.sender_id) },
@@ -688,45 +700,31 @@ const TripChatScreen = () => {
             const pRef = ref(database, `trips_participants/${tripId}`);
             const staffRef = ref(database, `orgs/${orgId}/staff`);
 
-            // We need to merge both sources
-            const unsubP = onValue(pRef, (snap) => {
-                const participantsVal = snap.val() ?? {};
-                const participantUids = Array.isArray(participantsVal) ? participantsVal.filter(v => v !== null) : Object.keys(participantsVal);
-
-                // Also get current staff to merge
-                get(staffRef).then(staffSnap => {
-                    const staffVal = staffSnap.val() ?? {};
-                    setStaffData(staffVal);
-                    const staffUids = Array.isArray(staffVal) ? staffVal.filter(v => v !== null) : Object.keys(staffVal);
-
-                    const combinedUids = Array.from(new Set([
-                        ...participantUids,
-                        ...staffUids,
-                        trip?.organizer_id
-                    ])).filter(Boolean);
-
-                    setCurrentParticipants(combinedUids);
-                });
+            // Merge live snapshots without asynchronous get() calls overwriting
+            // a newer role update (especially a staff removal/demotion).
+            let participantUids = [];
+            let staffVal = {};
+            setStaffData({});
+            const mergeMembers = () => {
+                const staffUids = Object.keys(staffVal).filter(uid => getChatStaffRole(staffVal, uid));
+                setCurrentParticipants(Array.from(new Set([
+                    ...participantUids, ...staffUids, trip?.organizer_id
+                ])).filter(Boolean));
+            };
+            const unsubP = onValue(pRef, snap => {
+                const value = snap.val() ?? {};
+                participantUids = Array.isArray(value) ? value.filter(v => v !== null) : Object.keys(value);
+                mergeMembers();
             });
-
-            // Also listen to staff specifically so it's live if an admin is added
-            const unsubStaff = onValue(staffRef, (snap) => {
-                const staffVal = snap.val() ?? {};
+            const unsubStaff = onValue(staffRef, snap => {
+                staffVal = snap.val() ?? {};
                 setStaffData(staffVal);
-                const staffUids = Array.isArray(staffVal) ? staffVal.filter(v => v !== null) : Object.keys(staffVal);
-
-                get(pRef).then(pSnap => {
-                    const participantsVal = pSnap.val() ?? {};
-                    const participantUids = Array.isArray(participantsVal) ? participantsVal.filter(v => v !== null) : Object.keys(participantsVal);
-
-                    const combinedUids = Array.from(new Set([
-                        ...participantUids,
-                        ...staffUids,
-                        trip?.organizer_id
-                    ])).filter(Boolean);
-
-                    setCurrentParticipants(combinedUids);
-                });
+                mergeMembers();
+            }, () => {
+                // Do not leave a privileged badge visible when access is lost.
+                staffVal = {};
+                setStaffData({});
+                mergeMembers();
             });
 
             // Listen to read pointers
@@ -1354,6 +1352,7 @@ const TripChatScreen = () => {
         return (
             <ChatMessage
                 item={item}
+                staffRole={getChatStaffRole(staffData, item.sender_id)}
                 isMe={isMe}
                 isMedia={isMedia}
                 isShortText={isShortText}
@@ -1366,7 +1365,7 @@ const TripChatScreen = () => {
                 onVideoPress={setViewerVideo}
             />
         );
-    }, [currentParticipants, readPointers, participantProfiles]);
+    }, [currentParticipants, readPointers, participantProfiles, staffData]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
@@ -1468,6 +1467,7 @@ const TripChatScreen = () => {
                     <FlatList
                         ref={flatListRef}
                         data={messages}
+                        extraData={staffData}
                         renderItem={renderMessage}
                         keyExtractor={item => item.id}
                         inverted={true}
@@ -1805,6 +1805,26 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(35, 39, 42, 0.7)',
         borderBottomLeftRadius: 4,
     },
+    staffSenderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        columnGap: 6,
+        rowGap: 3,
+        marginBottom: 5,
+    },
+    staffSenderName: { color: '#E5C875', flexShrink: 1, marginBottom: 0 },
+    staffBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        borderRadius: 5,
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+        backgroundColor: 'rgba(185,154,74,0.12)',
+    },
+    staffBadgeMe: { backgroundColor: 'rgba(0,0,0,0.08)' },
+    staffBadgeText: { color: '#E5C875', fontSize: 10, fontWeight: '600' },
     senderName: {
         color: '#8B77FF',
         fontSize: 12,

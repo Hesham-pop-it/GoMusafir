@@ -1,3 +1,7 @@
+import { signInWithCustomToken } from 'firebase/auth';
+import { beginEnrollment } from '../../utils/enrollmentSession';
+import { completeTripJoin } from '../../utils/completeTripJoin';
+import { verificationContinuation } from '../../utils/invitationOnboarding';
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
@@ -40,11 +44,12 @@ const BusinessVerificationScreen = ({ route }) => {
         resendText = "Resend"
     } = route?.params || {};
 
+    const [enrollmentChallenge, setEnrollmentChallenge] = useState(route?.params?.enrollmentChallenge);
     const [otp, setOtp] = useState('');
     const [isError, setIsError] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [resendLoading, setResendLoading] = useState(false);
-    const [resendTimer, setResendTimer] = useState(30);
+    const [resendTimer, setResendTimer] = useState(route?.params?.resendDelay ?? 60);
     const inputRef = useRef(null);
 
     useEffect(() => {
@@ -65,7 +70,7 @@ const BusinessVerificationScreen = ({ route }) => {
 
     useEffect(() => {
         const recoverState = async () => {
-            if (!route?.params && userUid) {
+            if (!route?.params?.invitationCode && !route?.params?.teamInviteToken && userUid) {
 
                 try {
                     const { get, ref } = await import('firebase/database');
@@ -113,11 +118,32 @@ const BusinessVerificationScreen = ({ route }) => {
         }
     };
 
+    const enrollmentAuthenticated = useRef(false);
+    const verifyingRef = useRef(false);
     const handleContinue = async () => {
+        if (verifyingRef.current) return;
         if (otp.length === 6) {
+            verifyingRef.current = true;
             setIsLoading(true);
             setIsError(false);
             try {
+                if (enrollmentChallenge) {
+                    if (!enrollmentAuthenticated.current) {
+                        const complete = await httpsCallable(functions, 'completeParticipantEnrollment')({
+                            challengeId: enrollmentChallenge, code: otp,
+                        });
+                        beginEnrollment();
+                        await signInWithCustomToken(auth, complete.data.customToken);
+                        enrollmentAuthenticated.current = true;
+                    }
+                    const joined = await completeTripJoin({
+                        inviteCode: route.params.invitationCode, voiceConsent: true, locationConsent: true,
+                    });
+                    navigation.reset({ index: 0, routes: [{ name: 'TripOverview', params: {
+                        tripId: joined.tripId, orgId: joined.orgId, isAdmin: false,
+                    } }] });
+                    return;
+                }
                 const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
                 await verifyOTP({
                     uid: userUid,
@@ -125,7 +151,7 @@ const BusinessVerificationScreen = ({ route }) => {
                 });
 
                 // Use merged params (route or recovered)
-                const activeParams = route?.params || recoveredParams || {};
+                const activeParams = { ...recoveredParams, ...route?.params };
 
                 // On success, handle navigation
                 if (activeParams.isExistingUser) {
@@ -154,28 +180,14 @@ const BusinessVerificationScreen = ({ route }) => {
                         });
                     } else if (activeParams.invitationCode) {
                         // S22: Accelerated path for existing users - Join trip immediately
-                        const redeemInvite = httpsCallable(functions, 'redeemInvitation');
-                        const result = await redeemInvite({
+                        const resData = await completeTripJoin({
                             inviteCode: activeParams.invitationCode,
                             voiceConsent: true, // Returning users assumed to have active consent or re-grant
                             locationConsent: true,
                         });
 
-                        const resData = result.data || {};
                         const newTripId = resData.tripId;
                         const newOrgId = resData.orgId;
-
-                        // Clear security and flow flags ONLY after successful join
-                        const cleanupUpdates = {};
-                        cleanupUpdates[`users/${userUid}/mfa_pending`] = false;
-                        cleanupUpdates[`users/${userUid}/join_flow_status`] = null;
-                        if (newTripId) {
-                            cleanupUpdates[`users/${userUid}/current_trip`] = newTripId;
-                        }
-                        await update(ref(database), cleanupUpdates);
-
-                        // S2: Clear local security lock
-                        await AsyncStorage.removeItem('mfa_lock');
 
                         // S22: Anchor this as the current trip and navigate
                         navigation.reset({
@@ -217,7 +229,7 @@ const BusinessVerificationScreen = ({ route }) => {
 
                     navigation.reset({
                         index: 0,
-                        routes: [{ name: activeParams.targetScreen || targetScreen, params: { ...activeParams } }],
+                        routes: [{ name: verificationContinuation(activeParams), params: { ...activeParams } }],
                     });
                 }
 
@@ -236,6 +248,7 @@ const BusinessVerificationScreen = ({ route }) => {
                     setIsError(true);
                 }
             } finally {
+                verifyingRef.current = false;
                 setIsLoading(false);
             }
         }
@@ -245,6 +258,15 @@ const BusinessVerificationScreen = ({ route }) => {
         if (resendLoading || resendTimer > 0 || !userEmail) return;
         setResendLoading(true);
         try {
+            if (enrollmentChallenge) {
+                const result = await httpsCallable(functions, 'beginParticipantEnrollment')({
+                    email: userEmail, inviteCode: route.params.invitationCode,
+                });
+                setEnrollmentChallenge(result.data.challengeId);
+                setOtp('');
+                setResendTimer(60);
+                return;
+            }
             const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
             await sendOTP({
                 email: userEmail,
@@ -252,11 +274,11 @@ const BusinessVerificationScreen = ({ route }) => {
                 isMobile: true
             });
             Alert.alert("Code Sent", "A new verification code has been sent to your business email.");
-            setResendTimer(30);
+            setResendTimer(60);
         } catch (error) {
             console.warn("OTP Resend Error:", error);
             const errMsg = error.message || "";
-            if (error.code === 'resource-exhausted' || errMsg.includes('too-many-requests') || errMsg.includes('resource-exhausted')) {
+            if (error.code?.replace(/^functions\//, '') === 'resource-exhausted' || errMsg.includes('too-many-requests') || errMsg.includes('resource-exhausted')) {
                 Alert.alert("Rate Limit Exceeded", "Please wait a minute before requesting another code.");
                 setResendTimer(60);
             } else {

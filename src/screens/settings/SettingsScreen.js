@@ -22,6 +22,7 @@ import { ref, onValue, set } from 'firebase/database';
 import { Alert } from 'react-native';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
 import { safeSignOut } from '../../utils/authUtils';
+import { completeAccountDeletion } from '../../utils/accountDeletion';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MyLiveActivity } from '../../components/Widget';
 
@@ -112,11 +113,11 @@ const SettingsScreen = ({ navigation }) => {
                 const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
                 await deleteMyAccount();
                 setDeleteVisible(false);
-                await safeSignOut(auth);
+                await completeAccountDeletion(auth, navigation);
             }
         } catch (error) {
             setDeleteVisible(false);
-            if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
+            if (error.code === 'auth/requires-recent-login' || error.message?.includes('re-authenticate')) {
                 Alert.alert(
                     "Security Verification",
                     "For your security, please log out and log back in to verify your identity before proceeding.",

@@ -1,3 +1,5 @@
+import { fetchAppAccess } from './participantAccess';
+import { finishEnrollment } from './enrollmentSession';
 import { signOut } from 'firebase/auth';
 import { ref, update, get } from 'firebase/database';
 import { database, auth } from '../config/firebase';
@@ -12,6 +14,8 @@ import { stopLiveLocationTracking } from '../services/locationTrackingService';
  * @param {{ tripId?: string, orgId?: string }} [activeTripContext]
  */
 export const safeSignOut = async (authInstance = auth, activeTripContext = {}) => {
+    finishEnrollment();
+    const logoutTimer = setTimeout(() => signOut(authInstance).catch(() => {}), 1500);
     try {
         const user = authInstance.currentUser;
         if (user && user.uid) {
@@ -71,12 +75,14 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
             console.warn("[safeSignOut] Error unregistering push notifications:", e);
         }
 
-        // 5. Revoke Firebase Auth session
+        // 5. Clear local Firebase credentials (backend handles token revocation)
         await signOut(authInstance);
     } catch (err) {
         console.warn("[safeSignOut] Error during safeSignOut flow:", err);
         // Ensure signOut is executed regardless
         await signOut(authInstance);
+    } finally {
+        clearTimeout(logoutTimer);
     }
 };
 
@@ -89,64 +95,8 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
  * @returns {Promise<boolean>}
  */
 export const hasValidActiveTrip = async (uid) => {
-    if (!uid) return false;
-    try {
-        const userSnap = await get(ref(database, `users/${uid}`));
-        if (!userSnap.exists()) return false;
-        const userData = userSnap.val() || {};
-
-        // Staff check: Admins, co-hosts, managers, or staff_org_id bypass participant trip checks
-        const userObj = auth.currentUser;
-        if (userObj && userObj.uid === uid) {
-            try {
-                const tokenResult = await userObj.getIdTokenResult();
-                const role = tokenResult?.claims?.role;
-                if (role === 'admin' || role === 'co-host' || role === 'manager' || userData.staff_org_id) {
-                    return true;
-                }
-            } catch (e) {}
-        }
-        if (userData.staff_org_id) {
-            return true;
-        }
-
-        // Participant check: Must have at least one active trip in joined_trips
-        const joinedTrips = userData.joined_trips || {};
-        const tripIds = Object.keys(joinedTrips);
-        if (tripIds.length === 0) {
-            return false;
-        }
-
-        for (const tripId of tripIds) {
-            const joinedData = joinedTrips[tripId];
-            let orgId = joinedData?.org_id || joinedData?.orgId;
-
-            if (!orgId) {
-                const orgSnap = await get(ref(database, `trips_orgs/${tripId}`));
-                orgId = orgSnap.val();
-            }
-
-            if (!orgId) continue;
-
-            // Check if participant is still in trips_participants
-            const participantSnap = await get(ref(database, `trips_participants/${tripId}/${uid}`));
-            if (!participantSnap.exists()) continue;
-
-            // Check trip status in orgs/orgId/trips/tripId
-            const tripSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}`));
-            if (tripSnap.exists()) {
-                const trip = tripSnap.val();
-                const isClosed = trip.status === 'closed' || trip.status === 'ended';
-                if (!isClosed) {
-                    return true; // Found at least one valid active trip
-                }
-            }
-        }
-
-        return false;
-    } catch (err) {
-        console.warn("[hasValidActiveTrip] Error checking trip validity:", err);
-        return false;
-    }
+    if (!uid || auth.currentUser?.uid !== uid) return false;
+    // Let callers distinguish unavailable data from a confirmed denial.
+    const access = await fetchAppAccess();
+    return access.staff === true || access.expires_at > access.server_now;
 };
-

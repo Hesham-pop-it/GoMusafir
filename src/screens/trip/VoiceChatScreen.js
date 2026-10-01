@@ -40,6 +40,7 @@ import { database, functions, auth } from '../../config/firebase';
 import { ref, onValue, off, update, get } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import PreTripVoiceAllowance from '../../components/PreTripVoiceAllowance';
 import SpeakerGlow from '../../components/SpeakerGlow';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
@@ -372,6 +373,7 @@ const VoiceChatContent = ({
                 </View>
 
                 <View style={[styles.topSection, { marginTop: 40 }]}>
+                    {isAdmin && <PreTripVoiceAllowance tripId={tripId} orgId={orgId} />}
                     <View style={styles.controlsGrid}>
                         {isAdmin ? (
                             <>
@@ -617,7 +619,7 @@ const VoiceChatScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        // Check if the trip has expired and sync visibility config & organizer
+        // Sync trip display metadata; Voice admission/expiry is enforced by the backend.
         const tripRef = ref(database, `orgs/${orgId}/trips/${tripId}`);
         const unsubTrip = onValue(tripRef, (snapshot) => {
             if (snapshot.exists()) {
@@ -626,16 +628,7 @@ const VoiceChatScreen = () => {
                 if (data.visibility_config) {
                     setGlobalVisibilityConfig(data.visibility_config);
                 }
-                if (data.endDate) {
-                    const endTime = typeof data.endDate === 'number'
-                        ? data.endDate
-                        : new Date(data.endDate).getTime();
-                    if (Date.now() > endTime) {
-                        Alert.alert("Trip Expired", "Voice chat is not available for this trip as it has expired.", [
-                            { text: "OK", onPress: () => navigation.goBack() }
-                        ]);
-                    }
-                }
+
             }
         });
 
@@ -820,8 +813,12 @@ const VoiceChatScreen = () => {
 
     // Auto-disconnect if channel is stopped while connected
     useEffect(() => {
-        if (isConnected && !isChannelActive && !isAdminState && activeTripId === tripId) {
-            Alert.alert("Voice Channel Ended", "The organizer has ended the voice channel.");
+        if (isConnected && isChannelActive === false && !isAdminState && activeTripId === tripId) {
+            // Fetch the reason before showing a generic message; the global
+            // provider explains automatic solo termination on every app screen.
+            get(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/endReason`)).then(snapshot => {
+                if (snapshot.val() !== 'alone_timeout') Alert.alert("Voice Channel Ended", "The voice channel has ended.");
+            }).catch(() => {});
             disconnect();
         }
     }, [isChannelActive, isConnected, isAdminState, activeTripId, tripId]);
@@ -877,6 +874,7 @@ const VoiceChatScreen = () => {
                     </View>
 
                     <View style={[styles.topSection, { marginTop: 40 }]}>
+                        {(isAdminState || isAdmin) && <PreTripVoiceAllowance tripId={tripId} orgId={orgId} />}
                         <View style={styles.controlsGrid}>
                             {isAdmin ? (
                                 <>

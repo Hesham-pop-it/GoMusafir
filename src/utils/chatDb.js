@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import ChatEncryption from './chatEncryption';
+import { auth } from '../config/firebase';
 
 /**
  * SQLite Database Manager for Offline Chat
@@ -7,6 +8,16 @@ import ChatEncryption from './chatEncryption';
  */
 class ChatDatabase {
     static db = null;
+    static generation = 0;
+
+    static async clearAll() {
+        this.generation++;
+        // Open directly: clearing must not initialize a new encryption key.
+        if (!this.db) this.db = await SQLite.openDatabaseAsync('gomusafir_chat.db');
+        await this.db.execAsync('DROP TABLE IF EXISTS messages;');
+        await this.db.closeAsync();
+        this.db = null;
+    }
 
     /**
      * Initializes the SQLite database and creates the messages table if it doesn't exist
@@ -56,7 +67,11 @@ class ChatDatabase {
      * Saves a message to the local database (Encrypts before saving)
      */
     static async saveMessage(tripId, msg) {
+        const generation = this.generation;
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
         if (!this.db) await this.init();
+        if (generation !== this.generation || auth.currentUser?.uid !== uid) return;
 
         try {
             const encryptedText = ChatEncryption.encrypt(msg.text || '');

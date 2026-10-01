@@ -1,9 +1,11 @@
+const { calculateAccess, refreshAccess } = require('../services/participantAccessService');
 // ─── Auth Functions ───────────────────────────────────────────────────────────
 // Covers: S1 (email verify), S2 (MFA), S4 (password policy), S5 (session revoke),
 //         S6 (RBAC custom claims), S12 (KMS PII), S20/S21 (audit/login logging)
 
 const functions = require("firebase-functions/v2");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { beforeUserCreated, beforeUserSignedIn } = require("firebase-functions/v2/identity");
 const { admin, db, auth } = require("../admin");
 const { encrypt } = require("../services/kmsService");
@@ -25,13 +27,27 @@ exports.onUserSignup = beforeUserCreated({ region: "europe-west1" }, async (even
   }
   // S4: Basic password is enforced by Firebase Auth policy in console settings.
   // Custom claims will be set by createOrganization after org is confirmed.
-  return {};
+  return { customClaims: { ...user.customClaims, role: user.customClaims?.role || "pending" } };
 });
 
 // ── S21: Log every sign-in (success + failure) ────────────────────────────────
 exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) => {
   const user = event.data;
   const ipAddress = event.ipAddress || "unknown";
+  // Ordinary participant login is blocked without a valid trip. Returning
+  // users join through the invitation/email-code enrollment endpoint instead.
+  try {
+    // Verify staff from Auth plus organization membership without depending on
+    // participant reconciliation/Firestore availability during staff sign-in.
+    const identityAccess = await calculateAccess(user.uid);
+    const access = identityAccess.staff ? identityAccess : await refreshAccess(user.uid);
+    if (!access.staff && !access.expires_at && (access.participant || user.customClaims?.role !== 'pending')) {
+      throw new HttpsError('permission-denied', 'Your trip has ended. Join a valid trip to sign in again.');
+    }
+  } catch (error) {
+    // beforeSignIn can run before a newly created account is visible to Admin.
+    if (error.code !== 'auth/user-not-found') throw error;
+  }
 
   // S21: Log sign-in
   await db.ref("system_logs/logins").push({
@@ -126,7 +142,7 @@ exports.revokeSession = onCall({ region: "europe-west1" }, async (request) => {
 });
 
 // ── S3: Verify MFA enrollment status ─────────────────────────────────────────
-exports.verifyMFAState = onCall({ region: "europe-west1" }, async (request) => {
+exports.verifyMFAState = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -137,7 +153,7 @@ exports.verifyMFAState = onCall({ region: "europe-west1" }, async (request) => {
 });
 
 // ── Custom Email 6-Digit OTP Flow ─────────────────────────────────────────────
-exports.sendCustomEmailOTP = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
+exports.sendCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -187,7 +203,7 @@ exports.sendCustomEmailOTP = onCall({ region: "europe-west1", secrets: ["SENDGRI
   }
 });
 
-exports.verifyCustomEmailOTP = onCall({ region: "europe-west1" }, async (request) => {
+exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -238,7 +254,7 @@ exports.verifyCustomEmailOTP = onCall({ region: "europe-west1" }, async (request
   return { verified: true };
 });
 
-exports.checkUserExistence = onCall({ region: "europe-west1" }, async (request) => {
+exports.checkUserExistence = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   const { email } = request.data;
   if (!email || typeof email !== "string") {
     throw new HttpsError("invalid-argument", "Valid email is required.");
@@ -323,6 +339,8 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
   await deleteStripeCustomer(stripeCustomerId, targetEmail, orgId);
 
   // 3. Delete from Auth (Admin SDK)
+  await db.ref(`app_access/${targetUid}`).remove();
+  await admin.firestore().doc(`app_access/${targetUid}`).delete();
   await auth.deleteUser(targetUid);
 
   // 4. Delete from DB
@@ -391,6 +409,8 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
   await db.ref().update(updates);
 
   // 4. Delete from Auth (Admin SDK)
+  await db.ref(`app_access/${uid}`).remove();
+  await admin.firestore().doc(`app_access/${uid}`).delete();
   await auth.deleteUser(uid);
 
   return { success: true };
@@ -400,7 +420,7 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
 // Allows an authenticated web user (e.g. after registration) to securely hand off
 // their session to the mobile app without re-entering credentials.
 // S15: Short 5-minute TTL, single-use, cryptographically secure token.
-exports.createAuthHandoffToken = onCall({ region: "europe-west1" }, async (request) => {
+exports.createAuthHandoffToken = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -422,7 +442,7 @@ exports.createAuthHandoffToken = onCall({ region: "europe-west1" }, async (reque
   };
 });
 
-exports.exchangeAuthHandoffToken = onCall({ region: "europe-west1" }, async (request) => {
+exports.exchangeAuthHandoffToken = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   const { token } = request.data || {};
 
   if (!token || typeof token !== "string" || token.length < 32 || token.length > 128) {
@@ -461,6 +481,11 @@ exports.exchangeAuthHandoffToken = onCall({ region: "europe-west1" }, async (req
     }
   } catch (userErr) {
     throw new HttpsError("not-found", "User account not found.");
+  }
+
+  const access = await calculateAccess(uid);
+  if (!access.staff && !access.expires_at) {
+    throw new HttpsError('permission-denied', 'Join a valid trip before using the app.');
   }
 
   // Clear any mfa_pending flag in database so the mobile app doesn't ask for MFA again

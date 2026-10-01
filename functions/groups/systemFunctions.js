@@ -53,7 +53,8 @@ exports.dataCleanupCron = onSchedule(
 );
 // ── Secure Cleanup PII (Maintenance) ──────────────────────────────────────────
 // S12/S22: One-off function to encrypt all legacy plaintext PII in the database.
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { verifyAppCheck, requireRole } = require("../middleware/appCheckMiddleware");
 
 exports.secureCleanupPII = onCall({ region: "europe-west1" }, async (request) => {

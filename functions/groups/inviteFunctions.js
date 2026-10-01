@@ -1,9 +1,12 @@
+const { tripExpiry, refreshAccess } = require('../services/participantAccessService');
+const { reserveParticipantJoinSeat } = require('../services/participantJoinSeat');
 // ─── Invite Functions ─────────────────────────────────────────────────────────
 // Covers: S6 (auth required), S9 (trip isolation), S13 (App Check),
 //         S14 (rate limiting), S15 (expiry + single-use), S16 (no redirects),
 //         S17 (input validation), S23 (consent record)
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { admin, db, auth } = require("../admin");
 const { writeAuditLog } = require("../services/auditService");
 const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddleware");
@@ -13,7 +16,7 @@ const crypto = require("crypto");
 
 // ── Redeem Invitation ─────────────────────────────────────────────────────────
 // This is the MOST security-critical endpoint.
-exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) => {
+exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request); // S13
   requireAuth(request);    // S6 — must be logged in
 
@@ -54,25 +57,28 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
 
   const { org_id: orgId, trip_id: tripId } = invite;
 
+  // An invite's TTL is not the trip's lifetime. Reject closed/expired trips
+  // even for previously joined accounts before returning idempotent success.
+  const eligibilityTrip = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
+  if (!tripExpiry(eligibilityTrip)) {
+    throw new HttpsError('permission-denied', 'This trip has ended or is invalid.');
+  }
+
   // Check if already joined
   const alreadyJoined = await db.ref(`trips_participants/${tripId}/${uid}`).get();
   if (alreadyJoined.exists()) {
-    return { success: true, tripId, orgId, message: "Already joined." };
+    // Repair a legacy/partially completed join before publishing access.
+    await db.ref().update({
+      [`users/${uid}/joined_trips/${tripId}/org_id`]: orgId,
+      [`users/${uid}/joined_trips/${tripId}/status`]: 'joined',
+      [`users/${uid}/current_trip`]: tripId,
+      [`users/${uid}/join_flow_status`]: null,
+      [`users/${uid}/mfa_pending`]: false,
+      [`users/${uid}/account_type`]: 'participant',
+    });
+    const access = await refreshAccess(uid);
+    return { success: true, tripId, orgId, access, message: "Already joined." };
   }
-
-  // --- Seat Capacity Check ---
-  const tripSnap = await db.ref(`orgs/${orgId}/trips/${tripId}`).get();
-  if (!tripSnap.exists()) {
-    throw new HttpsError("not-found", "Trip data not found.");
-  }
-  const trip = tripSnap.val();
-  const currentParticipants = trip.participants || 0;
-  const totalSeats = trip.total_seats || 15; // Fallback to 15 if not set
-
-  if (currentParticipants >= totalSeats) {
-    throw new HttpsError("resource-exhausted", `This trip is full. Maximum capacity is ${totalSeats} participants.`);
-  }
-  // --- End Capacity Check ---
 
   // S16: No open redirects — all data comes from server-validated DB, not URL params
 
@@ -92,6 +98,8 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
 
   // Atomic multi-path write (S9: user gains trip access)
   const updates = {
+    [`users/${uid}/account_type`]: 'participant',
+    [`users/${uid}/mfa_pending`]: false,
     [`trips_participants/${tripId}/${uid}`]: true,
     [`users/${uid}/joined_trips/${tripId}`]: {
       org_id: orgId,
@@ -100,7 +108,6 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
     },
     [`users/${uid}/current_trip`]: tripId,
     [`orgs/${orgId}/consents/${uid}`]: consentRecord, // S23
-    [`orgs/${orgId}/trips/${tripId}/participants`]: admin.database.ServerValue.increment(1),
     [`users/${uid}/join_flow_status`]: null, // Clear flag to allow App.js redirect
   };
 
@@ -184,8 +191,13 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
 
   // Final Merge and update
   
+  await reserveParticipantJoinSeat(orgId, tripId, uid);
+  let access;
   try {
+    // Publish account type and both membership indexes in the same write.
+    // Access refreshes must never see a new participant without their trip.
     await db.ref().update(updates);
+    access = await refreshAccess(uid);
   } catch (dbErr) {
     throw new HttpsError("internal", "Failed to update participant status.");
   }
@@ -202,11 +214,11 @@ exports.redeemInvitation = onCall({ region: "europe-west1" }, async (request) =>
   }
 
 
-  return { success: true, tripId, orgId };
+  return { success: true, tripId, orgId, access };
 });
 
 // ── Get Team Invite Metadata (public — no auth needed) ─────────────────────────
-exports.getTeamInviteMetadata = onCall({ region: "europe-west1" }, async (request) => {
+exports.getTeamInviteMetadata = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   const { token } = validate(schemas.getTeamInviteMetadata, request.data);
 
   const inviteSnap = await db.ref(`org_invites/${token}`).get();
@@ -230,7 +242,7 @@ exports.getTeamInviteMetadata = onCall({ region: "europe-west1" }, async (reques
 });
 
 // ── Redeem Team Invitation ───────────────────────────────────────────────────
-exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request) => {
+exports.redeemTeamInvitation = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -382,7 +394,7 @@ exports.redeemTeamInvitation = onCall({ region: "europe-west1" }, async (request
 // ── Get Invite Metadata (public — no auth needed) ─────────────────────────────
 // Returns safe trip preview for the invite landing page.
 // S16: Only serves data from our DB, never reflects URL params back.
-exports.getInviteMetadata = onCall({ region: "europe-west1" }, async (request) => {
+exports.getInviteMetadata = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   const { inviteCode, email } = request.data;
   if (!inviteCode || typeof inviteCode !== "string") {
     throw new HttpsError("invalid-argument", "inviteCode is required.");
@@ -406,6 +418,7 @@ exports.getInviteMetadata = onCall({ region: "europe-west1" }, async (request) =
   }
 
   const trip = tripSnap.val();
+  if (!tripExpiry(trip)) throw new HttpsError("permission-denied", "This trip has ended or is invalid.");
   const orgSnap = await db.ref(`orgs/${invite.org_id}/metadata/name`).get();
 
   const currentParticipants = trip.participants || 0;

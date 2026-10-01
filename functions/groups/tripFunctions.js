@@ -3,7 +3,8 @@
 //         S16 (no open redirects), S17 (input validation), S19 (server-side mute),
 //         S20 (audit log)
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { admin, db } = require("../admin");
 const { writeAuditLog } = require("../services/auditService");
 const { verifyAppCheck, requireAuth, requireRole } = require("../middleware/appCheckMiddleware");
@@ -56,7 +57,7 @@ exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_A
 });
 
 // ── Verify Link Token (Step 4 Security) ──────────────────────────────────────
-exports.verifyLinkToken = onCall({ region: "europe-west1" }, async (request) => {
+exports.verifyLinkToken = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   // This is a public check, but we still verify the token's existence and expiry.
   const { token, allowPaid } = request.data;
@@ -117,96 +118,27 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     throw new HttpsError("invalid-argument", "Missing required trip fields.");
   }
 
-  // Security: If not authenticated via Firebase Auth, attempt linkToken authorization
-  if (!orgId && linkToken) {
+  const { createTripRecord } = require('./tripCreationHelper');
+  const { requireOrgStaff } = require('../services/tripSeatService');
+  if (linkToken) {
     const tokenSnap = await db.ref(`temp_links/${linkToken}`).get();
-    if (!tokenSnap.exists()) throw new HttpsError("unauthenticated", "Invalid or expired link token.");
-
     const tokenData = tokenSnap.val();
-    if (tokenData.used || Date.now() > tokenData.expiresAt || tokenData.action !== "CREATE_TRIP") {
-      throw new HttpsError("permission-denied", "Link token is no longer valid.");
+    if (!tokenData || tokenData.used || Date.now() > tokenData.expiresAt || tokenData.action !== 'CREATE_TRIP') {
+      throw new HttpsError('permission-denied', 'Invalid or expired trip creation link.');
     }
-
-    // Security: Ensure payment was completed before allowing trip creation
-    if (!tokenData.paid) {
-      // Check if it can be covered using the organization's prepaid seats balance
-      const requestedSeatsNum = parseInt(totalSeats) || 15;
-      let balanceCovered = false;
-
-      await db.ref(`orgs/${tokenData.orgId}`).transaction((orgData) => {
-        if (!orgData) return orgData;
-        const currentBalance = orgData.prepaid_seats || 0;
-        if (currentBalance >= requestedSeatsNum) {
-          orgData.prepaid_seats = currentBalance - requestedSeatsNum;
-          balanceCovered = true;
-        }
-        return orgData;
-      });
-
-      if (!balanceCovered) {
-        throw new HttpsError("failed-precondition", "Payment is required before creating a trip. Please complete checkout first.");
-      }
-    }
-
     orgId = tokenData.orgId;
-    uid = tokenData.uid; // Inherit identity from who requested the link
+    uid = tokenData.uid;
   }
-
-  if (!orgId) throw new HttpsError("unauthenticated", "You must be logged in or have a valid link to create a trip.");
-
-  const tripId = db.ref(`orgs/${orgId}/trips`).push().key;
-  const inviteCode = uuidv4(); // S15: Cryptographically random UUID
-
-  const formatDate = (ts) => {
-    const d = new Date(ts);
-    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(-2)}`;
-  };
-
-  const tripData = {
-    title,
-    location: destination, // Mobile app expects 'location'
-    date: `${formatDate(startDate)} - ${formatDate(endDate)}`, // Mobile app expects formatted string
-    participants: 1, // S18: Organizer is the first participant
-    total_seats: parseInt(totalSeats) || 15, // Save seat capacity
-    image: image || null, // Optional banner image URL
-    status: "active",
-    invitation_code: inviteCode,
-    start_date: startDate,
-    end_date: endDate,
-    invite_expires_at: endDate + 24 * 60 * 60 * 1000,
-    created_by: uid || "system",
-    created_at: admin.database.ServerValue.TIMESTAMP,
-    voice_state: {
-      mute_all: false,
-      recording: false,
-    },
-  };
-
-  const inviteEntry = {
-    org_id: orgId,
-    trip_id: tripId,
-    role: "participant",
-    expires_at: tripData.invite_expires_at,
-    redeemed_count: 0,
-  };
-
-  const updates = {
-    [`orgs/${orgId}/trips/${tripId}`]: tripData,
-    [`invites/${inviteCode}`]: inviteEntry,
-    [`trips_orgs/${tripId}`]: orgId, // S6: Required for Admin read access to participants list
-    [`trips_participants/${tripId}/${uid}`]: true, // S18: Add organizer to live list
-    [`users/${uid}/joined_trips/${tripId}`]: {
-      org_id: orgId,
-      status: "organizer",
-      joined_at: admin.database.ServerValue.TIMESTAMP,
-    },
-  };
-
-  await db.ref().update(updates);
+  await requireOrgStaff(orgId, uid);
+  const { tripId, inviteCode } = await createTripRecord({
+    orgId, uid, title, destination, startDate, endDate, image, totalSeats,
+    operationId: linkToken ? `create:${linkToken}` : request.data.requestId ? `create:${uid}:${request.data.requestId}` : undefined,
+  });
 
   if (linkToken) {
     await db.ref(`temp_links/${linkToken}`).update({
       used: true,
+      paid: true,
       tripId: tripId,
       inviteCode: inviteCode
     });
@@ -233,6 +165,19 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
   return { tripId, inviteCode };
 });
 
+// Date changes and seat deductions must use the same organization transaction.
+exports.updateTripDates = onCall({ region: 'europe-west1' }, async request => {
+  verifyAppCheck(request);
+  requireRole(request, ['admin', 'co-host', 'manager']);
+  const { tripId, startDate, endDate, destination } = request.data || {};
+  if (typeof tripId !== 'string' || !/^[\w-]+$/.test(tripId)) throw new HttpsError('invalid-argument', 'Invalid trip.');
+  const { requireOrgStaff, changeTripSeats, usageFor } = require('../services/tripSeatService');
+  usageFor(startDate, endDate, 1);
+  const orgId = request.auth.token.orgId;
+  await requireOrgStaff(orgId, request.auth.uid);
+  return changeTripSeats({ orgId, tripId, startDate, endDate, destination });
+});
+
 // ── Update Live Location (Optimized — no audit log, high frequency) ───────────
 exports.updateLiveLocation = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
@@ -250,45 +195,12 @@ exports.updateLiveLocation = onCall({ region: "europe-west1" }, async (request) 
   return { success: true };
 });
 
-// Helper to check and revoke participant session if they have no remaining active trips
-const checkAndRevokeInactiveParticipant = async (targetUid) => {
-  try {
-    const userSnap = await db.ref(`users/${targetUid}`).get();
-    if (!userSnap.exists()) return;
-    const userData = userSnap.val() || {};
-
-    // Do not revoke staff sessions
-    if (userData.staff_org_id) return;
-    try {
-      const userRecord = await admin.auth().getUser(targetUid);
-      const role = userRecord.customClaims?.role;
-      if (['admin', 'co-host', 'manager'].includes(role)) return;
-    } catch (e) {}
-
-    const joinedTrips = userData.joined_trips || {};
-    let hasOtherActiveTrip = false;
-
-    for (const tId of Object.keys(joinedTrips)) {
-      const tOrgId = joinedTrips[tId]?.org_id || joinedTrips[tId]?.orgId;
-      if (!tOrgId) continue;
-
-      const pSnap = await db.ref(`trips_participants/${tId}/${targetUid}`).get();
-      if (!pSnap.exists()) continue;
-
-      const tripSnap = await db.ref(`orgs/${tOrgId}/trips/${tId}`).get();
-      if (tripSnap.exists() && tripSnap.val().status === 'active') {
-        hasOtherActiveTrip = true;
-        break;
-      }
-    }
-
-    if (!hasOtherActiveTrip) {
-      await admin.auth().revokeRefreshTokens(targetUid);
-      await db.ref(`users/${targetUid}/active_device_id`).remove().catch(() => {});
-    }
-  } catch (err) {
-    console.error(`Error in checkAndRevokeInactiveParticipant for ${targetUid}:`, err);
-  }
+// Canonical checks include both status and the end timestamp.
+const { refreshAccess, tripExpiry } = require('../services/participantAccessService');
+const { syncTrip } = require('./participantAccessFunctions');
+const checkAndRevokeInactiveParticipant = async uid => {
+  try { await refreshAccess(uid); }
+  catch (error) { if (error.code !== 'auth/user-not-found') throw error; }
 };
 
 // ── Close Trip ────────────────────────────────────────────────────────────────
@@ -324,6 +236,7 @@ exports.closeTrip = onCall({ region: "europe-west1" }, async (request) => {
 
   // Revoke session for participants who have no other active trips
   await Promise.all(participantIds.map(pid => checkAndRevokeInactiveParticipant(pid)));
+  await syncTrip(orgId, tripId);
 
   await writeAuditLog(orgId, {
     action: "TRIP_CLOSED",
@@ -558,6 +471,7 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
 
   // Revoke session for participants who have no other active trips
   await Promise.all(participantIds.map(pid => checkAndRevokeInactiveParticipant(pid)));
+  await syncTrip(orgId, tripId);
 
   // Write audit log
   await writeAuditLog(orgId, {
@@ -653,3 +567,25 @@ exports.updateParticipantProfile = onCall({ region: "europe-west1" }, async (req
 });
 
 
+
+// The website's journey link authorizes this upload without a browser login.
+exports.uploadTripPhoto = onCall({ region: 'europe-west1' }, async request => {
+  verifyAppCheck(request);
+  const { linkToken, dataUrl } = request.data || {};
+  if (typeof linkToken !== 'string' || !/^[a-zA-Z0-9_-]{16,200}$/.test(linkToken)) {
+    throw new HttpsError('permission-denied', 'Invalid journey link.');
+  }
+  const link = (await db.ref(`temp_links/${linkToken}`).get()).val();
+  if (!link || link.used || link.action !== 'CREATE_TRIP' || !Number.isFinite(link.expiresAt) || link.expiresAt <= Date.now()) {
+    throw new HttpsError('permission-denied', 'This journey link has expired or has already been used.');
+  }
+  const { requireOrgStaff } = require('../services/tripSeatService');
+  await requireOrgStaff(link.orgId, link.uid);
+  const { decodeTripPhoto } = require('../services/tripPhotoService');
+  const bytes = decodeTripPhoto(dataUrl);
+  const file = admin.storage().bucket().file(`trips/${uuidv4()}.jpg`);
+  await file.save(bytes, { resumable: false, metadata: { contentType: 'image/jpeg',
+    metadata: { firebaseStorageDownloadTokens: uuidv4() } } });
+  const { getDownloadURL } = require('firebase-admin/storage');
+  return { url: await getDownloadURL(file) };
+});

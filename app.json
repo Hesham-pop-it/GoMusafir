@@ -151,6 +151,7 @@
       "@react-native-firebase/app",
       "./plugins/withFirebaseSwiftFix",
       "./plugins/withXcodeBuildSettings",
+      "./plugins/withNotificationSounds",
       "expo-font",
       [
         "expo-camera",

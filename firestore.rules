@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Authorization mirrors are exclusively written by Admin SDK functions.
+    match /app_access/{uid} {
+      allow read, write: if false;
+    }
+  }
+}

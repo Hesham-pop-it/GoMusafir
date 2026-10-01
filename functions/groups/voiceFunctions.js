@@ -1,211 +1,70 @@
-const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { requireTripAccess } = require('../services/participantAccessService');
+const { onCall: firebaseOnCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { onValueWritten } = require("firebase-functions/v2/database");
-const { AccessToken, RoomServiceClient, WebhookReceiver } = require("livekit-server-sdk");
+const { AccessToken, WebhookReceiver } = require("livekit-server-sdk");
 const { db } = require("../admin");
 
-const { sendPushNotification } = require("../services/notificationService");
 
-exports.generateLiveKitToken = onCall({ region: "europe-west1" }, async (request) => {
-  if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
-  const { tripId } = request.data;
-  if (!tripId) throw new HttpsError("invalid-argument", "Missing tripId.");
-  const uid = request.auth.uid;
-  const username = request.auth.token.name || request.auth.token.email || uid;
+const { reserveSession, stopSession, stopIfNoHosts, handleRoomEvent } = require('../services/tripVoiceService');
 
+// requireTripAccess below includes the full identity/app-access checks. Using
+// Firebase's callable directly avoids running those checks twice for this call.
+exports.generateLiveKitToken = firebaseOnCall({ region: "europe-west1", timeoutSeconds: 45 }, async request => {
+  const { tripId } = request.data || {};
+  if (typeof tripId !== 'string' || !/^[\w-]+$/.test(tripId)) throw new HttpsError('invalid-argument', 'Invalid tripId.');
+  const { orgId, staff } = await requireTripAccess(request, tripId);
+  const apiKey = process.env.LIVEKIT_API_KEY, apiSecret = process.env.LIVEKIT_API_SECRET;
+  if (!apiKey || !apiSecret || !process.env.LIVEKIT_URL) throw new HttpsError('internal', 'Voice configuration unavailable.');
+  let state;
   try {
-    const orgSnap = await db.ref(`trips_orgs/${tripId}`).once("value");
-    const orgId = orgSnap.val();
-    if (!orgId) throw new HttpsError("not-found", "Org not found.");
-
-    const isStaffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).once("value");
-    const isStaff = isStaffSnap.exists() && isStaffSnap.val() !== 'none';
-
-    if (!isStaff) {
-      const pSnap = await db.ref(`trips_participants/${tripId}/${uid}`).once("value");
-      if (!pSnap.exists()) throw new HttpsError("permission-denied", "Not a participant.");
-    }
-
-    if (!isStaff) {
-      const stateSnap = await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).once("value");
-      if (!stateSnap.val()) throw new HttpsError("failed-precondition", "Channel not started.");
-    }
-
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
-    if (!apiKey || !apiSecret) throw new HttpsError("internal", "Config error.");
-
-    const at = new AccessToken(apiKey, apiSecret, { identity: uid, name: username });
-    at.addGrant({ roomJoin: true, room: tripId, canPublish: true, canSubscribe: true });
-
-    if (isStaff) await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(true);
-
-    return { token: await at.toJwt(), url: process.env.LIVEKIT_URL };
+    state = await reserveSession(orgId, tripId, staff, request.auth.uid);
   } catch (error) {
     if (error instanceof HttpsError) throw error;
-    throw new HttpsError("internal", "Token generation failed.");
+    console.error('Voice session preparation failed', { tripId, code: error.code, name: error.name, message: error.message });
+    throw new HttpsError('unavailable', 'The Voice service could not prepare this session. Please try again shortly.');
   }
+  const ttl = Math.max(1, Math.min(60, Math.floor((state.tripEndsAt - Date.now()) / 1000),
+    state.voiceAccess === 'PRE_TRIP_LIMITED' ? Math.ceil(state.preTripVoiceRemainingSeconds) : 60));
+  const token = new AccessToken(apiKey, apiSecret, { identity: request.auth.uid,
+    name: request.auth.token.name || request.auth.token.email || request.auth.uid, ttl });
+  token.addGrant({ roomJoin: true, room: state.session.roomName, canPublish: true, canSubscribe: true });
+  return { token: await token.toJwt(), url: process.env.LIVEKIT_URL, featureAccess: state };
 });
 
-exports.toggleChannelStatus = onCall({ region: "europe-west1" }, async (request) => {
-  if (!request.auth) throw new HttpsError("unauthenticated", "Authentication required.");
-  const { tripId, active } = request.data;
-  if (!tripId || active === undefined) throw new HttpsError("invalid-argument", "Missing params.");
-  const uid = request.auth.uid;
-
-  try {
-    const orgSnap = await db.ref(`trips_orgs/${tripId}`).once("value");
-    const orgId = orgSnap.val();
-    if (!orgId) throw new HttpsError("not-found", "Org not found.");
-
-    // Validate staff permissions securely across staff map, profile, and auth claims
-    let isStaff = false;
-    const staffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).once("value");
-    if (staffSnap.exists() && staffSnap.val() !== 'none') {
-      isStaff = true;
-    } else {
-      const userSnap = await db.ref(`users/${uid}/staff_org_id`).once("value");
-      if (userSnap.val() === orgId) {
-        isStaff = true;
-      } else {
-        const role = request.auth.token?.role;
-        if (role === 'admin' || role === 'co-host' || role === 'manager') {
-          isStaff = true;
-        }
-      }
-    }
-
-    if (!isStaff) throw new HttpsError("permission-denied", "Admin only.");
-
-    await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(active);
-    await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).update({
-      isChannelStarted: active,
-      lastUpdatedBy: uid,
-      ...(active ? {} : { activeSpeaker: null })
-    });
-
-    return { success: true };
-  } catch (error) {
-    if (error instanceof HttpsError) throw error;
-    throw new HttpsError("internal", "Toggle failed.");
-  }
+exports.toggleChannelStatus = onCall({ region: "europe-west1" }, async request => {
+  const { tripId, active } = request.data || {};
+  if (typeof tripId !== 'string' || !/^[\w-]+$/.test(tripId) || typeof active !== 'boolean') throw new HttpsError('invalid-argument', 'Invalid parameters.');
+  const { orgId, staff } = await requireTripAccess(request, tripId);
+  if (!staff) throw new HttpsError('permission-denied', 'Host access required.');
+  // Starting reserves a session only. LiveKit media connection starts the clock.
+  if (active) await reserveSession(orgId, tripId, true, request.auth.uid);
+  else await stopSession(orgId, tripId);
+  return { success: true };
 });
 
 exports.onActiveHostsUpdated = onValueWritten({
-  ref: "trips_active/{orgId}/{tripId}/voice_channel/active_hosts",
-  region: "europe-west1"
-}, async (event) => {
-  const activeHosts = event.data.after.val() || {};
-  const { orgId, tripId } = event.params;
-
-  // Filter to find all active hosts in RTDB
-  const activeHostUids = Object.keys(activeHosts).filter(uid => activeHosts[uid] === true);
-
-  if (activeHostUids.length === 0) {
-    try {
-      const voiceChannelSnap = await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).once("value");
-      const voiceChannel = voiceChannelSnap.val() || {};
-      if (voiceChannel.isChannelStarted === true) {
-        // Wait 4-second grace period for potential background transition or network handover
-        await new Promise(resolve => setTimeout(resolve, 4000));
-
-        // Re-read active_hosts in case client re-asserted in RTDB
-        const freshHostsSnap = await db.ref(`trips_active/${orgId}/${tripId}/voice_channel/active_hosts`).once("value");
-        const freshHosts = freshHostsSnap.val() || {};
-        const freshHostUids = Object.keys(freshHosts).filter(uid => freshHosts[uid] === true);
-        if (freshHostUids.length > 0) {
-          console.log(`Active hosts recovered in RTDB for trip ${tripId}. Preserving channel.`);
-          return;
-        }
-
-        // Check if any host/staff member is still connected in LiveKit room (e.g. app in background)
-        let hostInLiveKit = false;
-        try {
-          const httpUrl = (process.env.LIVEKIT_URL || '').replace('wss://', 'https://').replace('ws://', 'http://');
-          if (httpUrl && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET) {
-            const roomService = new RoomServiceClient(httpUrl, process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
-            const participants = await roomService.listParticipants(tripId).catch(() => []);
-
-            // Check staff members for this org
-            const staffSnap = await db.ref(`orgs/${orgId}/staff`).once("value");
-            const staffData = staffSnap.val() || {};
-
-            for (const p of participants) {
-              if (staffData[p.identity] && staffData[p.identity] !== 'none') {
-                hostInLiveKit = true;
-                // Re-populate active_hosts in RTDB so RTDB reflects the live background connection
-                await db.ref(`trips_active/${orgId}/${tripId}/voice_channel/active_hosts/${p.identity}`).set(true);
-                break;
-              }
-            }
-          }
-        } catch (lkErr) {
-          console.warn(`Error verifying LiveKit participants for trip ${tripId}:`, lkErr.message);
-        }
-
-        if (hostInLiveKit) {
-          console.log(`Host is still active in LiveKit room for trip ${tripId} (app in background). Preserving channel.`);
-          return;
-        }
-
-        console.log(`No active hosts left in RTDB or LiveKit for trip ${tripId}. Stopping the channel.`);
-        await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(false);
-        await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).update({
-          isChannelStarted: false,
-          activeSpeaker: null,
-          lastUpdatedBy: "system"
-        });
-      }
-    } catch (error) {
-      console.error("Error in onActiveHostsUpdated trigger:", error);
-    }
-  }
+  ref: 'trips_active/{orgId}/{tripId}/voice_channel/active_hosts', region: 'europe-west1', retry: true,
+}, async event => {
+  if (Object.values(event.data.after.val() || {}).some(value => value === true)) return;
+  await new Promise(resolve => setTimeout(resolve, 4000));
+  // Only LiveKit can confirm a host has left; a phone network error cannot.
+  await stopIfNoHosts(event.params.orgId, event.params.tripId);
 });
 
-exports.livekitWebhook = onRequest({ region: "europe-west1" }, async (req, res) => {
+exports.livekitWebhook = onRequest({ region: 'europe-west1' }, async (req, res) => {
+  let event;
   try {
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
-    if (!apiKey || !apiSecret) {
-      return res.status(500).send("LiveKit credentials not configured.");
-    }
-
-    const receiver = new WebhookReceiver(apiKey, apiSecret);
-    const authHeader = req.get("Authorization");
-    const event = await receiver.receive(req.rawBody, authHeader);
-
-    if (event.event === "participant_left" || event.event === "room_finished") {
-      const tripId = event.room?.name;
-      if (!tripId) return res.status(200).send("No room name.");
-
-      const orgSnap = await db.ref(`trips_orgs/${tripId}`).once("value");
-      const orgId = orgSnap.val();
-      if (!orgId) return res.status(200).send("Org not found.");
-
-      const httpUrl = (process.env.LIVEKIT_URL || '').replace('wss://', 'https://').replace('ws://', 'http://');
-      const roomService = new RoomServiceClient(httpUrl, apiKey, apiSecret);
-      const participants = await roomService.listParticipants(tripId).catch(() => []);
-
-      const staffSnap = await db.ref(`orgs/${orgId}/staff`).once("value");
-      const staffData = staffSnap.val() || {};
-
-      const hasHostRemaining = participants.some(p => staffData[p.identity] && staffData[p.identity] !== 'none');
-
-      if (!hasHostRemaining) {
-        console.log(`LiveKit webhook: No staff left in room ${tripId}. Stopping channel.`);
-        await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state/is_active`).set(false);
-        await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).update({
-          isChannelStarted: false,
-          activeSpeaker: null,
-          lastUpdatedBy: "system"
-        });
-        await db.ref(`trips_active/${orgId}/${tripId}/voice_channel/active_hosts`).set(null);
-      }
-    }
-
+    const receiver = new WebhookReceiver(process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET);
+    event = await receiver.receive(req.rawBody.toString('utf8'), req.get('Authorization'));
+  } catch (error) {
+    return res.status(401).send('Invalid webhook signature.');
+  }
+  try {
+    await handleRoomEvent(event);
     return res.status(200).json({ received: true });
-  } catch (err) {
-    console.error("LiveKit webhook error:", err);
-    return res.status(400).send(`Webhook error: ${err.message}`);
+  } catch (error) {
+    console.error('Voice webhook processing failed:', error);
+    return res.status(500).send('Retry webhook.');
   }
 });
-

@@ -2,13 +2,15 @@
 // Covers: S29 (Stripe webhook verification), S30 (idempotent payments),
 //         S6 (auth required), S17 (input validation), S20 (audit log)
 
-const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { admin, db } = require("../admin");
 const { writeAuditLog } = require("../services/auditService");
 const { verifyAppCheck, requireAuth, requireRole } = require("../middleware/appCheckMiddleware");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { sendPushNotification } = require("../services/notificationService");
 const { createTripRecord } = require("./tripCreationHelper");
+const { topupUsage, changeTripSeats, requireOrgStaff } = require('../services/tripSeatService');
 
 // ── Regional Pricing — Server-Side Enforcement ────────────────────────────────
 const PRICING_PLANS = {
@@ -160,7 +162,7 @@ async function notifyStaffOfSeatUpdate({ orgId, tripId = null, title = "Seat Upd
 }
 
 // ── Get Regional Pricing (lightweight, no auth needed) ───────────────────────
-exports.getRegionalPricing = onCall({ region: "europe-west1" }, async (request) => {
+exports.getRegionalPricing = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   const countryCode = request.data?.countryCode || "DEFAULT";
   const currencyCode = COUNTRY_TO_CURRENCY[countryCode?.toUpperCase()] || "EUR";
 
@@ -316,6 +318,8 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
   if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
   const trip = tripSnap.val();
 
+  await requireOrgStaff(orgId, uid);
+  const billedSeats = topupUsage(trip, seatsToIncr).requiredSeats;
   // Get Pricing
   const pricingConfig = getPlanPricing(countryCode || "DEFAULT", planId);
   const pricePerSeat = pricingConfig.price;
@@ -333,7 +337,7 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
           },
           unit_amount: unitAmount,
         },
-        quantity: parseInt(seatsToIncr),
+        quantity: billedSeats,
       },
     ],
     mode: "payment",
@@ -347,7 +351,8 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
       orgId,
       tripId,
       action: "SEAT_TOPUP",
-      seatsToIncr: String(seatsToIncr),
+      seatsToIncr: String(billedSeats),
+      participantIncrement: String(seatsToIncr),
       journeyName: trip.title,
       uid: uid
     },
@@ -399,42 +404,12 @@ async function processPaidCheckoutSession(session) {
     return;
   }
 
-  // Idempotency Check (using atomic transaction)
   const processedRef = db.ref(`processed_payments/${session.id}`);
-  let alreadyProcessed = false;
-  await processedRef.transaction((current) => {
-    if (current !== null) {
-      alreadyProcessed = true;
-      return current;
-    }
-    return {
-      orgId,
-      processed_at: admin.database.ServerValue.TIMESTAMP
-    };
-  });
-
-  if (alreadyProcessed) {
-    console.log(`⚠️ Payment already processed for session ${session.id}. Skipping.`);
-    return;
-  }
-
-  // Mark checkout session as completed
-  await db.ref(`orgs/${orgId}/checkout_sessions/${session.id}`).update({
-    status: "completed",
-    completed_at: admin.database.ServerValue.TIMESTAMP
-  });
+  if ((await processedRef.get()).exists()) return;
 
   const seatsNum = parseInt(seatsToIncr || "0");
   const prepaidDeductedNum = parseInt(prepaidSeatsDeducted || "0");
   const totalSeatsRequested = seatsNum + prepaidDeductedNum;
-
-  // Deduct prepaid seats if hybrid checkout
-  if (prepaidDeductedNum > 0) {
-    await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
-      return Math.max(0, (current || 0) - prepaidDeductedNum);
-    });
-    console.log(`💳 Hybrid checkout: Deducted ${prepaidDeductedNum} prepaid seats from Org ${orgId}`);
-  }
 
   let finalTripId = tripId;
 
@@ -453,7 +428,8 @@ async function processPaidCheckoutSession(session) {
       startDate: parseInt(tripDetails.s),
       endDate: parseInt(tripDetails.e),
       image: tripDetails.i,
-      totalSeats: totalSeatsRequested
+      totalSeats: Number(tripDetails.p || totalSeatsRequested),
+      operationId: `payment:${session.id}`, paidCredit: seatsNum
     });
     finalTripId = created.tripId;
 
@@ -503,11 +479,9 @@ async function processPaidCheckoutSession(session) {
 
     if (!resolvedTripId) throw new Error("Missing tripId in metadata for SEAT_TOPUP.");
 
-    // Increment trip total_seats capacity
-    const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${resolvedTripId}/total_seats`);
-    await totalSeatsRef.transaction((current) => {
-      return (current || 0) + totalSeatsRequested;
-    });
+    await changeTripSeats({ orgId, tripId: resolvedTripId,
+      increment: Number(metadata.participantIncrement || totalSeatsRequested),
+      operationId: `payment:${session.id}`, paidCredit: seatsNum });
 
     // Mark the link token as used
     if (linkToken) {
@@ -549,7 +523,7 @@ async function processPaidCheckoutSession(session) {
 
   // Save payment record under payments
   const paymentsRef = db.ref(`orgs/${orgId}/payments`);
-  const paymentId = paymentsRef.push().key;
+  const paymentId = session.id;
   await paymentsRef.child(paymentId).set({
     stripeSessionId: session.id || null,
     stripeCustomerId: session.customer || null,
@@ -569,6 +543,13 @@ async function processPaidCheckoutSession(session) {
   if (session.customer) {
     await db.ref(`orgs/${orgId}/stripe_customer_id`).set(session.customer);
   }
+  // Mark checkout session as completed
+  await db.ref(`orgs/${orgId}/checkout_sessions/${session.id}`).update({
+    status: "completed",
+    completed_at: admin.database.ServerValue.TIMESTAMP
+  });
+
+  await processedRef.set({ orgId, processed_at: admin.database.ServerValue.TIMESTAMP });
 }
 
 // ── Stripe Webhook ────────────────────────────────────────────────────────────
@@ -713,7 +694,7 @@ exports.stripeWebhookHandler = onRequest(
 );
 
 // ── Verify Payment ────────────────────────────────────────────────────────────
-exports.verifyPayment = onCall({ region: "europe-west1" }, async (request) => {
+exports.verifyPayment = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
   const { sessionId } = request.data;
@@ -797,7 +778,7 @@ exports.generateSeatTopupToken = onCall({ region: "europe-west1", secrets: ["SEN
 });
 
 // ── Preview Seat Top-up (validate token, return pricing, do NOT consume) ──────
-exports.previewSeatTopup = onCall({ region: "europe-west1" }, async (request) => {
+exports.previewSeatTopup = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
   const { token } = request.data;
@@ -843,11 +824,14 @@ exports.previewSeatTopup = onCall({ region: "europe-west1" }, async (request) =>
   }
 
   // Return trip info and pricing (token is NOT consumed here)
-  return { seats: parseInt(seats), plans };
+  const trip = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
+  if (!trip) throw new HttpsError('not-found', 'Trip not found.');
+  const usage = topupUsage(trip, seats);
+  return { seats: Number(seats), requiredSeats: usage.requiredSeats, seatPeriods: usage.seatPeriods, plans };
 });
 
 // ── Verify & Pay Seat Top-up ──────────────────────────────────────────────────
-exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (request) => {
+exports.verifyAndPaySeatTopup = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
   const { token, planId: chosenPlan } = request.data;
@@ -895,21 +879,13 @@ exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (reques
   const orgSnap = await db.ref(`orgs/${orgId}/prepaid_seats`).get();
   const currentPrepaid = orgSnap.val() || 0;
 
-  const seatsToIncrNum = parseInt(seats) || 0;
+  await requireOrgStaff(orgId, uid);
+  const seatsToIncrNum = topupUsage(trip, seats).requiredSeats;
   const prepaidDeducted = Math.min(currentPrepaid, seatsToIncrNum);
   const unpaidSeats = seatsToIncrNum - prepaidDeducted;
 
   if (unpaidSeats === 0) {
-    // 1. Deduct seats from prepaid_seats balance
-    await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
-      return Math.max(0, (current || 0) - prepaidDeducted);
-    });
-
-    // 2. Increment trip total_seats capacity
-    const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${tripId}/total_seats`);
-    await totalSeatsRef.transaction((current) => {
-      return (current || 0) + prepaidDeducted;
-    });
+    await changeTripSeats({ orgId, tripId, increment: Number(seats), operationId: `topup:${token}` });
 
     // 3. Mark the link token as used and paid
     await tokenRef.update({
@@ -933,8 +909,8 @@ exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (reques
       orgId,
       tripId,
       title: "Seat Update",
-      message: `Seat capacity for "${trip.title}" increased by ${prepaidDeducted} seats.`,
-      diff: prepaidDeducted
+      message: `Seat capacity for "${trip.title}" increased by ${seats} participants (${seatsToIncrNum} seats allocated).`,
+      diff: Number(seats)
     });
 
     return { instant: true };
@@ -987,6 +963,7 @@ exports.verifyAndPaySeatTopup = onCall({ region: "europe-west1" }, async (reques
       tripId,
       action: "SEAT_TOPUP",
       seatsToIncr: String(unpaidSeats),
+      participantIncrement: String(seats),
       prepaidSeatsDeducted: String(prepaidDeducted),
       journeyName: trip.title,
       uid: uid || "unknown",
@@ -1042,13 +1019,14 @@ exports.creditPrepaidSeats = onCall({ region: "europe-west1" }, async (request) 
 exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
 
-  const { action, seats, linkToken, tripId, planId, tripData, origin } = request.data;
+  const { action, seats, linkToken, tripId: requestedTripId, planId, tripData, origin } = request.data;
   
   if (!action || !seats || parseInt(seats) < 1 || !linkToken) {
     throw new HttpsError("invalid-argument", "Missing required checkout/topup fields.");
   }
 
-  const requestedSeatsNum = parseInt(seats);
+  const participantCount = Number(seats);
+  let requestedSeatsNum = participantCount;
   const planToUse = planId || "seat_only";
 
   // Resolve orgId and uid from linkToken
@@ -1058,6 +1036,7 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
     throw new HttpsError("not-found", "Invalid or expired link.");
   }
   const tokenData = snapshot.val();
+  const tripId = requestedTripId || tokenData.tripId;
   if (tokenData.used) {
     throw new HttpsError("permission-denied", "This link has already been used.");
   }
@@ -1070,6 +1049,23 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
 
   if (!orgId) throw new HttpsError("unauthenticated", "Not authorized.");
 
+  if (!['CREATE_TRIP', 'SEAT_TOPUP'].includes(action) || tokenData.action !== action ||
+      (action === 'SEAT_TOPUP' && (tokenData.tripId !== tripId || Number(tokenData.seats) !== participantCount))) {
+    throw new HttpsError('permission-denied', 'The link does not authorize this operation.');
+  }
+  await requireOrgStaff(orgId, uid);
+  if (action === 'CREATE_TRIP') {
+    if (!tripData) throw new HttpsError('invalid-argument', 'Missing trip data.');
+    const created = await createTripRecord({ ...tripData,
+      orgId, uid, totalSeats: participantCount, operationId: `create:${linkToken}`, paidCredit: 0 });
+    await tokenRef.update({ paid: true, used: true, tripId: created.tripId,
+      inviteCode: created.inviteCode, seats: created.requiredSeats, planId: planToUse });
+    return { instant: true, ...created };
+  }
+  const tripForSeats = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
+  if (!tripForSeats) throw new HttpsError('not-found', 'Trip not found.');
+  requestedSeatsNum = topupUsage(tripForSeats, participantCount).requiredSeats;
+
   // Resolve country code for pricing
   let countryCode = null;
   if (uid) {
@@ -1081,80 +1077,14 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
   }
   if (!countryCode) countryCode = "DEFAULT";
 
-  // Atomically check and deduct from prepaid balance
   let appliedInstantly = false;
-  await db.ref(`orgs/${orgId}/prepaid_seats`).transaction((current) => {
-    const currentBalance = current || 0;
-    if (currentBalance >= requestedSeatsNum) {
-      appliedInstantly = true;
-      return currentBalance - requestedSeatsNum;
-    }
-    return current;
-  });
-
+  try {
+    await changeTripSeats({ orgId, tripId, increment: participantCount, operationId: `topup:${linkToken}` });
+    appliedInstantly = true;
+  } catch (error) {
+    if (error.code !== 'failed-precondition') throw error;
+  }
   if (appliedInstantly) {
-    let finalTripId = tripId;
-
-    if (action === "CREATE_TRIP") {
-      if (!tripData) {
-        throw new HttpsError("invalid-argument", "Missing trip data for creation.");
-      }
-      // Create the trip record instantly
-      const created = await createTripRecord({
-        orgId,
-        uid,
-        title: tripData.title,
-        destination: tripData.destination,
-        startDate: tripData.startDate,
-        endDate: tripData.endDate,
-        image: tripData.image,
-        totalSeats: requestedSeatsNum
-      });
-      finalTripId = created.tripId;
-
-      // Mark the link token as used and paid
-      await tokenRef.update({
-        paid: true,
-        used: true,
-        tripId: finalTripId,
-        inviteCode: created.inviteCode,
-        seats: requestedSeatsNum,
-        planId: planToUse
-      });
-
-      // Write to seatTransactions audit log
-      await db.ref(`seatTransactions`).push({
-        orgId,
-        userId: uid || "system",
-        tripId: finalTripId,
-        action: "CREATE_TRIP",
-        source: "prepaid",
-        seats: requestedSeatsNum,
-        timestamp: admin.database.ServerValue.TIMESTAMP
-      });
-
-      console.log(`✅ Instant Prepaid Trip Created: Org ${orgId}, Trip ${finalTripId}`);
-
-      await notifyStaffOfSeatUpdate({
-        orgId,
-        tripId: finalTripId,
-        title: "New Journey Created",
-        message: `New journey "${tripData.title}" created with ${requestedSeatsNum} prepaid seats.`,
-        diff: requestedSeatsNum,
-        totalSeats: requestedSeatsNum
-      });
-
-      return { instant: true, tripId: finalTripId };
-
-    } else if (action === "SEAT_TOPUP") {
-      if (!tripId) throw new HttpsError("invalid-argument", "Missing tripId for top-up.");
-
-      // Increment trip total_seats capacity
-      const totalSeatsRef = db.ref(`orgs/${orgId}/trips/${tripId}/total_seats`);
-      await totalSeatsRef.transaction((current) => {
-        return (current || 0) + requestedSeatsNum;
-      });
-
       // Mark the link token as used
       await tokenRef.update({
         paid: true,
@@ -1186,12 +1116,11 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
         orgId,
         tripId,
         title: "Seat Update",
-        message: `Seat capacity for "${tripTitle}" increased by ${requestedSeatsNum} seats.`,
-        diff: requestedSeatsNum
+        message: `Seat capacity for "${tripTitle}" increased by ${participantCount} participants (${requestedSeatsNum} seats allocated).`,
+        diff: participantCount
       });
 
       return { instant: true };
-    }
   }
 
   // Retrieve current prepaid seats balance
@@ -1248,6 +1177,7 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
       orgId,
       action,
       seatsToIncr: String(unpaidSeats),
+      participantIncrement: String(participantCount),
       prepaidSeatsDeducted: String(prepaidDeducted),
       uid: uid || "unknown",
       countryCode,
@@ -1256,23 +1186,9 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
     }
   };
 
-  if (action === "CREATE_TRIP") {
-    // Compress and pass trip details inside metadata
-    const tripDetails = {
-      t: tripData.title,
-      d: tripData.destination,
-      s: tripData.startDate,
-      e: tripData.endDate,
-      i: tripData.image || null
-    };
-    sessionData.metadata.tripDetailsJson = JSON.stringify(tripDetails);
-    sessionData.success_url = `${clientOrigin}/create-journey?status=success&session_id={CHECKOUT_SESSION_ID}&token=${linkToken}`;
-    sessionData.cancel_url = `${clientOrigin}/create-journey?status=cancel&token=${linkToken}`;
-  } else if (action === "SEAT_TOPUP") {
-    sessionData.metadata.tripId = tripId;
-    sessionData.success_url = `${clientOrigin}/increase-seats?status=success&session_id={CHECKOUT_SESSION_ID}&token=${linkToken}`;
-    sessionData.cancel_url = `${clientOrigin}/increase-seats?status=cancel&token=${linkToken}`;
-  }
+  sessionData.metadata.tripId = tripId;
+  sessionData.success_url = `${clientOrigin}/increase-seats?status=success&session_id={CHECKOUT_SESSION_ID}&token=${linkToken}`;
+  sessionData.cancel_url = `${clientOrigin}/increase-seats?status=cancel&token=${linkToken}`;
 
   const session = await stripe.checkout.sessions.create(sessionData);
   return { url: session.url };

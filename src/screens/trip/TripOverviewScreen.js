@@ -944,6 +944,7 @@ const TripOverviewScreen = () => {
         const targetOrgId = resolvedOrgId || orgId;
         if (!isStaff || !targetOrgId || !tripId) return;
 
+        if (isChannelStarted === null || voiceLoading) return;
         if (!isChannelStarted) {
             // If starting, set active trip in context and navigate to Voice Chat with auto-start
             if (setActiveTrip) {
@@ -2086,9 +2087,9 @@ const TripOverviewScreen = () => {
                                 }
 
                                 <View style={styles.channelInfo}>
-                                    <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: isChannelStarted ? '#34C759' : '#FF383C' }}>{isChannelStarted ? 'Live' : 'Offline'}</Text></Text>
+                                    <Text style={styles.channelStatus}>Channel Status: <Text style={{ color: isChannelStarted ? '#34C759' : '#FF383C' }}>{isChannelStarted === null ? 'Checking…' : isChannelStarted ? 'Live' : 'Offline'}</Text></Text>
                                     <Text style={styles.activeSpeaker}>
-                                        {isChannelStarted ? (activeSpeakerInfo.isSpeaking ? `Active speaker: ${activeSpeakerInfo.name}` : 'Ready for conversation') : 'Channel not started'}
+                                        {isChannelStarted === null ? 'Checking channel status' : isChannelStarted ? (activeSpeakerInfo.isSpeaking ? `Active speaker: ${activeSpeakerInfo.name}` : 'Ready for conversation') : 'Channel not started'}
                                     </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={24} color="#fff" />
@@ -2148,6 +2149,7 @@ const TripOverviewScreen = () => {
                                                 { width: '100%', marginBottom: 0, backgroundColor: isChannelStarted ? '#942F31' : '#B99A4A', borderColor: isChannelStarted ? '#942F31' : '#B99A4A' }
                                             ]}
                                             onPress={handleToggleChannel}
+                                            disabled={isChannelStarted === null || voiceLoading}
                                         >
                                             <Ionicons
                                                 name={isChannelStarted ? "stop-circle-outline" : "play-circle-outline"}
@@ -2156,7 +2158,7 @@ const TripOverviewScreen = () => {
                                                 style={{ marginRight: 8 }}
                                             />
                                             <Text style={[styles.controlText, { color: "#FFF" }]}>
-                                                {isChannelStarted ? 'Channel Stop' : 'Start Channel'}
+                                                {isChannelStarted === null || voiceLoading ? 'Checking Channel…' : isChannelStarted ? 'Stop Channel' : 'Start Channel'}
                                             </Text>
                                         </TouchableOpacity>
 

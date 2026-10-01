@@ -1,26 +1,35 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Media for Trip Chats
+    // Server-owned authorization mirror; clients cannot modify it.
+    function access() {
+      return firestore.get(/databases/(default)/documents/app_access/$(request.auth.uid)).data;
+    }
+    function fresh() {
+      return request.auth != null && request.auth.token.auth_time >= access().revoked_before;
+    }
+    function appAccess() {
+      return fresh() && (access().staff == true || access().expires_at > request.time.toMillis());
+    }
+    function tripAccess(tripId) {
+      return fresh() && (access().staff == true || (tripId in access().trips && access().trips[tripId] > request.time.toMillis()));
+    }
     match /chat_media/{tripId}/{fileName} {
-      allow read, write: if request.auth != null;
+      allow read, write: if tripAccess(tripId);
     }
-    
-    // User Profile Pictures
     match /users/{userId}/{allPaths=**} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if appAccess() || (fresh() && request.auth.uid == userId);
+      allow write: if fresh() && request.auth.uid == userId
+                   && (request.resource == null || (request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*')));
     }
-
-    // Participant Avatars
     match /participant_avatars/{fileName} {
-      allow read, write: if request.auth != null;
+      allow read, write: if appAccess();
     }
-
-    // Trip banners
     match /trips/{fileName} {
       allow read: if true;
-      allow write: if request.resource.size < 5 * 1024 * 1024
+      allow write: if appAccess() && access().staff == true
+                   && request.resource.size < 5 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
     }
   }

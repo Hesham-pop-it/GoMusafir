@@ -170,17 +170,18 @@ export async function startLiveLocationTracking(orgId, tripId) {
 
     // 3. Start Background Location Task
     try {
-        const isRegistered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_LOCATION_TASK);
         const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
 
-        if (!hasStarted) {
+        // Reapply iOS options to existing tasks so previously enabled indicators
+        // are disabled without stopping background location sharing.
+        if (!hasStarted || Platform.OS === 'ios') {
             await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
                 accuracy: Location.Accuracy.Balanced,
                 timeInterval: 4000, // Every 4 seconds
                 distanceInterval: 5, // Every 5 meters
                 deferredUpdatesInterval: 4000,
                 deferredUpdatesDistance: 5,
-                showsBackgroundLocationIndicator: true,
+                showsBackgroundLocationIndicator: false,
                 pausesLocationUpdatesAutomatically: false,
                 foregroundService: {
                     notificationTitle: "GoMusafir Live Journey",

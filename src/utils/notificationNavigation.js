@@ -14,7 +14,7 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
     if (!item) return;
 
     // 1. Mark as read in Realtime DB if applicable
-    if (auth.currentUser && item.id) {
+    if (auth.currentUser && item.id && !item._pushOnly) {
         const uid = auth.currentUser.uid;
         const oId = item.orgId || item.data?.orgId || item.data?.org_id;
         const tId = item.tripId || item.data?.tripId || item.data?.trip_id;
@@ -147,6 +147,7 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
                 }
                 break;
 
+            case 'voice_inactivity':
             case 'voice_started':
             case 'voice_mute_all':
             case 'voice_unmute_all':

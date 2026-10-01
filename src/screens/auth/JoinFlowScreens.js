@@ -1,3 +1,7 @@
+import { fetchAppAccess } from '../../utils/participantAccess';
+import { beginEnrollment } from '../../utils/enrollmentSession';
+import { completeTripJoin, prepareTripJoinSession } from '../../utils/completeTripJoin';
+import { invitationVerificationParams } from '../../utils/invitationOnboarding';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -255,7 +259,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
     }, [previousData.email]);
 
     const isValidEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val.trim());
-    const showPasswordFields = email.length > 5 && email.includes('@');
+    const showPasswordFields = email.length > 5 && email.includes('@') && (isSignupMode || !previousData.invitationCode);
 
     const handleContinue = async () => {
         let hasError = false;
@@ -330,8 +334,22 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                         return;
                     }
 
+                    if (previousData.invitationCode && !previousData.isTeamInvite) {
+                        const result = await httpsCallable(functions, 'beginParticipantEnrollment')({
+                            email: email.trim().toLowerCase(), inviteCode: previousData.invitationCode,
+                        });
+                        navigation.navigate('BusinessVerification', {
+                            ...previousData, email: email.trim(), isExistingUser: true,
+                            enrollmentChallenge: result.data.challengeId,
+                            title: 'Verify your email',
+                            description: 'Enter the code sent to your email to join this trip.',
+                        });
+                        return;
+                    }
+
                     // User Exists -> Log In
                     try {
+                        if (previousData.invitationCode || previousData.teamInviteToken) beginEnrollment();
                         userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
                         currentUserId = userCredential.user.uid;
 
@@ -409,32 +427,34 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                 }
 
                 try {
+                    beginEnrollment();
                     userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
                     currentUserId = userCredential.user.uid;
 
-                    // Set flag in database to prevent App.js from redirecting to Home instantly
-                    await set(dbRef(database, `users/${currentUserId}/join_flow_status`), {
-                        isJoining: true,
-                        invitationCode: previousData.invitationCode || null,
-                        teamInviteToken: previousData.teamInviteToken || null,
-                        isTeamInvite: !!previousData.isTeamInvite,
-                        isExistingUser: false,
-                        updated_at: serverTimestamp()
+                    const verificationParams = invitationVerificationParams(previousData, {
+                        uid: currentUserId, email: email.trim(), isExistingUser: false,
+                    });
+                    // Persist the original invitation and its continuation together
+                    // with OTP state, before any global user snapshot can route away.
+                    await update(dbRef(database), {
+                        [`users/${currentUserId}/join_flow_status`]: {
+                            isJoining: true,
+                            invitationCode: previousData.invitationCode || null,
+                            teamInviteToken: previousData.teamInviteToken || null,
+                            isTeamInvite: !!previousData.isTeamInvite,
+                            isExistingUser: false,
+                            targetScreen: verificationParams.targetScreen,
+                            email: verificationParams.email,
+                            uid: currentUserId,
+                            updated_at: serverTimestamp(),
+                        },
+                        [`users/${currentUserId}/mfa_pending`]: true,
                     });
 
-                    // Navigate to standard signup flow
                     const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
                     await sendOTP({ email: email.trim(), uid: currentUserId, isMobile: true });
-
-                    navigation.navigate('BusinessVerification', {
-                        title: "Verify your email",
-                        description: `We've sent a 6-digit secure code to ${email.trim()}. Please enter it below.`,
-                        targetScreen: "JoinFirstName",
-                        uid: currentUserId,
-                        isExistingUser: false,
-                        ...previousData,
-                        email: email.trim(),
-                    });
+                    // Replace the account form directly; never pass through Home.
+                    navigation.replace('BusinessVerification', verificationParams);
                 } catch (signupError) {
                     throw signupError;
                 }
@@ -1266,18 +1286,23 @@ export const JoinTermsScreen = ({ navigation, route }) => {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const previousData = route.params || {};
+    const joiningRef = useRef(false);
 
     const handleContinue = async () => {
-        if (isLoading) return;
+        if (joiningRef.current) return;
         if (!accepted && !route.params?.isExistingUser) {
             setError('Please accept the Terms & Privacy to continue.');
             return;
         }
+        joiningRef.current = true;
         setIsLoading(true);
         try {
             let photoURL = previousData.photoURL;
             console.log("[JoinTerms] Starting profile picture upload. Image URI:", previousData.image);
             console.log("[JoinTerms] Auth currentUser UID:", auth.currentUser?.uid);
+
+            await prepareTripJoinSession();
+            await fetchAppAccess(); // Provision enrollment media permissions before profile upload.
 
             // S22: Upload image to Storage if present as local URI
             if (previousData.image && auth.currentUser) {
@@ -1303,7 +1328,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                     photoURL = await getDownloadURL(picRef);
                     console.log("[JoinTerms] Storage upload successful. photoURL:", photoURL);
                 } catch (imgError) {
-                    console.warn("[JoinTerms] Storage Upload Error:", imgError);
+                    throw new Error("Your photo could not be uploaded. Please retry before continuing.");
                 } finally {
                     if (blob) {
                         try {
@@ -1338,8 +1363,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                     routes: [{ name: 'Home' }],
                 });
             } else {
-                const redeemInvite = httpsCallable(functions, 'redeemInvitation');
-                const result = await redeemInvite({
+                const joined = await completeTripJoin({
                     inviteCode: previousData.invitationCode,
                     voiceConsent: accepted || route.params?.isExistingUser,
                     locationConsent: accepted || route.params?.isExistingUser,
@@ -1349,17 +1373,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                     photoURL: photoURL,
                 });
 
-
-
-
-                const tripId = result.data?.tripId;
-
-                // Clear the Join Flow flag in database so global navigation is restored
-                if (auth.currentUser) {
-                    // S22: Set current_trip so Home/App knows which trip to anchor to
-                    await set(dbRef(database, `users/${auth.currentUser.uid}/current_trip`), tripId);
-                    await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
-                }
+                const tripId = joined.tripId;
 
                 // S22: Navigate to TripOverview with explicit IDs
                 navigation.reset({
@@ -1368,7 +1382,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                         name: 'TripOverview', 
                         params: { 
                             tripId: tripId, 
-                            orgId: result.data?.orgId,
+                            orgId: joined.orgId,
                             invitationCode: previousData.invitationCode,
                             isAdmin: false 
                         } 
@@ -1381,9 +1395,10 @@ export const JoinTermsScreen = ({ navigation, route }) => {
             Alert.alert(
                 "Error Joining Trip", 
                 error.message || "Failed to join. Please try again or check your invite code.",
-                [{ text: "OK", onPress: () => navigation.navigate('Welcome') }]
+                [{ text: "OK" }]
             );
         } finally {
+            joiningRef.current = false;
             setIsLoading(false);
         }
     };

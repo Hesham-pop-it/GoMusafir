@@ -21,6 +21,8 @@ import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
+import TripDateSettings from '../../components/TripDateSettings';
+import { seatUsage } from '../../utils/tripSeatMath';
 import { Typography } from '../../constants/Typography';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
@@ -31,6 +33,7 @@ import { unregisterForPushNotificationsAsync } from '../../services/notification
 import { stopLiveLocationTracking } from '../../services/locationTrackingService';
 import { ref, onValue, update, get, set, push } from 'firebase/database';
 import { safeSignOut } from '../../utils/authUtils';
+import { completeAccountDeletion } from '../../utils/accountDeletion';
 
 
 const { width } = Dimensions.get('window');
@@ -79,6 +82,7 @@ const TripSettingsScreen = () => {
     // Dynamic Seat Statistics State
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
     const [resolvedTripId, setResolvedTripId] = useState(tripId);
+    const [currentTrip, setCurrentTrip] = useState(null);
     const [totalSeats, setTotalSeats] = useState(15); // Default fallback
     const [filledSeats, setFilledSeats] = useState(0);
     const [staffData, setStaffData] = useState({});
@@ -90,6 +94,14 @@ const TripSettingsScreen = () => {
     const [topupToken, setTopupToken] = useState(null);
     const [prepaidSeats, setPrepaidSeats] = useState(0);
     const [isScrolled, setIsScrolled] = useState(false);
+
+    let topupSeatsRequired = seatCount;
+    let seatPeriods = 1;
+    try {
+        const usage = seatUsage(currentTrip.start_date, currentTrip.end_date, totalSeats + seatCount);
+        seatPeriods = usage.seatPeriods;
+        topupSeatsRequired = Math.max(0, usage.requiredSeats - (currentTrip.seats_allocated ?? totalSeats));
+    } catch (_) {}
 
     const [visibilitySettings, setVisibilitySettings] = useState({
         name: 'Show to organizer',
@@ -189,6 +201,7 @@ const TripSettingsScreen = () => {
                     // Field guess: total_seats, capacity, participants_limit
                     const capacity = data.total_seats || data.capacity || data.participants_limit || 15;
                     setTotalSeats(Number(capacity));
+                    setCurrentTrip(data);
                 }
             });
         }
@@ -353,7 +366,7 @@ const TripSettingsScreen = () => {
                                     planId: selectedPlan
                                 });
                                 console.log("[TripSettingsScreen] verifyAndPaySeatTopup success!");
-                                const addedSeats = successfulSeatsRef.current || seatCount;
+                                const addedSeats = seatCount;
                                 if (auth.currentUser) {
                                     const notifPayload = {
                                         type: 'seat_update',
@@ -534,7 +547,7 @@ const TripSettingsScreen = () => {
                 prepaidSeats = orgSnap.val() || 0;
             }
 
-            if (prepaidSeats >= seatCount) {
+            if (prepaidSeats >= topupSeatsRequired) {
                 // Instantly topup without IAP or prompt!
                 const verifyAndPaySeatTopup = httpsCallable(functions, 'verifyAndPaySeatTopup');
                 console.log("[TripSettingsScreen] Prepaid balance covers all seats. Calling verifyAndPaySeatTopup instantly...");
@@ -567,7 +580,7 @@ const TripSettingsScreen = () => {
             }
 
             if (Platform.OS === 'ios') {
-                const unpaidSeats = seatCount - prepaidSeats;
+                const unpaidSeats = topupSeatsRequired - prepaidSeats;
 
                 // Decompose unpaidSeats into product purchases
                 const purchases = [];
@@ -657,10 +670,10 @@ const TripSettingsScreen = () => {
             const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
             await deleteMyAccount();
             setDeleteAccountModalVisible(false);
-            await safeSignOut(auth, { tripId, orgId });
+            await completeAccountDeletion(auth, navigation);
         } catch (error) {
             setDeleteAccountModalVisible(false);
-            if (error.code === 'auth/requires-recent-login' || error.message.includes('re-authenticate')) {
+            if (error.code === 'auth/requires-recent-login' || error.message?.includes('re-authenticate')) {
                 Alert.alert(
                     "Security Verification",
                     "For your security, please log out and log back in to verify your identity before proceeding.",
@@ -877,6 +890,10 @@ const TripSettingsScreen = () => {
                                     </View>
                                 </LinearGradient>
                             </TouchableOpacity>
+                        )}
+
+                        {['admin', 'co-host', 'manager'].includes(userRole) && (
+                            <TripDateSettings orgId={resolvedOrgId} tripId={resolvedTripId} />
                         )}
 
                         {/* Visibility Settings */}
@@ -1144,12 +1161,15 @@ const TripSettingsScreen = () => {
                                     <ActivityIndicator color="#B99A4A" size="small" style={{ marginVertical: 15 }} />
                                 ) : (
                                     <View style={{ width: '100%', marginVertical: 10 }}>
+                                        <Text style={{ color: '#FFF', textAlign: 'center', marginVertical: 12 }}>
+                                            {seatCount} additional participants · {seatPeriods} seat periods · {topupSeatsRequired} seats required
+                                        </Text>
                                         {PLANS.map((plan) => {
                                             const isSelected = selectedPlan === plan.id;
                                             let priceText = '';
 
                                             if (Platform.OS === 'ios') {
-                                                const unpaidSeats = Math.max(0, seatCount - prepaidSeats);
+                                                const unpaidSeats = Math.max(0, topupSeatsRequired - prepaidSeats);
                                                 const price = calculateActualIAPPrice(unpaidSeats);
                                                 priceText = `€${price.toFixed(2)} ${unpaidSeats > 1 ? 'total' : 'per pilgrim'}`;
                                                 if (prepaidSeats > 0 && unpaidSeats === 0) {
@@ -1157,7 +1177,7 @@ const TripSettingsScreen = () => {
                                                 }
                                             } else {
                                                 const { symbol, price } = pricingPlans[plan.id];
-                                                priceText = `${symbol}${(price * seatCount).toFixed(2)} per pilgrim`;
+                                                priceText = `${symbol}${(price * topupSeatsRequired).toFixed(2)} total`;
                                             }
 
                                             return (

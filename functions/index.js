@@ -53,6 +53,7 @@ exports.inviteTeamMember      = orgFunctions.inviteTeamMember;
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
 exports.createTrip            = tripFunctions.createTrip;
+exports.updateTripDates       = tripFunctions.updateTripDates;
 exports.deleteTrip            = tripFunctions.deleteTrip;
 exports.updateLiveLocation    = tripFunctions.updateLiveLocation;
 exports.closeTrip             = tripFunctions.closeTrip;
@@ -117,3 +118,25 @@ exports.onPaymentWrite        = dashboardStatsFunctions.onPaymentWrite;
 exports.onTripWrite           = dashboardStatsFunctions.onTripWrite;
 exports.onStaffWrite          = dashboardStatsFunctions.onStaffWrite;
 exports.dashboardStatsCron    = dashboardStatsFunctions.dashboardStatsCron;
+
+// Participant access lifecycle (accounts are retained after trip expiry).
+const participantAccessFunctions = require('./groups/participantAccessFunctions');
+for (const name of ['getAppAccess', 'onTripAccessChanged', 'onMembershipAccessChanged', 'onStaffAccessChanged', 'expireParticipantAccess', 'backfillParticipantAccess', 'beginParticipantEnrollment', 'completeParticipantEnrollment']) {
+  exports[name] = participantAccessFunctions[name];
+}
+
+// Shared all-muted inactivity checks for iOS and Android.
+const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');
+exports.reportVoiceActivity = voiceInactivityFunctions.reportVoiceActivity;
+exports.respondToVoiceInactivity = voiceInactivityFunctions.respondToVoiceInactivity;
+exports.onVoiceInactivityChanged = voiceInactivityFunctions.onVoiceInactivityChanged;
+exports.checkVoiceInactivity = voiceInactivityFunctions.checkVoiceInactivity;
+exports.resetVoiceInactivity = voiceInactivityFunctions.resetVoiceInactivity;
+
+// Server-owned trip feature states and shared pre-trip Voice allowance.
+const tripFeatureFunctions = require('./groups/tripFeatureFunctions');
+for (const name of ['getTripFeatureAccess', 'onTripFeatureDatesChanged', 'onTripFeatureAccessChanged', 'checkTripVoiceAccess', 'reconcileTripVoiceAccess']) {
+  exports[name] = tripFeatureFunctions[name];
+}
+
+exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;

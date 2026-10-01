@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
+    AppState,
     StyleSheet,
     View,
     Text,
@@ -23,6 +24,9 @@ import CompatModal from './CompatModal';
 import GradientBorderButton from './GradientBorderButton';
 import { navigationRef } from '../navigation/RootNavigator';
 import { navigateToNotificationTarget, extractNotificationTimestamp } from '../utils/notificationNavigation';
+
+import { playNotificationSound, stopNotificationSound } from '../services/notificationAudio';
+import { subscribeForegroundNotifications, claimNotification, resetNotificationPresentation } from '../services/notificationPresentation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -60,6 +64,8 @@ export default function TemplateAlertPopup() {
             if (!u) {
                 setModalAlert(null);
                 setBannerNotif(null);
+                resetNotificationPresentation();
+                stopNotificationSound();
                 seenIdsRef.current.clear();
                 dismissedAlertIdsRef.current.clear();
                 mountTimeRef.current = Date.now();
@@ -78,7 +84,7 @@ export default function TemplateAlertPopup() {
         const currentBanner = bannerNotifRef.current;
         const currentUser = userRef.current;
 
-        if (currentBanner && currentUser) {
+        if (currentBanner && !currentBanner._pushOnly && currentUser) {
             const { id, tripId, orgId, isUserGlobal } = currentBanner;
             if (id) {
                 dismissedAlertIdsRef.current.add(id);
@@ -113,6 +119,14 @@ export default function TemplateAlertPopup() {
         // Don't show if already dismissed in this session
         if (dismissedAlertIdsRef.current.has(notif.id)) return;
 
+        if (!claimNotification(notif, notif._source || 'database')) return;
+        if (AppState.currentState !== 'active') return;
+        playNotificationSound(notif);
+        if (notif.type === 'voice_inactivity') return;
+        const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
+        if (['chat', 'chat_message'].includes(notif.type) && route?.name === 'TripChat' &&
+            (route.params?.tripId || route.params?.trip?.id) === notif.tripId) return;
+
         // Haptic / vibration feedback
         try {
             if (Platform.OS === 'ios' || Platform.OS === 'android') {
@@ -141,6 +155,26 @@ export default function TemplateAlertPopup() {
             hideBanner();
         }, duration);
     }, [bannerAnim, hideBanner]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeForegroundNotifications(notif => {
+            if (auth.currentUser) showBanner(notif);
+        });
+        const stateSubscription = AppState.addEventListener('change', state => {
+            if (state !== 'active') {
+                stopNotificationSound();
+                if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current);
+                setBannerNotif(null);
+                setModalAlert(null);
+                bannerAnim.setValue(0);
+            } else {
+                // Do not replay notifications received while the OS owned delivery.
+                mountTimeRef.current = Date.now();
+            }
+        });
+        return () => { unsubscribe(); stateSubscription.remove(); stopNotificationSound();
+            if (dismissTimerRef.current) clearTimeout(dismissTimerRef.current); };
+    }, [showBanner, bannerAnim]);
 
     // PanResponder for swiping up to dismiss the banner
     const panResponder = useRef(
@@ -291,9 +325,6 @@ export default function TemplateAlertPopup() {
             }
 
             if (newestGlobalNotif) {
-                if (newestGlobalNotif.type === 'emergency') {
-                    setModalAlert(newestGlobalNotif);
-                }
                 showBanner(newestGlobalNotif);
             }
         }, (err) => {
@@ -447,9 +478,6 @@ export default function TemplateAlertPopup() {
 
                     if (newestTripNotif) {
                         // If critical emergency, show the central modal as well
-                        if (newestTripNotif.type === 'emergency') {
-                            setModalAlert(newestTripNotif);
-                        }
 
                         // Show top banner popup
                         showBanner(newestTripNotif);

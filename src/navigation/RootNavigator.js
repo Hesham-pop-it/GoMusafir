@@ -1,3 +1,4 @@
+import { brandedBrowserOptions } from '../utils/browserOptions';
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer, createNavigationContainerRef, CommonActions } from '@react-navigation/native';
@@ -101,14 +102,7 @@ const checkAndOpenWebUrl = async (url) => {
 
                     setBrowserOpenState(true);
                     try {
-                        await WebBrowser.openBrowserAsync(url, {
-                            presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-                            toolbarColor: Colors.dark.background,
-                            secondaryToolbarColor: Colors.dark.background,
-                            navigationBarColor: Colors.dark.background,
-                            navigationBarDividerColor: Colors.dark.background,
-                            controlsColor: '#FFFFFF',
-                        });
+                        await WebBrowser.openBrowserAsync(url, brandedBrowserOptions);
                     } finally {
                         setBrowserOpenState(false);
                     }
@@ -128,14 +122,7 @@ const checkAndOpenWebUrl = async (url) => {
             }
 
             try {
-                await WebBrowser.openBrowserAsync(url, {
-                    presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-                    toolbarColor: Colors.dark.background,
-                    secondaryToolbarColor: Colors.dark.background,
-                    navigationBarColor: Colors.dark.background,
-                    navigationBarDividerColor: Colors.dark.background,
-                    controlsColor: '#FFFFFF',
-                });
+                await WebBrowser.openBrowserAsync(url, brandedBrowserOptions);
             } finally {
                 setBrowserOpenState(false);
             }

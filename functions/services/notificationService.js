@@ -1,4 +1,5 @@
 const { admin, db } = require("../admin");
+const { notificationSound } = require("./notificationSoundConfig");
 
 /**
  * Sends a push notification to a specific user via FCM.
@@ -11,12 +12,15 @@ const { admin, db } = require("../admin");
 async function sendPushNotification(uid, title, body, data = {}, options = {}) {
     try {
         const {
-            androidChannelId = "default",
+            androidChannelId: requestedChannelId,
             interruptionLevel = "active", // 'active', 'time-sensitive', 'passive', 'critical'
             silent = false,
             tripId = null,
             eventId = null, // for deduplication (e.g. 'chat_trip123')
         } = options;
+
+        const soundProfile = notificationSound(data, { ...options, androidChannelId: requestedChannelId });
+        const androidChannelId = soundProfile.channelId;
 
         // 1. Fetch User Preferences & Token
         const [tokenSnap, prefsSnap] = await Promise.all([
@@ -69,7 +73,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                 priority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "high" : "normal",
                 notification: silent ? undefined : {
                     channelId: androidChannelId,
-                    sound: "default",
+                    sound: soundProfile.sound,
                     notificationPriority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "PRIORITY_HIGH" : "PRIORITY_DEFAULT",
                 },
             },
@@ -78,7 +82,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                     aps: {
                         contentAvailable: silent ? true : undefined,
                         mutableContent: true,
-                        sound: silent ? undefined : "default",
+                        sound: silent ? undefined : soundProfile.file,
                         "interruption-level": interruptionLevel === 'critical' ? 'time-sensitive' : interruptionLevel,
                     },
                 },
@@ -94,7 +98,10 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
             // Save in-app notification record under users/${uid}/notifications only if not skipped
             if (!options.skipDbSave) {
                 try {
-                    await db.ref(`users/${uid}/notifications`).push().set({
+                    const notificationRef = db.ref(`users/${uid}/notifications`).push();
+                    sanitizedData.notificationId = notificationRef.key;
+                    sanitizedData.isUserGlobal = 'true';
+                    await notificationRef.set({
                         title: title || "GoMusafir Update",
                         message: body || "",
                         type: data.type || options.type || "push",

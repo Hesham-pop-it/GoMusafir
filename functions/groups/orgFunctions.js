@@ -3,7 +3,8 @@
 //         S8 (org isolation), S12 (KMS PII), S17 (input validation),
 //         S20 (audit log ORG_CREATED), S23 (consent record)
 
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { HttpsError } = require("firebase-functions/v2/https");
+const { onCall } = require("../middleware/participantAccessMiddleware");
 const { admin, db, auth } = require("../admin");
 const { encrypt } = require("../services/kmsService");
 const { writeAuditLog } = require("../services/auditService");
@@ -20,7 +21,7 @@ const { createStripeCustomer, deleteStripeCustomer } = require("../services/stri
 //     Firebase Auth user with sendEmailVerification first).
 // S12: email + phone are encrypted with KMS before RTDB write.
 // S23: isAuthorized stored as immutable consent record.
-exports.createOrganization = onCall({ region: "europe-west1" }, async (request) => {
+exports.createOrganization = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request); // Protect the endpoint! Ensure the user is actually signed into Firebase Auth first.
 

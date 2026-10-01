@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -33,6 +33,7 @@ const BusinessLoginScreen = () => {
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
+    const loginInFlight = useRef(false);
 
     useEffect(() => {
         const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -56,7 +57,8 @@ const BusinessLoginScreen = () => {
     const isFormValid = email.trim().length > 0 && password.trim().length > 0 && !isLoading;
 
     const handleLogin = async () => {
-        if (!isFormValid) return;
+        if (!isFormValid || loginInFlight.current) return;
+        loginInFlight.current = true;
         setIsLoading(true);
         try {
             // S2: Set local lock BEFORE signing in so background auth listeners in App.js never auto-route to Home
@@ -115,17 +117,35 @@ const BusinessLoginScreen = () => {
                 await set(ref(database, `users/${user.uid}/mfa_pending`), true);
 
                 const sendOTP = httpsCallable(functions, 'sendCustomEmailOTP');
-                await sendOTP({ email: email.trim(), uid: user.uid, isMobile: true });
+                let description = 'We’ve sent a secure code to your email. Please check your inbox.';
+                try {
+                    await sendOTP({ email: email.trim(), uid: user.uid, isMobile: true });
+                } catch (error) {
+                    const code = error.code?.replace(/^functions\//, '');
+                    // Delivery may succeed even if the response is lost. A quick
+                    // retry can also be throttled while the emailed code is valid.
+                    if (!['resource-exhausted', 'deadline-exceeded', 'unavailable', 'internal', 'unknown'].includes(code)) {
+                        throw error;
+                    }
+                    console.warn('[BusinessLogin] OTP delivery response:', error.code);
+                    description = code === 'resource-exhausted'
+                        ? 'A code was recently requested. Enter the latest code from your email, or wait to resend.'
+                        : 'We couldn’t confirm delivery. If you received a code, enter it below. Otherwise, wait to resend.';
+                }
+
+                if (auth.currentUser?.uid !== user.uid) return;
 
                 navigation.navigate('BusinessVerification', {
                     title: "Check your business email",
-                    description: `We’ve sent a secure code to your email. Please check your inbox.`,
+                    description,
+                    resendDelay: 60,
                     targetScreen: 'Home',
                     email: email.trim(),
                     uid: user.uid,
                     isExistingUser: true
                 });
             } catch (otpError) {
+                console.warn('[BusinessLogin] Verification setup failed:', otpError.code, otpError.message);
                 Alert.alert("Verification Failed", "Could not send verification code. Please try again.");
                 await signOut(auth);
                 await AsyncStorage.removeItem('mfa_lock').catch(() => {});
@@ -164,6 +184,7 @@ const BusinessLoginScreen = () => {
             }
             Alert.alert("Login Failed", message);
         } finally {
+            loginInFlight.current = false;
             setIsLoading(false);
         }
     };

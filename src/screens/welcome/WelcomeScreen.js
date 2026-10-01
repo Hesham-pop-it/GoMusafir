@@ -1,3 +1,4 @@
+import { brandedBrowserOptions } from '../../utils/browserOptions';
 import React from 'react';
 import {
     StyleSheet,
@@ -402,14 +403,7 @@ const WelcomeScreen = ({ navigation }) => {
                             disabled={handoffState.isLoggingIn}
                             onPress={async () => {
                                 safePause(player);
-                                await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', {
-                                    presentationStyle: WebBrowser.WebBrowserPresentationStyle.CURRENT_CONTEXT,
-                                    toolbarColor: Colors.dark.background,
-                                    secondaryToolbarColor: Colors.dark.background,
-                                    navigationBarColor: Colors.dark.background,
-                                    navigationBarDividerColor: Colors.dark.background,
-                                    controlsColor: '#FFFFFF',
-                                });
+                                await WebBrowser.openBrowserAsync('https://app.gomusafir.app/create-account', brandedBrowserOptions);
                                 if (isMountedRef.current && isFocused) {
                                     safePlay(player);
                                 }

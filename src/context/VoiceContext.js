@@ -1,3 +1,5 @@
+import { watchVoiceChannelStatus } from '../utils/voiceChannelStatus';
+import { requestVoiceToken } from '../utils/requestVoiceToken';
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,6 +19,8 @@ import { MyWidget, MyLiveActivity } from '../components/Widget';
 import { addUserInteractionListener, widgetsDirectory } from 'expo-widgets';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Asset } from 'expo-asset';
+
+import VoiceInactivityMonitor from '../components/VoiceInactivityMonitor';
 
 const VoiceContext = createContext();
 
@@ -120,14 +124,6 @@ export const VoiceProvider = ({ children }) => {
         const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
             setCurrentUser(user);
             if (!user) {
-                // When logged out, clean up room and reset all trip states
-                if (isConnectedRef.current) {
-                    try { await room.disconnect(); } catch (e) {}
-                    try { await AudioSession.stopAudioSession(); } catch (e) {}
-                } else if (room?.state === 'connected' || room?.state === 'connecting') {
-                    try { await room.disconnect(); } catch (e) {}
-                    try { await AudioSession.stopAudioSession(); } catch (e) {}
-                }
                 setActiveTripId(null);
                 setActiveOrgId(null);
                 setIsAdmin(false);
@@ -138,6 +134,24 @@ export const VoiceProvider = ({ children }) => {
                 setActiveTripImage(null);
                 setSpeakingUids([]);
                 currentUserProfileRef.current = { name: '', avatar: '' };
+                avatarCacheMap.current = {};
+                setActiveSpeakerAvatarUri('');
+                setIsMuted(true);
+                setIsChannelActive(false);
+                if (activeActivity.current) {
+                    try { activeActivity.current.end('immediate'); } catch (e) {}
+                    activeActivity.current = null;
+                    activityDataRef.current = null;
+                }
+                // When logged out, clean up room and reset all trip states
+                if (isConnectedRef.current) {
+                    try { await room.disconnect(); } catch (e) {}
+                    try { await AudioSession.stopAudioSession(); } catch (e) {}
+                } else if (room?.state === 'connected' || room?.state === 'connecting') {
+                    try { await room.disconnect(); } catch (e) {}
+                    try { await AudioSession.stopAudioSession(); } catch (e) {}
+                }
+
             }
         });
 
@@ -148,7 +162,7 @@ export const VoiceProvider = ({ children }) => {
     useEffect(() => {
         const myUid = currentUser?.uid || auth.currentUser?.uid;
         if (!myUid) {
-            currentUserProfileRef.current = { name: 'Hesham', avatar: '', localAvatar: '' };
+            currentUserProfileRef.current = { name: '', avatar: '', localAvatar: '' };
             return;
         }
 
@@ -192,6 +206,7 @@ export const VoiceProvider = ({ children }) => {
                     || profile.avatar 
                     || authAvatar;
 
+                if (auth.currentUser?.uid !== myUid) return;
                 currentUserProfileRef.current = {
                     name: displayName,
                     avatar: displayImage || '',
@@ -201,7 +216,7 @@ export const VoiceProvider = ({ children }) => {
                 // Pre-cache current user's avatar to widgets directory
                 if (displayImage && typeof displayImage === 'string' && displayImage.startsWith('http')) {
                     downloadAvatarToWidgetsDir(myUid, displayImage).then((localUri) => {
-                        if (localUri) {
+                        if (localUri && auth.currentUser?.uid === myUid) {
                             currentUserProfileRef.current.localAvatar = localUri;
                             avatarCacheMap.current[myUid] = localUri;
                             setActiveSpeakerAvatarUri(localUri);
@@ -342,6 +357,13 @@ export const VoiceProvider = ({ children }) => {
         const handleRoomDisconnected = () => {
             setIsConnected(false);
             setConnectionDetails(null);
+            setIsMuted(true);
+            AsyncStorage.removeItem('@voice_session').catch(() => {});
+            AudioSession.stopAudioSession().catch(() => {});
+            if (activeActivity.current) {
+                try { activeActivity.current.end('immediate'); } catch (_) {}
+                activeActivity.current = null;
+            }
         };
 
         const handleRoomReconnected = async () => {
@@ -400,14 +422,23 @@ export const VoiceProvider = ({ children }) => {
 
         setIsChannelActive(null); // Reset to loading when trip changes
 
+        const unsubscribeStatus = watchVoiceChannelStatus(database, orgIdToUse, tripIdToUse, setIsChannelActive);
         const voiceRef = ref(database, `trips_active/${orgIdToUse}/${tripIdToUse}/voice_channel`);
+        let observedEnd;
+        let receivedInitialState = false;
         const unsubscribe = onValue(voiceRef, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
-                setIsChannelActive(data.isChannelStarted ?? false);
+                if (receivedInitialState && data.endedSessionId !== observedEnd && data.endReason === 'pre_trip_exhausted' && isAdminRef.current) {
+                    Alert.alert('Pre-trip Voice allowance used', 'Pre-trip Voice has been used. Full Voice will become available 24 hours before your journey starts.');
+                }
+                if (receivedInitialState && data.endedSessionId !== observedEnd && data.endReason === 'alone_timeout' && data.endRecipientUid === auth.currentUser?.uid) {
+                    Alert.alert('Voice Chat automatically stopped', 'The Voice Chat was automatically stopped because you were the only connected person for 5 minutes.');
+                }
+                observedEnd = data.endedSessionId;
+                receivedInitialState = true;
                 setIsGlobalMuteActive(data.isAllMuted ?? false);
             } else {
-                setIsChannelActive(false);
                 setIsGlobalMuteActive(false);
             }
         });
@@ -423,9 +454,33 @@ export const VoiceProvider = ({ children }) => {
 
         return () => {
             unsubscribe();
+            unsubscribeStatus();
             unsubscribeSpeaker();
         };
     }, [activeTripId, activeOrgId]);
+
+    // Confirm media connectivity through the backend immediately after joining.
+    // This recovers missing/delayed webhooks without letting a client start the
+    // allowance timer or publish channel status itself.
+    useEffect(() => {
+        if (!isConnected || !activeTripId || !activeOrgId || isChannelActive === true) return;
+        let stopped = false;
+        let checking = false;
+        const confirm = async () => {
+            if (stopped || checking) return;
+            checking = true;
+            try {
+                await httpsCallable(functions, 'getTripFeatureAccess')({ tripId: activeTripId });
+            } catch (error) {
+                if (!stopped) console.warn('[VoiceContext] Channel status confirmation failed:', error.code);
+            } finally {
+                checking = false;
+            }
+        };
+        confirm();
+        const retry = setInterval(confirm, 3000);
+        return () => { stopped = true; clearInterval(retry); };
+    }, [isConnected, activeTripId, activeOrgId, isChannelActive]);
 
     // Fetch Trip Title and Image for UI
     useEffect(() => {
@@ -883,16 +938,7 @@ export const VoiceProvider = ({ children }) => {
 
             console.log("[VoiceContext] connect called with:", { tripId, orgId, isStaff });
 
-            // ── Phase 1: Optimistic channel activation in RTDB for Staff ─────────
-            if (isStaff) {
-                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                    isChannelStarted: true,
-                    isAllMuted: false,
-                    adminMuted: false,
-                    lastUpdatedBy: auth.currentUser?.uid || null
-                }).catch(() => {});
-            }
-
+            // The backend admits the session and LiveKit confirms channel activation.
             // ── Phase 2: Audio setup + LiveKit Token generation in parallel ───────
             const audioSetup = async () => {
                 try {
@@ -926,11 +972,7 @@ export const VoiceProvider = ({ children }) => {
                 }
             };
 
-            const tokenTimeout = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Connection timed out. Please check your internet connection and try again.')), 10000)
-            );
-            const generateToken = httpsCallable(functions, 'generateLiveKitToken');
-            const tokenPromise = Promise.race([generateToken({ tripId }), tokenTimeout]);
+            const tokenPromise = requestVoiceToken(functions, httpsCallable, tripId);
 
             // Run audio hardware preparation and token generation concurrently
             const [, tokenResult] = await Promise.all([audioSetup(), tokenPromise]);
@@ -1039,7 +1081,7 @@ export const VoiceProvider = ({ children }) => {
                 Alert.alert("Trip Expired", "Voice chat is not available for this trip as it has expired.");
             } else {
                 let msg = error.message || "Failed to connect to the voice chat service.";
-                if (error.code === 'failed-precondition') {
+                if (error.code === 'failed-precondition' && !error.message) {
                     msg = "The channel has not been started by the organizer yet.";
                 } else if (msg.toLowerCase().includes('network request failed')) {
                     msg = "Network request failed. Please check your internet connection and try again.";
@@ -1125,11 +1167,6 @@ export const VoiceProvider = ({ children }) => {
                 const toggle = httpsCallable(functions, 'toggleChannelStatus');
                 await toggle({ tripId: tripIdToStop, active: false });
                 
-                await update(ref(database, `trips_active/${orgIdToStop}/${tripIdToStop}/voice_channel`), {
-                    isChannelStarted: false,
-                    activeSpeaker: null,
-                    lastUpdatedBy: auth.currentUser?.uid || null
-                });
                 setIsChannelActive(false);
                 setIsGlobalMuteActive(false);
             } catch (e) {
@@ -1258,6 +1295,8 @@ export const VoiceProvider = ({ children }) => {
                 }}
             >
                 {children}
+                <VoiceInactivityMonitor room={room} connected={isConnected && isChannelActive === true}
+                    tripId={activeTripId} orgId={activeOrgId} uid={currentUser?.uid} />
             </LiveKitRoom>
         </VoiceContext.Provider>
     );

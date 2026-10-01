@@ -11,6 +11,11 @@ const ENCRYPTION_KEY_ID = 'GOMUSAFIR_CHAT_ENCRYPTION_KEY';
 class ChatEncryption {
     static key = null;
 
+    static async clear() {
+        this.key = null;
+        await SecureStore.deleteItemAsync(ENCRYPTION_KEY_ID);
+    }
+
     /**
      * Initializes or retrieves the 256-bit encryption key from SecureStore
      */
