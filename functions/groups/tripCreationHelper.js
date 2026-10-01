@@ -5,7 +5,7 @@ const { usageFor, applyAllocation, operationKey, formatRange, transactOrganizati
 
 const { tripTimeZoneFields } = require('../services/tripTimeZoneService');
 
-const createTripRecord = async ({ orgId, uid, title, destination, startDate, endDate, image, totalSeats, operationId, paidCredit = 0 }) => {
+const createTripRecord = async ({ orgId, uid, title, destination, startDate, endDate, image, totalSeats, operationId, paidCredit = 0, checkoutKey, checkoutAttempt }) => {
   if (!title || !destination || !uid || !Number.isSafeInteger(paidCredit) || paidCredit < 0) {
     throw new HttpsError('invalid-argument', 'Missing or invalid trip fields.');
   }
@@ -40,7 +40,20 @@ const createTripRecord = async ({ orgId, uid, title, destination, startDate, end
   const result = await transactOrganization(orgId, org => {
     if (!org) return org;
     if (key && org.seat_operations?.[key]) return org;
-    const allocation = applyAllocation(org, null, usage, paidCredit);
+    const reservation = org.journey_checkouts?.[key];
+    let reservedCredit = 0;
+    if (checkoutKey) {
+      if (checkoutKey !== key || !reservation || reservation.state !== 'reserved' ||
+          reservation.attempt !== checkoutAttempt || reservation.uid !== uid ||
+          reservation.paidSeats !== paidCredit || reservation.reservedSeats + paidCredit !== usage.requiredSeats) {
+        throw new HttpsError('failed-precondition', 'Invalid journey checkout reservation.');
+      }
+      reservedCredit = reservation.reservedSeats;
+      reservation.state = 'consumed';
+    } else if (reservation?.state === 'reserved') {
+      throw new HttpsError('already-exists', 'A payment checkout is already open for this journey.');
+    }
+    const allocation = applyAllocation(org, null, usage, paidCredit + reservedCredit);
     org.trips ||= {};
     org.trips[tripId] = { ...tripData, ...allocation };
     if (key) {

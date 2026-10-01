@@ -8,8 +8,13 @@ import 'react-native-gesture-handler';
 // 2. Specialized React Native / LiveKit globals
 import { registerGlobals } from '@livekit/react-native';
 import { registerRootComponent } from 'expo';
+import { Platform } from 'react-native';
+import { installVoiceMicrophoneConfiguration } from './src/utils/voiceAudioSession';
 
-registerGlobals();
+registerGlobals({ autoConfigureAudioSession: false });
+if (Platform.OS === 'ios') {
+    installVoiceMicrophoneConfiguration(global.navigator.mediaDevices);
+}
 
 // 3. Firebase, Location & UI Imports
 import messaging from '@react-native-firebase/messaging';

@@ -7,6 +7,8 @@ const { createRequire } = require('node:module');
 const { resolveTripTimeZone } = require('../services/tripTimeZoneService');
 
 for (const [location, zone] of [
+  ['Pakistan', 'Asia/Karachi'], [' pakistan ', 'Asia/Karachi'], ['PK', 'Asia/Karachi'],
+  ['Saudi Arabia', 'Asia/Riyadh'],
   ['Makkah, Saudi Arabia', 'Asia/Riyadh'], ['Mecca SA', 'Asia/Riyadh'],
   ['Madinah', 'Asia/Riyadh'], ['Karachi, Pakistan', 'Asia/Karachi'],
   ['London, UK', 'Europe/London'], ['London, Ontario, Canada', 'America/Toronto'],
@@ -91,4 +93,21 @@ test('seat-only top-ups do not re-resolve or move legacy timestamps', async () =
   await f.changeTripSeats({ orgId: 'org', tripId, increment: 1 });
   assert.equal(f.org().trips[tripId].end_date, end);
   assert.equal(f.org().trips[tripId].time_zone, 'Asia/Riyadh');
+});
+
+test('multi-zone countries require a city instead of silently picking a zone', () => {
+  for (const destination of ['United States', 'Canada', 'Australia']) {
+    assert.throws(() => resolveTripTimeZone(destination), /multiple time zones/);
+  }
+});
+test('country-only destination is stored on creation and when editing', async () => {
+  const f = fixture();
+  const { tripId } = await f.createTripRecord({ ...input, destination: 'Pakistan' });
+  assert.equal(f.org().trips[tripId].location, 'Pakistan');
+  assert.equal(f.org().trips[tripId].time_zone, 'Asia/Karachi');
+  await f.changeTripSeats({ orgId: 'org', tripId, destination: 'Saudi Arabia', startDate: start, endDate: end });
+  assert.equal(f.org().trips[tripId].time_zone, 'Asia/Riyadh');
+  await f.changeTripSeats({ orgId: 'org', tripId, destination: 'Pakistan', startDate: start, endDate: end });
+  assert.equal(f.org().trips[tripId].time_zone, 'Asia/Karachi');
+  assert.equal(f.org().trips[tripId].end_date, end);
 });

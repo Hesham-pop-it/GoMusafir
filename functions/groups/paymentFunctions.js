@@ -10,6 +10,7 @@ const { verifyAppCheck, requireAuth, requireRole } = require("../middleware/appC
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { sendPushNotification } = require("../services/notificationService");
 const { createTripRecord } = require("./tripCreationHelper");
+const { startJourneyCheckout, completeJourneyCheckout, releaseJourneyCheckout } = require('../services/journeyCheckoutService');
 const { topupUsage, changeTripSeats, requireOrgStaff } = require('../services/tripSeatService');
 
 // ── Regional Pricing — Server-Side Enforcement ────────────────────────────────
@@ -414,13 +415,20 @@ async function processPaidCheckoutSession(session) {
   let finalTripId = tripId;
 
   if (action === "CREATE_TRIP") {
+    let tripDetails, created;
+    if (metadata.journeyCheckoutKey) {
+      const quote = (await db.ref(`orgs/${orgId}/journey_checkouts/${metadata.journeyCheckoutKey}`).get()).val();
+      if (!quote) throw new Error('Journey checkout details not found.');
+      tripDetails = { t: quote.tripData.title };
+      created = await completeJourneyCheckout(session);
+    } else {
     if (!tripDetailsJson) {
       throw new Error("Missing tripDetailsJson in metadata for CREATE_TRIP.");
     }
-    const tripDetails = JSON.parse(tripDetailsJson);
+    tripDetails = JSON.parse(tripDetailsJson);
 
     // Create the trip record
-    const created = await createTripRecord({
+    created = await createTripRecord({
       orgId,
       uid,
       title: tripDetails.t,
@@ -431,6 +439,7 @@ async function processPaidCheckoutSession(session) {
       totalSeats: Number(tripDetails.p || totalSeatsRequested),
       operationId: `payment:${session.id}`, paidCredit: seatsNum
     });
+    }
     finalTripId = created.tripId;
 
     // Mark the link token as used and paid
@@ -656,6 +665,13 @@ exports.stripeWebhookHandler = onRequest(
           }
         } else {
           console.warn(`⚠️ Invoice paid webhook received but orgId (${orgId}) or seatCount (${seatCount}) could not be resolved.`);
+        }
+      }
+
+      if (event.type === 'checkout.session.expired') {
+        const session = event.data.object;
+        if (session.metadata?.journeyCheckoutKey && session.metadata?.orgId) {
+          await releaseJourneyCheckout(session.metadata.orgId, session.metadata.journeyCheckoutKey, session);
         }
       }
 
@@ -1056,11 +1072,18 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
   await requireOrgStaff(orgId, uid);
   if (action === 'CREATE_TRIP') {
     if (!tripData) throw new HttpsError('invalid-argument', 'Missing trip data.');
-    const created = await createTripRecord({ ...tripData,
-      orgId, uid, totalSeats: participantCount, operationId: `create:${linkToken}`, paidCredit: 0 });
-    await tokenRef.update({ paid: true, used: true, tripId: created.tripId,
-      inviteCode: created.inviteCode, seats: created.requiredSeats, planId: planToUse });
-    return { instant: true, ...created };
+    if (!Object.prototype.hasOwnProperty.call(PRICING_PLANS, planToUse)) throw new HttpsError('invalid-argument', 'Select a valid package.');
+    const country = (await db.ref(`users/${uid}/country`).get()).val();
+    const countryCode = typeof country === 'object' ? country?.code : country;
+    const allowedOrigins = ['https://app.gomusafir.app', 'https://go-musafir.web.app',
+      'https://go-musafir.firebaseapp.com', 'https://join.gomusafir.app', 'https://gomusafir.app'];
+    const clientOrigin = allowedOrigins.includes(origin) ? origin : 'https://app.gomusafir.app';
+    const result = await startJourneyCheckout({ stripe, orgId, uid, linkToken, tripData,
+      participants: participantCount, planId: planToUse, pricing: getPlanPricing(countryCode, planToUse),
+      origin: clientOrigin, shippingCountries: ALLOWED_SHIPPING_COUNTRIES });
+    if (result.instant) await tokenRef.update({ paid: true, used: true, tripId: result.tripId,
+      inviteCode: result.inviteCode, seats: result.requiredSeats, planId: planToUse });
+    return result;
   }
   const tripForSeats = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
   if (!tripForSeats) throw new HttpsError('not-found', 'Trip not found.');

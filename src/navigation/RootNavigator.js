@@ -189,7 +189,13 @@ const linking = {
             Home: 'home',
             Notifications: 'notifications',
             TripOverview: 'trips',
-            VoiceChat: 'voicechat',
+            VoiceChat: {
+                path: 'voicechat',
+                parse: {
+                    isAdmin: value => value === 'true',
+                    autoStart: value => value === 'true',
+                },
+            },
             TripChat: 'tripchat',
             LiveLocation: 'livelocation',
             AlertHistory: 'alerts',

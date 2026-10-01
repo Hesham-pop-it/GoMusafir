@@ -27,7 +27,7 @@ function endpointModule(name) {
     '../services/notificationService': { sendPushNotification: noop },
     '../services/emailService': { sendEmail: noop },
     '../services/participantAccessService': {}, './participantAccessFunctions': {},
-    stripe: () => ({ checkout: { sessions: { create: () => { throw new Error('Unexpected checkout'); } } } }),
+    stripe: () => ({ checkout: { sessions: { create: async () => ({ id: 'cs_test_seats', url: 'https://checkout.stripe.com/test' }) } } }),
   };
   vm.runInNewContext(fs.readFileSync(file,'utf8'), { module, exports: module.exports,
     require: id => overrides[id] || localRequire(id), process: { env: {} }, console, Date, Number, Object, Math, Buffer,
@@ -87,7 +87,9 @@ async function main() {
     action: 'CREATE_TRIP', expiresAt: Date.now()+DAY, used: false });
   const request = { app: {}, data: { action: 'CREATE_TRIP', seats: 10, linkToken: token,
     tripData: { ...input, paidCredit: 1000, seats_required: 1, seat_periods: 1 } } };
-  await assert.rejects(paymentEndpoints.requestSeats(request), /Not enough seats/);
+  assert.equal((await paymentEndpoints.requestSeats(request)).url, 'https://checkout.stripe.com/test');
+  assert.equal((await org().get()).val().trips, undefined);
+  await seed(19);
   const authenticated = { app: {}, auth: { uid: input.uid, token: { orgId: input.orgId, role: 'admin' } }, data: { ...input, paid: true, requiredSeats: 1 } };
   await assert.rejects(tripEndpoints.createTrip(authenticated), /Not enough seats/);
   await org().child('prepaid_seats').set(20);

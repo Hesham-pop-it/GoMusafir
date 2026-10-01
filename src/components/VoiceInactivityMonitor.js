@@ -20,6 +20,14 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
     const [presenceReady, setPresenceReady] = useState(false);
     const [databaseConnected, setDatabaseConnected] = useState(false);
     const [roomSid, setRoomSid] = useState(null);
+    const [channelReady, setChannelReady] = useState(false);
+
+    useEffect(() => {
+        setChannelReady(false);
+        if (!connected || !orgId || !tripId || !databaseConnected) return;
+        return onValue(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/isChannelStarted`),
+            snapshot => setChannelReady(snapshot.val() === true), () => setChannelReady(false));
+    }, [connected, orgId, tripId, databaseConnected]);
 
     useEffect(() => onValue(ref(database, '.info/connected'), snapshot =>
         setDatabaseConnected(snapshot.val() === true)), []);
@@ -67,7 +75,7 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
     }, [connected, tripId, orgId, role, presenceReady, databaseConnected, roomSid]);
 
     useEffect(() => {
-        if (!connected || !tripId || !orgId || !uid) return;
+        if (!connected || !tripId || !orgId || !uid || !presenceReady || !databaseConnected || !roomSid || !channelReady) return;
         let disposed = false;
         let busy = false;
         let queued = false;
@@ -85,7 +93,9 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
                 await report({ tripId, activity });
                 if (activity) queued = true;
             } catch (e) {
+                if (disposed || room.state !== ConnectionState.Connected) return;
                 activitySeen = activitySeen || activity;
+                queued = false; // Retry on the timer, not in a tight loop during session transitions.
                 console.warn('[Voice inactivity] Activity report failed:', e.code);
             } finally {
                 busy = false;
@@ -119,7 +129,7 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
             events.forEach(event => room.off(event, changed));
             room.off(RoomEvent.TrackUnmuted, unmuted);
         };
-    }, [room, connected, tripId, orgId, uid]);
+    }, [room, connected, tripId, orgId, uid, presenceReady, databaseConnected, roomSid, channelReady]);
 
     const respond = async keepActive => {
         if (!prompt || submitting) return;

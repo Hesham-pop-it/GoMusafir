@@ -9,6 +9,7 @@ import {
     TouchableOpacity,
     ScrollView,
     Dimensions,
+    ActivityIndicator,
     Alert,
     StatusBar,
     Image,
@@ -179,6 +180,7 @@ const TripOverviewScreen = () => {
         isMuted,
         setIsMuted,
         loading: voiceLoading,
+        stopping: voiceStopping,
         connect,
         disconnect,
         stopChannel,
@@ -2151,14 +2153,14 @@ const TripOverviewScreen = () => {
                                             onPress={handleToggleChannel}
                                             disabled={isChannelStarted === null || voiceLoading}
                                         >
-                                            <Ionicons
+                                            {voiceStopping ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons
                                                 name={isChannelStarted ? "stop-circle-outline" : "play-circle-outline"}
                                                 size={20}
                                                 color="#FFF"
                                                 style={{ marginRight: 8 }}
-                                            />
+                                            />}
                                             <Text style={[styles.controlText, { color: "#FFF" }]}>
-                                                {isChannelStarted === null || voiceLoading ? 'Checking Channel…' : isChannelStarted ? 'Stop Channel' : 'Start Channel'}
+                                                {voiceStopping ? 'Stopping…' : isChannelStarted === null || voiceLoading ? 'Checking Channel…' : isChannelStarted ? 'Stop Channel' : 'Start Channel'}
                                             </Text>
                                         </TouchableOpacity>
 

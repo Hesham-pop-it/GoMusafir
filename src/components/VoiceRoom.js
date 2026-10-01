@@ -25,6 +25,7 @@ import { Mic, MicOff, PhoneOff, Users, Volume2 } from 'lucide-react-native';
 import { Colors } from '../constants/Colors';
 import { BlurView } from 'expo-blur';
 import { setAudioModeAsync } from 'expo-audio';
+import { configureIOSVoiceAudio } from '../utils/voiceAudioSession';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -171,7 +172,7 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
   useEffect(() => {
     const setupAudio = async () => {
       try {
-        await setAudioModeAsync({
+        if (Platform.OS !== 'ios') await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
           shouldPlayInBackground: false,
@@ -183,19 +184,10 @@ const VoiceRoom = ({ url, token, onDisconnect }) => {
           android: {
             audioTypeOptions: AndroidAudioTypePresets.communication,
           },
-          ios: {
-            defaultOutput: 'speaker',
-            category: 'playAndRecord',
-            mode: 'voiceChat',
-            categoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP']
-          },
+          ios: { defaultOutput: 'speaker' },
         });
         if (Platform.OS === 'ios') {
-          await AudioSession.setAppleAudioConfiguration({
-            audioCategory: 'playAndRecord',
-            audioMode: 'voiceChat',
-            audioCategoryOptions: ['defaultToSpeaker', 'allowBluetooth', 'allowBluetoothA2DP', 'mixWithOthers']
-          });
+          await configureIOSVoiceAudio();
         }
         await AudioSession.startAudioSession();
       } catch (e) {

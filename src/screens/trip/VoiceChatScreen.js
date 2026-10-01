@@ -45,6 +45,7 @@ import SpeakerGlow from '../../components/SpeakerGlow';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { isVoiceStaff } from '../../utils/voiceRole';
 
 const { width } = Dimensions.get('window');
 
@@ -386,13 +387,6 @@ const VoiceChatContent = ({
                                             !(isMuted || false) && { backgroundColor: '#23272A', borderColor: '#B99A4A' }
                                         ]}
                                     >
-                                        <View style={{ marginRight: 8 }}>
-                                            {/* {isMuted ? (
-                                                <MicMutedIcon color="#FFF" size={20} />
-                                            ) : (
-                                                <MicUnmutedIcon color="#D66A77" size={20} />
-                                            )} */}
-                                        </View>
                                         <Text style={[styles.controlText, !isMuted && { color: '#FFFFFF' }]}>
                                             {isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                         </Text>
@@ -416,10 +410,11 @@ const VoiceChatContent = ({
                                         { width: '100%', borderStyle: 'solid', backgroundColor: '#942F31', borderColor: '#942F31' }
                                     ]}
                                     onPress={staffInChatCount >= 2 ? onDisconnect : onStopChannel}
+                                    disabled={loading}
                                 >
-                                    <Ionicons name={staffInChatCount >= 2 ? "exit-outline" : "stop-circle-outline"} size={20} color="#FFF" style={{ marginRight: 8 }} />
+                                    {loading ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name={staffInChatCount >= 2 ? "exit-outline" : "stop-circle-outline"} size={20} color="#FFF" style={{ marginRight: 8 }} />}
                                     <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                        {staffInChatCount >= 2 ? 'Leave Channel' : 'Stop Voice Chat'}
+                                        {loading ? (staffInChatCount >= 2 ? 'Leaving…' : 'Stopping…') : staffInChatCount >= 2 ? 'Leave Channel' : 'Stop Voice Chat'}
                                     </Text>
                                 </TouchableOpacity>
                             </>
@@ -443,6 +438,7 @@ const VoiceChatContent = ({
                                 </View>
                                 <TouchableOpacity
                                     onPress={onDisconnect}
+                                    disabled={loading}
                                     style={[
                                         styles.controlButtonOutline,
                                         {
@@ -456,8 +452,8 @@ const VoiceChatContent = ({
                                         }
                                     ]}
                                 >
-                                    <Ionicons name="refresh-outline" size={20} color="#FFF" style={{ marginRight: 8, transform: [{ scaleX: -1 }] }} />
-                                    <Text style={[styles.controlText, { color: '#fff' }]}>Channel Leave</Text>
+                                    {loading ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name="refresh-outline" size={20} color="#FFF" style={{ marginRight: 8, transform: [{ scaleX: -1 }] }} />}
+                                    <Text style={[styles.controlText, { color: '#fff' }]}>{loading ? 'Leaving…' : 'Channel Leave'}</Text>
                                 </TouchableOpacity>
                             </>
                         )}
@@ -514,6 +510,7 @@ const VoiceChatContent = ({
                             };
                             const isSpeaking = speakingUids.includes(participant.identity);
                             const isLocal = participant.isLocal;
+                            const microphoneEnabled = isLocal ? !isMuted : participant.isMicrophoneEnabled;
 
                             return (
                                 <View key={participant.identity}>
@@ -539,14 +536,14 @@ const VoiceChatContent = ({
                                                     />
                                                 </View>
                                             </View>
-                                            <Text style={styles.statusSubText}>{isSpeaking ? 'Speaking' : (participant.isMicrophoneEnabled ? 'Active' : 'Muted')}</Text>
+                                            <Text style={styles.statusSubText}>{!microphoneEnabled ? 'Muted' : isSpeaking ? 'Speaking' : 'Active'}</Text>
                                         </View>
 
                                         <TouchableOpacity 
                                             style={styles.rightActions}
                                             onPress={() => handleParticipantMicPress(participant)}
                                         >
-                                            {participant.isMicrophoneEnabled ? (
+                                            {microphoneEnabled ? (
                                                 <View style={styles.micCircle}>
                                                     <MicUnmutedIcon color="#FFF" size={20} />
                                                 </View>
@@ -572,6 +569,7 @@ const VoiceChatContent = ({
 const VoiceChatScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
+    const [resolvedVoiceTrip, setResolvedVoiceTrip] = useState(null);
     let { trip: passedTrip, invitationCode: directCode, isAdmin: passedIsAdmin, userRole } = route.params || {};
     if (typeof passedIsAdmin === 'string') {
         passedIsAdmin = passedIsAdmin === 'true';
@@ -579,10 +577,10 @@ const VoiceChatScreen = () => {
     
     // Core state and trip data
     const tripData = passedTrip || { image: require('../../../assets/Makkah.png') };
-    const tripId = route.params?.tripId || tripData.id || tripData.tripId;
-    const orgId = route.params?.orgId || tripData.orgId || tripData.org_id;
+    const tripId = route.params?.tripId || tripData.id || tripData.tripId || resolvedVoiceTrip?.tripId;
+    const orgId = route.params?.orgId || tripData.orgId || tripData.org_id || resolvedVoiceTrip?.orgId;
     const invitationCode = directCode || tripData.invitationCode;
-    const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (passedTrip?.isAdmin !== undefined ? passedTrip.isAdmin : !invitationCode);
+    const isAdmin = passedIsAdmin === true || passedTrip?.isAdmin === true;
     const { autoStart } = route.params || {};
 
     const { 
@@ -592,13 +590,40 @@ const VoiceChatScreen = () => {
         isMuted, 
         setIsMuted,
         loading,
+        stopping,
+        isAdmin: voiceIsAdmin,
         connect,
         disconnect,
         stopChannel,
         activeTripId,
+        activeOrgId,
         setActiveTrip,
         sendMuteCommand
     } = useVoice();
+
+    useEffect(() => {
+        if (tripId && orgId) return;
+        let cancelled = false;
+        const resolveTrip = async () => {
+            try {
+                const uid = auth.currentUser?.uid;
+                if (!uid) throw new Error('Please sign in before opening voice chat.');
+                const targetTrip = tripId || activeTripId || (await get(ref(database, `users/${uid}/current_trip`))).val();
+                if (!targetTrip) throw new Error('Select a journey before opening voice chat.');
+                const targetOrg = orgId || (targetTrip === activeTripId && activeOrgId)
+                    || (await get(ref(database, `trips_orgs/${targetTrip}`))).val();
+                if (!targetOrg) throw new Error('Could not find this journey. Please open it from Home.');
+                if (!cancelled) setResolvedVoiceTrip({ tripId: targetTrip, orgId: targetOrg });
+            } catch (error) {
+                if (!cancelled) {
+                    Alert.alert('Voice Chat', error.message);
+                    navigation.navigate('Home');
+                }
+            }
+        };
+        resolveTrip();
+        return () => { cancelled = true; };
+    }, [tripId, orgId, activeTripId, activeOrgId, navigation]);
 
     useEffect(() => {
         if (tripId && orgId) {
@@ -606,11 +631,15 @@ const VoiceChatScreen = () => {
         }
     }, [tripId, orgId]);
 
-    const [isAdminState, setIsAdminState] = useState(isAdmin);
     const hasAutoStarted = useRef(false);
     const [tripParticipants, setTripParticipants] = useState([]);
     const [teamMemberUids, setTeamMemberUids] = useState(new Set());
     const [staffData, setStaffData] = useState({});
+    const [staffLoadedFor, setStaffLoadedFor] = useState(null);
+    const roleKey = `${orgId}/${tripId}`;
+    const isAdminState = isConnected && activeTripId === tripId
+        ? voiceIsAdmin
+        : staffLoadedFor === roleKey ? isVoiceStaff(staffData[auth.currentUser?.uid]) : isAdmin;
     const [participantUids, setParticipantUids] = useState([]);
     const [activeSpeaker, setActiveSpeaker] = useState(null);
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
@@ -660,6 +689,7 @@ const VoiceChatScreen = () => {
             const staffRef = ref(database, `orgs/${orgId}/staff`);
             unsubscribeStaff = onValue(staffRef, (snapshot) => {
                 setStaffData(snapshot.val() || {});
+                setStaffLoadedFor(`${orgId}/${tripId}`);
             }, (err) => {
                 console.log("Staff real-time subscription error:", err);
             });
@@ -792,24 +822,19 @@ const VoiceChatScreen = () => {
         return () => unsub();
     }, [tripId, orgId]);
 
-    // Update local admin state if prop or staff data changes
     useEffect(() => {
-        if (passedIsAdmin !== undefined) {
-            setIsAdminState(passedIsAdmin);
-        } else if (auth.currentUser && staffData[auth.currentUser.uid]) {
-            const role = staffData[auth.currentUser.uid];
-            setIsAdminState(isStaffMember(auth.currentUser.uid, staffData, organizerId, role));
-        }
-    }, [passedIsAdmin, staffData, organizerId]);
+        hasAutoStarted.current = false;
+    }, [tripId, orgId, autoStart]);
 
-    // Handle auto-start trigger if routed with autoStart
+    // A tap is an explicit request to connect. Do not wait for the channel
+    // status subscription: the backend authorizes starting/joining the room.
     useEffect(() => {
-        const canAutoStart = (isAdminState || isAdmin || isChannelActive) && tripId && orgId;
-        if (autoStart && !isConnected && !hasAutoStarted.current && canAutoStart) {
+        const wantsAutoStart = autoStart === true || autoStart === 'true';
+        if (wantsAutoStart && !isConnected && !loading && !hasAutoStarted.current && tripId && orgId) {
             hasAutoStarted.current = true;
             handleConnect(isAdminState !== undefined ? isAdminState : isAdmin);
         }
-    }, [autoStart, isConnected, isChannelActive, isAdminState, isAdmin, tripId, orgId]);
+    }, [autoStart, isConnected, loading, isAdminState, isAdmin, tripId, orgId]);
 
     // Auto-disconnect if channel is stopped while connected
     useEffect(() => {
@@ -824,7 +849,7 @@ const VoiceChatScreen = () => {
     }, [isChannelActive, isConnected, isAdminState, activeTripId, tripId]);
 
     const handleConnect = (overrideAdmin) => {
-        const roleToUse = overrideAdmin !== undefined ? overrideAdmin : (isAdminState || isAdmin);
+        const roleToUse = overrideAdmin !== undefined ? overrideAdmin : isAdminState;
         connect(tripId, orgId, roleToUse);
     };
 
@@ -836,7 +861,7 @@ const VoiceChatScreen = () => {
                 orgId={orgId}
                 isAdmin={isAdminState} 
                 onDisconnect={disconnect}
-                onStopChannel={stopChannel}
+                onStopChannel={() => stopChannel()}
                 fetchToken={handleConnect}
                 loading={loading}
                 isMuted={isMuted}
@@ -874,9 +899,9 @@ const VoiceChatScreen = () => {
                     </View>
 
                     <View style={[styles.topSection, { marginTop: 40 }]}>
-                        {(isAdminState || isAdmin) && <PreTripVoiceAllowance tripId={tripId} orgId={orgId} />}
+                        {isAdminState && <PreTripVoiceAllowance tripId={tripId} orgId={orgId} />}
                         <View style={styles.controlsGrid}>
-                            {isAdmin ? (
+                            {isAdminState ? (
                                 <>
                                     {isChannelActive && (
                                         <View style={styles.controlRow}>
@@ -900,7 +925,7 @@ const VoiceChatScreen = () => {
                                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                                                 <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} />
                                                 <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                                    Starting Channel...
+                                                    {stopping ? 'Stopping…' : 'Starting Channel...'}
                                                 </Text>
                                             </View>
                                         ) : isChannelActive === null ? (
@@ -940,7 +965,7 @@ const VoiceChatScreen = () => {
                                         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
                                             <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} />
                                             <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                                Connecting...
+                                                {stopping ? 'Leaving…' : 'Connecting...'}
                                             </Text>
                                         </View>
                                     ) : isChannelActive === null ? (

@@ -1,21 +1,21 @@
 'widget'; // <- required directive at the top
 
 import { Text, VStack, HStack, Spacer, Button, Image, Link, ZStack } from '@expo/ui/swift-ui';
-import { font, foregroundColor, padding, background, cornerRadius, frame, containerBackground, buttonStyle, controlSize, tint, shadow, symbolEffect, border, resizable, aspectRatio, clipped, foregroundStyle, widgetURL, clipShape } from '@expo/ui/swift-ui/modifiers';
+import { font, foregroundColor, padding, background, cornerRadius, frame, containerBackground, buttonStyle, controlSize, tint, shadow, symbolEffect, border, resizable, aspectRatio, clipped, foregroundStyle, widgetURL, clipShape, disabled } from '@expo/ui/swift-ui/modifiers';
 import { createWidget, createLiveActivity } from 'expo-widgets';
-import { connectStorageEmulator } from 'firebase/storage';
 
 function MyWidgetView(props) {
   'widget';
 
   const isAdmin = props?.isAdmin === true || props?.isAdmin === 'true';
   const isConnected = props?.isConnected === true || props?.isConnected === 'true';
+  const isMuted = props?.isMuted !== false && props?.isMuted !== 'false';
   const isChannelActive = props?.isChannelActive === true || props?.isChannelActive === 'true';
   const activeChannelName = props?.activeChannelName ?? "Umrah Tour";
   const activeChannelImageURL = props?.activeChannelImageURL ?? null;
   const rawSpeakerName = props?.activeSpeakerName;
   const isSpeaking = (props?.isSpeaking === true || props?.isSpeaking === 'true') && !!rawSpeakerName && rawSpeakerName !== "No Active Speaker" && rawSpeakerName !== "No active speaker";
-  const activeSpeakerName = isSpeaking ? rawSpeakerName : "Listening...";
+  const activeSpeakerName = isSpeaking ? rawSpeakerName : "No active speaker";
   const activeSpeakerAvatar = props?.activeSpeakerAvatar ?? null;
   const participantCount = props?.participantCount ?? 0;
   const tripId = props?.tripId ?? null;
@@ -25,10 +25,10 @@ function MyWidgetView(props) {
   return (
     <HStack
       alignment="top"
-      spacing={12}
+      spacing={6}
       modifiers={[
         frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: 'leading' }),
-        padding({ all: 12 }),
+        padding({ horizontal: 4, vertical: 8 }),
         containerBackground('#1A1E21', 'widget'),
       ]}
     >
@@ -37,7 +37,7 @@ function MyWidgetView(props) {
         spacing={0}
         alignment="leading"
         modifiers={[
-          frame({ width: 130 }),
+          frame({ width: 138 }),
           background('#24262A'),
           cornerRadius(14),
           clipped(),
@@ -46,25 +46,32 @@ function MyWidgetView(props) {
         {activeChannelImageURL && activeChannelImageURL !== '' ? (
           <Image
             uiImage={activeChannelImageURL}
-            modifiers={[frame({ width: 130, height: 70 }), resizable(), aspectRatio({ contentMode: 'fill' }), clipped()]}
+            modifiers={[resizable(), aspectRatio({ contentMode: 'fill' }), frame({ width: 138, height: 90 }), clipped()]}
           />
         ) : (
-          <VStack alignment="center" modifiers={[frame({ width: 110, height: 70 }), background('#2E3034')]}>
+          <VStack alignment="center" modifiers={[frame({ width: 138, height: 90 }), background('#2E3034')]}>
             <Image systemName="photo.fill" modifiers={[font({ size: 22 }), foregroundColor('#CBA052')]} />
           </VStack>
         )}
         <VStack spacing={6} alignment="leading" modifiers={[padding({ all: 8 })]}>
-          <Text modifiers={[font({ size: 13, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
+          <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
             {activeChannelName}
           </Text>
           <HStack alignment="center" spacing={4}>
             <HStack
               alignment="center"
-              spacing={3}
-              modifiers={[padding({ horizontal: 6, vertical: 2 }), border({ color: isChannelActive ? '#34C759' : '#6C737F', width: 1 }), background(isChannelActive ? 'rgba(52, 199, 89, 0.15)' : '#23272A'), cornerRadius(16)]}
+              spacing={2}
+              modifiers={[
+                padding({ horizontal: 4, vertical: 3 }),
+                background(isChannelActive ? '#243E2E' : '#24262A'),
+                cornerRadius(4),
+                padding({ all: 0.5 }),
+                background(isChannelActive ? '#34513C' : '#383C40'),
+                cornerRadius(4.5),
+              ]}
             >
-              <Text modifiers={[font({ size: 7 }), foregroundColor(isChannelActive ? '#34C759' : '#6C737F')]}>●</Text>
-              <Text modifiers={[font({ size: 9, weight: 'medium' }), foregroundColor(isChannelActive ? '#34C759' : '#6C737F')]}>
+              <Text modifiers={[font({ size: 5 }), foregroundColor(isChannelActive ? '#34C759' : '#737B87')]}>●</Text>
+              <Text modifiers={[font({ size: 11, weight: 'regular' }), foregroundColor(isChannelActive ? '#34C759' : '#737B87')]}>
               {isChannelActive ? "Online" : "Offline"}
             </Text>
           </HStack>
@@ -97,21 +104,19 @@ function MyWidgetView(props) {
 
     <Spacer />
 
-    <VStack spacing={2} alignment="leading">
-      <Text modifiers={[font({ size: 10 }), foregroundColor('#8E8E93')]}>Active speaker:</Text>
-      <HStack alignment="center" spacing={6}>
-        <ZStack alignment="center">
+    <HStack alignment="center" spacing={6}>
+        {isSpeaking && <ZStack alignment="center">
           <VStack
             modifiers={[
-              frame({ width: 22, height: 22 }),
-              background(isSpeaking ? '#30D158' : '#34C759'),
+              frame({ width: 30, height: 30 }),
+              background('#30D158'),
               clipShape('circle'),
-              ...(isSpeaking ? [shadow({ color: '#30D158', radius: 3 })] : []),
+              shadow({ color: '#30D158', radius: 5 }),
             ]}
           />
           <VStack
             modifiers={[
-              frame({ width: 18, height: 18 }),
+              frame({ width: 27, height: 27 }),
               background('#24262A'),
               clipShape('circle'),
             ]}
@@ -120,63 +125,71 @@ function MyWidgetView(props) {
             <Image
               uiImage={activeSpeakerAvatar}
               modifiers={[
-                frame({ width: 18, height: 18 }),
                 resizable(),
                 aspectRatio({ contentMode: 'fill' }),
+                frame({ width: 27, height: 27 }),
                 clipShape('circle'),
               ]}
             />
           ) : (
             <Text
               modifiers={[
-                font({ size: 9, weight: 'bold' }),
+                font({ size: 12, weight: 'bold' }),
                 foregroundColor('#FFF'),
               ]}
             >
               {activeSpeakerName && activeSpeakerName[0] ? activeSpeakerName[0].toUpperCase() : 'H'}
             </Text>
           )}
-        </ZStack>
-        <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
-          {activeSpeakerName || 'Hesham'}
-        </Text>
+        </ZStack>}
+        <VStack spacing={2} alignment="leading" modifiers={[frame({ maxWidth: Infinity, alignment: 'leading' })]}>
+          <Text modifiers={[font({ size: 10 }), foregroundColor('#8E8E93')]} lineLimit={1}>Active speaker:</Text>
+          <Text modifiers={[font({ size: 15, weight: 'bold' }), foregroundColor('#FFF')]} lineLimit={1}>
+            {activeSpeakerName}
+          </Text>
+        </VStack>
         {isSpeaking && (
           <Image
             systemName="waveform"
             modifiers={[font({ size: 12 }), foregroundColor('#D4AF37')]}
           />
         )}
-      </HStack>
-    </VStack>
+    </HStack>
 
     <Spacer />
 
-    {/* Buttons - side by side to save vertical space */}
-    <VStack spacing={8} modifiers={[frame({ maxWidth: Infinity })]}>
+    {/* Stacked capsule buttons with a thin gold outline. */}
+    <VStack spacing={4} modifiers={[frame({ maxWidth: Infinity })]}>
       <Link
-        destination={`gomusafir://voicechat${tripId ? `?tripId=${tripId}&orgId=${orgId}&isAdmin=${isAdmin}` : ''}`}
+        destination={tripId && orgId
+          ? `gomusafir://voicechat?tripId=${encodeURIComponent(tripId)}&orgId=${encodeURIComponent(orgId)}&autoStart=true`
+          : 'gomusafir://voicechat?autoStart=true'}
         modifiers={[
-          frame({ maxWidth: Infinity, height: 30, width: 130 }),
-          background('#1C1C1E'),
-          cornerRadius(15),
-          clipped(),
+          frame({ height: 36 }),
+          frame({ maxWidth: Infinity }),
         ]}
       >
-        <HStack alignment="center" spacing={6}>
-          <Image systemName="mic" modifiers={[foregroundColor('#FFFFFF'), font({ size: 12 })]} />
+        <HStack alignment="center" spacing={6} modifiers={[
+          frame({ height: 35 }), frame({ maxWidth: Infinity }),
+          background('#1A1E21'), cornerRadius(18),
+          padding({ all: 0.5 }), background('#B99A4A'), cornerRadius(18),
+        ]}>
+          <Image systemName={isConnected && isMuted ? "mic.slash.fill" : "mic.fill"} modifiers={[foregroundColor(isConnected && !isMuted ? '#30D158' : '#FFFFFF'), font({ size: 12 })]} />
           <Text modifiers={[foregroundColor('#FFFFFF'), font({ size: 12, weight: 'bold' })]}>Open Voice</Text>
         </HStack>
       </Link>
       <Link
         destination={`gomusafir://livelocation${tripId ? `?tripId=${tripId}&orgId=${orgId}` : ''}`}
         modifiers={[
-          frame({ maxWidth: Infinity, height: 34, width: 130 }),
-          background('#1C1C1E'),
-          cornerRadius(17),
-          clipped(),
+          frame({ height: 36 }),
+          frame({ maxWidth: Infinity }),
         ]}
       >
-        <HStack alignment="center" spacing={6}>
+        <HStack alignment="center" spacing={6} modifiers={[
+          frame({ height: 35 }), frame({ maxWidth: Infinity }),
+          background('#1A1E21'), cornerRadius(18),
+          padding({ all: 0.5 }), background('#B99A4A'), cornerRadius(18),
+        ]}>
           <Image systemName="map" modifiers={[foregroundColor('#FFFFFF'), font({ size: 12 })]} />
           <Text modifiers={[foregroundColor('#FFFFFF'), font({ size: 12, weight: 'bold' })]}>Open Map</Text>
         </HStack>
@@ -205,9 +218,9 @@ function MyLiveActivityView(props) {
 
   // Speaker resolution: always show a clean speaker name and avatar/monogram
   const rawSpeakerName = props?.activeSpeakerName;
-  const displayName = (rawSpeakerName && rawSpeakerName.trim() !== '' && rawSpeakerName !== 'No Active Speaker')
+  const displayName = (isSpeaking && rawSpeakerName && rawSpeakerName.trim() !== '' && rawSpeakerName !== 'No Active Speaker')
     ? rawSpeakerName.trim()
-    : 'Hesham';
+    : 'No Active Speaker';
   const firstName = displayName.split(' ')[0] || displayName;
   const initial = (firstName[0] || 'H').toUpperCase();
   const activeSpeakerAvatar = props?.activeSpeakerAvatar ?? null;
@@ -230,9 +243,9 @@ function MyLiveActivityView(props) {
         background('#1A1E21'),
       ]}
     >
-      {/* Top Section: Speaker Avatar, Name, and Status */}
+      {/* Keep the idle header clear; show an avatar only while someone speaks. */}
       <HStack alignment="center" spacing={10}>
-        <ZStack alignment="center">
+        {isSpeaking && <ZStack alignment="center">
           <VStack
             modifiers={[
               frame({ width: 44, height: 44 }),
@@ -268,10 +281,10 @@ function MyLiveActivityView(props) {
               {initial}
             </Text>
           )}
-        </ZStack>
+        </ZStack>}
         <VStack alignment="leading" spacing={2}>
           <Text modifiers={[font({ size: 12 }), foregroundColor('#8E8E93')]}>
-            {isSpeaking ? "Active speaker:" : "Voice chat:"}
+            Active speaker:
           </Text>
           <Text modifiers={[font({ size: 18, weight: 'bold' }), foregroundColor('#FFF')]}>
             {displayName}
@@ -308,18 +321,20 @@ function MyLiveActivityView(props) {
         <Text modifiers={[font({ size: 14, weight: 'bold' }), foregroundColor('#FFF')]}>{activeChannelName}</Text>
 
         <HStack
-          spacing={4}
+          spacing={3}
           alignment="center"
           modifiers={[
-            padding({ horizontal: 6, vertical: 2 }),
-            background(isChannelActive ? 'rgba(52, 199, 89, 0.15)' : '#1A1E21'),
-            border({ color: isChannelActive ? '#34C759' : '#6C737F', width: 1 }),
-            cornerRadius(8),
+            padding({ horizontal: 6, vertical: 3 }),
+            background(isChannelActive ? '#243E2E' : '#24262A'),
+            cornerRadius(6),
+            padding({ all: 0.5 }),
+            background(isChannelActive ? '#34513C' : '#383C40'),
+            cornerRadius(6.5),
           ]}
         >
-          <Text modifiers={[font({ size: 8 }), foregroundColor(isChannelActive ? '#34C759' : '#8E8E93')]}>●</Text>
-          <Text modifiers={[font({ size: 10, weight: 'medium' }), foregroundColor(isChannelActive ? '#34C759' : '#8E8E93')]}>
-            {isChannelActive ? "Live" : "Offline"}
+          <Text modifiers={[font({ size: 6 }), foregroundColor(isChannelActive ? '#34C759' : '#737B87')]}>●</Text>
+          <Text modifiers={[font({ size: 11, weight: 'regular' }), foregroundColor(isChannelActive ? '#34C759' : '#737B87')]}>
+            {isChannelActive ? "Online" : "Offline"}
           </Text>
         </HStack>
 
@@ -349,51 +364,44 @@ function MyLiveActivityView(props) {
         </HStack>
       </HStack>
 
-      {/* Bottom Section: Action Buttons */}
-      <HStack spacing={8} alignment="center">
+      {/* Equal-width pill controls fit the compact lock-screen card. */}
+      <HStack spacing={6} alignment="center">
         <Button
-          label={isConnected ? (isAdmin ? "Stop Channel" : "Leave") : "Start Voice"}
           target={isConnected ? (isAdmin ? "stop_channel" : "leave_channel") : "join_channel"}
-          systemImage={isConnected ? "phone.down.fill" : "play.circle"}
-          onPress={() => {
-            return { ...props, isConnected: !isConnected };
-          }}
-          modifiers={[
-            buttonStyle('borderedProminent'),
-            controlSize('regular'),
-            tint('#CBA052'),
-          ]}
-        />
-
+          onPress={() => props}
+          modifiers={[buttonStyle('plain'), frame({ maxWidth: Infinity })]}
+        >
+          <HStack spacing={5} modifiers={[frame({ maxWidth: Infinity }), frame({ height: 46 }), background('#B99A43'), clipShape('capsule')]}>
+            <Image systemName={isConnected ? "phone.down.fill" : "play.circle"} modifiers={[font({ size: 12 }), foregroundColor('#FFF')]} />
+            <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundColor('#FFF')]}>
+              {isConnected ? (isAdmin ? "Stop Voice" : "Leave") : "Start Voice"}
+            </Text>
+          </HStack>
+        </Button>
         <Button
-          label={isMuted ? "Unmute" : "Mute Myself"}
           target="mute_myself"
-          systemImage={isMuted ? "mic.slash.fill" : "mic.slash"}
-          onPress={() => {
-            return { ...props, isMuted: !isMuted };
-          }}
-          modifiers={[
-            buttonStyle('bordered'),
-            controlSize('regular'),
-            tint('#8E8E93'),
-          ]}
-        />
-
-        {isAdmin && (
-          <Button
-            label={isGlobalMuteActive ? "Unmute All" : "Mute All"}
-            target="mute_channel"
-            systemImage="mic.slash"
-            onPress={() => {
-              return { ...props, isGlobalMuteActive: !isGlobalMuteActive };
-            }}
-            modifiers={[
-              buttonStyle('bordered'),
-              controlSize('regular'),
-              tint('#8E8E93'),
-            ]}
-          />
-        )}
+          onPress={() => isConnected ? { ...props, isMuted: !isMuted } : props}
+          modifiers={[buttonStyle('plain'), frame({ maxWidth: Infinity }), disabled(!isConnected || (isGlobalMuteActive && !isAdmin))]}
+        >
+          <HStack spacing={5} modifiers={[frame({ maxWidth: Infinity }), frame({ height: 44 }), background('#202427'), clipShape('capsule'), padding({ all: 1 }), background('#4A525A'), clipShape('capsule')]}>
+            <Image systemName={isMuted || !isConnected ? "mic.slash.fill" : "mic.fill"} modifiers={[font({ size: 12 }), foregroundColor(isConnected ? '#FFF' : '#4A525A')]} />
+            <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundColor(isConnected ? '#FFF' : '#4A525A')]}>
+              {isConnected && isMuted ? "Unmute" : "Mute Myself"}
+            </Text>
+          </HStack>
+        </Button>
+        {isAdmin && <Button
+          target="mute_channel"
+          onPress={() => isConnected ? { ...props, isGlobalMuteActive: !isGlobalMuteActive } : props}
+          modifiers={[buttonStyle('plain'), frame({ maxWidth: Infinity }), disabled(!isConnected)]}
+        >
+          <HStack spacing={5} modifiers={[frame({ maxWidth: Infinity }), frame({ height: 44 }), background('#202427'), clipShape('capsule'), padding({ all: 1 }), background('#4A525A'), clipShape('capsule')]}>
+            <Image systemName="mic.slash" modifiers={[font({ size: 12 }), foregroundColor(isConnected ? '#FFF' : '#4A525A')]} />
+            <Text modifiers={[font({ size: 11, weight: 'semibold' }), foregroundColor(isConnected ? '#FFF' : '#4A525A')]}>
+              {isGlobalMuteActive ? "Unmute All" : "Mute All"}
+            </Text>
+          </HStack>
+        </Button>}
       </HStack>
     </VStack>
   );
@@ -455,6 +463,7 @@ function MyLiveActivityView(props) {
         modifiers={[
           font({ size: 16 }),
           foregroundColor('#D4AF37'),
+          symbolEffect({ effect: 'variableColor', fillStyle: 'iterative', inactiveLayers: 'dim' }),
         ]}
       />
     ) : (

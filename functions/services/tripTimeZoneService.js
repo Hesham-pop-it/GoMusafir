@@ -12,6 +12,22 @@ const cities = cityMapping.map(city => ({
   timeZone: city.timezone,
 }));
 
+// Accept a whole country only when all mapped locations agree on its zone.
+// Multi-zone countries still need a city; never choose their capital as a guess.
+const countryZones = new Map();
+for (const city of cityMapping) {
+  const names = [city.country, city.iso2, city.iso3,
+    ...(city.iso2 === 'US' ? ['United States'] : []),
+    ...(city.iso2 === 'GB' ? ['UK', 'Britain'] : []),
+    ...(city.iso2 === 'AE' ? ['UAE'] : [])];
+  for (const name of names) {
+    if (typeof name !== 'string' || !name) continue;
+    const key = normalize(name);
+    if (!countryZones.has(key)) countryZones.set(key, new Set());
+    countryZones.get(key).add(city.timezone);
+  }
+}
+
 function resolveTripTimeZone(destination) {
   if (typeof destination !== 'string' || !destination.trim() || destination.length > 200) {
     throw new HttpsError('invalid-argument', 'Enter a destination city and country.');
@@ -24,9 +40,10 @@ function resolveTripTimeZone(destination) {
       break;
     }
   }
+  const countryMatches = countryZones.get(query);
   let longest = 0;
-  let matches = [];
-  for (const city of cities) {
+  let matches = countryMatches ? [...countryMatches] : [];
+  for (const city of countryMatches ? [] : cities) {
     for (const name of city.names) {
       if (query !== name && !query.startsWith(name + ' ')) continue;
       const qualifier = query.slice(name.length).trim();
@@ -38,7 +55,9 @@ function resolveTripTimeZone(destination) {
   const zones = [...new Set(matches)];
   if (zones.length !== 1 || !zones[0]) {
     throw new HttpsError('invalid-argument', zones.length > 1
-      ? 'This destination matches different locations. Add its country and state or region.'
+      ? (countryMatches
+        ? 'This country has multiple time zones. Enter the destination city and country.'
+        : 'This destination matches different locations. Add its country and state or region.')
       : 'We could not locate this destination. Enter the city and country (for example, Makkah, Saudi Arabia).');
   }
   try {

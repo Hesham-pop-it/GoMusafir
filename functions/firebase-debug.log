@@ -1,0 +1,65 @@
+[debug] [2026-10-01T17:29:01.382Z] ----------------------------------------------------------------------
+[debug] [2026-10-01T17:29:01.384Z] Command:       /Users/hesham/.nvm/versions/node/v20.20.0/bin/node /opt/homebrew/bin/firebase deploy --only functions
+[debug] [2026-10-01T17:29:01.384Z] CLI Version:   14.0.1
+[debug] [2026-10-01T17:29:01.384Z] Platform:      darwin
+[debug] [2026-10-01T17:29:01.384Z] Node Version:  v20.20.0
+[debug] [2026-10-01T17:29:01.384Z] Time:          Thu Oct 01 2026 22:29:01 GMT+0500 (Pakistan Standard Time)
+[debug] [2026-10-01T17:29:01.384Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-10-01T17:29:01.475Z] Object "" in "firebase.json" has unknown property: {"additionalProperty":"react-native"}
+[debug] [2026-10-01T17:29:01.478Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-10-01T17:29:01.478Z] > authorizing via signed-in user (sspopitnl@gmail.com)
+[debug] [2026-10-01T17:29:01.478Z] [iam] checking project go-musafir for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]
+[debug] [2026-10-01T17:29:01.479Z] No OAuth tokens found
+[debug] [2026-10-01T17:29:01.479Z] No OAuth tokens found
+[debug] [2026-10-01T17:29:01.479Z] > refreshing access token with scopes: []
+[debug] [2026-10-01T17:29:01.480Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-10-01T17:29:01.480Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-01T17:29:01.897Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-10-01T17:29:01.897Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-01T17:29:01.905Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir:testIamPermissions [none]
+[debug] [2026-10-01T17:29:01.906Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir:testIamPermissions x-goog-quota-user=projects/go-musafir
+[debug] [2026-10-01T17:29:01.906Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2026-10-01T17:29:03.592Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir:testIamPermissions 200
+[debug] [2026-10-01T17:29:03.592Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[debug] [2026-10-01T17:29:03.593Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:03.594Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:03.594Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/go-musafir/serviceAccounts/go-musafir@appspot.gserviceaccount.com:testIamPermissions [none]
+[debug] [2026-10-01T17:29:03.594Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/go-musafir/serviceAccounts/go-musafir@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-10-01T17:29:04.336Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/go-musafir/serviceAccounts/go-musafir@appspot.gserviceaccount.com:testIamPermissions 200
+[debug] [2026-10-01T17:29:04.337Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/go-musafir/serviceAccounts/go-musafir@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[info] 
+[info] === Deploying to 'go-musafir'...
+[info] 
+[info] i  deploying functions 
+[debug] [2026-10-01T17:29:04.339Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.339Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.339Z] >>> [apiv2][query] GET https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir [none]
+[debug] [2026-10-01T17:29:04.698Z] <<< [apiv2][status] GET https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir 200
+[debug] [2026-10-01T17:29:04.699Z] <<< [apiv2][body] GET https://cloudresourcemanager.googleapis.com/v1/projects/go-musafir {"projectNumber":"1034454374081","projectId":"go-musafir","lifecycleState":"ACTIVE","name":"GoMusafir","labels":{"firebase":"enabled","firebase-core":"disabled"},"createTime":"2026-01-28T15:56:58.926098Z"}
+[info] i  functions: preparing codebase default for deployment 
+[info] i  functions: ensuring required API cloudfunctions.googleapis.com is enabled... 
+[debug] [2026-10-01T17:29:04.701Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.701Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.701Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.701Z] Checked if tokens are valid: true, expires at: 1790879340897
+[info] i  functions: ensuring required API cloudbuild.googleapis.com is enabled... 
+[debug] [2026-10-01T17:29:04.702Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.702Z] Checked if tokens are valid: true, expires at: 1790879340897
+[info] i  artifactregistry: ensuring required API artifactregistry.googleapis.com is enabled... 
+[debug] [2026-10-01T17:29:04.702Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.702Z] Checked if tokens are valid: true, expires at: 1790879340897
+[debug] [2026-10-01T17:29:04.703Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudfunctions.googleapis.com [none]
+[debug] [2026-10-01T17:29:04.703Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudfunctions.googleapis.com x-goog-quota-user=projects/go-musafir
+[debug] [2026-10-01T17:29:04.705Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/runtimeconfig.googleapis.com [none]
+[debug] [2026-10-01T17:29:04.706Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/runtimeconfig.googleapis.com x-goog-quota-user=projects/go-musafir
+[debug] [2026-10-01T17:29:04.707Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudbuild.googleapis.com [none]
+[debug] [2026-10-01T17:29:04.707Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudbuild.googleapis.com x-goog-quota-user=projects/go-musafir
+[debug] [2026-10-01T17:29:04.709Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/artifactregistry.googleapis.com [none]
+[debug] [2026-10-01T17:29:04.709Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/artifactregistry.googleapis.com x-goog-quota-user=projects/go-musafir
+[debug] [2026-10-01T17:29:06.622Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudfunctions.googleapis.com 200
+[debug] [2026-10-01T17:29:06.622Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/cloudfunctions.googleapis.com [omitted]
+[info] ✔  functions: required API cloudfunctions.googleapis.com is enabled 
+[debug] [2026-10-01T17:29:06.627Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/artifactregistry.googleapis.com 200
+[debug] [2026-10-01T17:29:06.628Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/go-musafir/services/artifactregistry.googleapis.com [omitted]
+[info] ✔  artifactregistry: required API artifactregistry.googleapis.com is enabled 

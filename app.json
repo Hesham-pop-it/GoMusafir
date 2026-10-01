@@ -195,19 +195,14 @@
           "widgets": [
             {
               "name": "MyWidget",
-              "displayName": "My Widget",
-              "description": "A sample home screen widget",
+              "displayName": "GoMusāfir Journey",
+              "description": "Your trip, active voice chat and live map",
               "ios": {
                 "supportedFamilies": [
                   "systemMedium"
                 ],
                 "contentMarginsDisabled": true
               }
-            },
-            {
-              "name": "MyLiveActivity",
-              "displayName": "Voice Activity",
-              "description": "Shows live voice chat status and controls"
             }
           ]
         }

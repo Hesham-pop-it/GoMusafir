@@ -6,7 +6,8 @@ import { registerGlobals } from '@livekit/react-native';
 registerGlobals();
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Text, TextInput, Alert, AppState, ActivityIndicator } from 'react-native';
+import { View, StyleSheet, Text, TextInput, Alert, AppState, ActivityIndicator, Platform } from 'react-native';
+import { journeyWidget } from './src/services/journeyWidgetService';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreenNative from 'expo-splash-screen';
 import * as Network from 'expo-network';
@@ -55,6 +56,18 @@ import {
 SplashScreenNative.preventAutoHideAsync();
 
 export default function App() {
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const refresh = () => journeyWidget.refresh().catch(error => {
+      console.warn('[Widget] Timeline recovery failed:', error);
+    });
+    refresh();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') refresh();
+    });
+    return () => subscription.remove();
+  }, []);
+
   const [appIsReady, setAppIsReady] = useState(false);
   const [showSplash, setShowSplash] = useState(true);
   const [sessionResolved, setSessionResolved] = useState(false);
