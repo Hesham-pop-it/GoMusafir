@@ -161,7 +161,11 @@ exports.completeParticipantEnrollment = onCall({ region: 'europe-west1' }, async
   }
   const digest = crypto.createHash('sha256').update(`${challengeId}:${code}`).digest('hex');
   const result = await db.ref(`enrollment_challenges/${challengeId}`).transaction(current => {
-    if (!current || current.used || current.expires_at <= Date.now() || current.attempts >= 5) return;
+    // A cold RTDB cache supplies null even when the challenge exists remotely.
+    // Propose the unchanged null so Firebase checks the server and retries;
+    // returning undefined here aborts before the stored code can be checked.
+    if (current === null) return null;
+    if (current.used || current.expires_at <= Date.now() || current.attempts >= 5) return;
     return { ...current, attempts: current.attempts + 1, used: current.digest === digest };
   });
   const challenge = result.snapshot.val();

@@ -1,39 +1,31 @@
 const assert = require('node:assert/strict');
 const project = process.env.GCLOUD_PROJECT || 'demo-gomusafir';
 const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST;
-const storeHost = process.env.FIRESTORE_EMULATOR_HOST;
 const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
-if (!authHost || !storeHost || !storageHost || !project.startsWith('demo-')) throw new Error('Demo emulators required');
+if (!authHost || !storageHost || !project.startsWith('demo-')) throw new Error('Demo emulators required');
 async function main() {
   const signup = await fetch(`http://${authHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=fake`, {
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:`storage-${Date.now()}@example.test`,password:'test-password',returnSecureToken:true}),
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: `storage-${Date.now()}@example.test`, password: 'test-password', returnSecureToken: true }),
   });
-  const {localId:uid,idToken:token}=await signup.json();assert.ok(uid && token);
-  const mirror = async (expiry, cutoff=0) => {
-    const response = await fetch(`http://${storeHost}/v1/projects/${project}/databases/(default)/documents/app_access/${uid}`, {
-      method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer owner'},body:JSON.stringify({fields:{
-        staff:{booleanValue:false},expires_at:{integerValue:String(expiry)},revoked_before:{integerValue:String(cutoff)},
-        trips:{mapValue:{fields:{t:{integerValue:String(expiry)}}}},
-      }}),
-    });assert.equal(response.status,200,await response.text());
-  };
-  let checks=0;
-  const upload=async (trip,expected) => {
-    const response=await fetch(`http://${storageHost}/v0/b/${project}.appspot.com/o?uploadType=media&name=${encodeURIComponent(`chat_media/${trip}/test.jpg`)}`,{
-      method:'POST',headers:{Authorization:`Firebase ${token}`,'Content-Type':'image/jpeg'},body:'test',
+  const { localId: uid, idToken: token } = await signup.json();
+  assert.ok(uid && token);
+  let checks = 0;
+  for (const name of [`users/${uid}/photo.jpg`, 'chat_media/t/test.jpg', 'participant_avatars/test.jpg', 'trips/test.jpg']) {
+    const url = `http://${storageHost}/v0/b/${project}.appspot.com/o?uploadType=media&name=${encodeURIComponent(name)}`;
+    for (const authorization of [`Firebase ${token}`, null]) {
+      const headers = { 'Content-Type': 'image/jpeg' };
+      if (authorization) headers.Authorization = authorization;
+      const response = await fetch(url, { method: 'POST', headers, body: 'test' });
+      assert.equal(response.status, 403, await response.text()); checks++;
+    }
+    const seed = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'image/jpeg' }, body: 'test' });
+    assert.equal(seed.status, 200, await seed.text());
+    const read = await fetch(`http://${storageHost}/v0/b/${project}.appspot.com/o/${encodeURIComponent(name)}?alt=media`, {
+      headers: { Authorization: `Firebase ${token}` },
     });
-    assert.equal(response.status,expected,await response.text());checks++;
-  };
-  await mirror(Date.now()+60000);
-  await upload('t',200);
-  await upload('other',403);
-  await mirror(Date.now()-1);
-  await upload('t',403);
-  await mirror(Date.now()+60000,Math.floor(Date.now()/1000)+1);
-  await upload('t',403);
-  const tamper=await fetch(`http://${storeHost}/v1/projects/${project}/databases/(default)/documents/app_access/${uid}`,{
-    method:'PATCH',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({fields:{staff:{booleanValue:true}}}),
-  });assert.equal(tamper.status,403);checks++;
-  console.log(`PASS: ${checks} Storage/Firestore checks for valid membership, expiry, replay and mirror tampering.`);
+    assert.equal(read.status, name.startsWith('trips/') ? 200 : 403, await read.text()); checks++;
+  }
+  console.log(`PASS: ${checks} Storage checks: direct writes denied, private reads denied, trip photos public.`);
 }
-main().catch(e=>{console.error(e);process.exitCode=1;});
+main().catch(error => { console.error(error); process.exitCode = 1; });

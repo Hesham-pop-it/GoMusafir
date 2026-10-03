@@ -302,24 +302,13 @@ const ParticipantsScreen = ({ navigation }) => {
             
             if (result.data) {
                 setSelectedParticipant(prev => {
-                    const newData = { ...prev };
-                    
-                    // Decrypt fields if they are encrypted
-                    const decryptedEmail = ChatEncryption.decrypt(result.data.email);
-                    const decryptedPhone = ChatEncryption.decrypt(result.data.phone);
-                    const decryptedName = ChatEncryption.decrypt(result.data.fullName);
+                    if (!prev || prev.id !== participant.id) return prev;
+                    const newData = { ...prev, ...result.data.visibility,
+                        email: result.data.email, phone: result.data.phone,
+                        rawProfile: { ...prev.rawProfile, ...result.data.profile },
+                    };
+                    if (result.data.fullName) newData.name = result.data.fullName;
 
-                    // Update if we got valid plaintext results
-                    if (decryptedEmail && decryptedEmail.includes('@')) {
-                        newData.email = decryptedEmail;
-                    }
-                    if (decryptedPhone && decryptedPhone.length > 5) {
-                        newData.phone = decryptedPhone;
-                    }
-                    if (decryptedName && !decryptedName.includes('*')) {
-                        newData.name = decryptedName;
-                    }
-                    
                     return newData;
                 });
             }

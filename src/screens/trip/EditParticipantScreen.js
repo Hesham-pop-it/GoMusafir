@@ -26,9 +26,9 @@ import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import { functions, storage } from '../../config/firebase';
+import { functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { uploadTripMedia } from '../../utils/uploadTripMedia';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const EditIcon = () => (
@@ -356,32 +356,13 @@ const EditParticipantScreen = () => {
         }
 
         setIsSaving(true);
-        let blob = null;
         try {
             let finalPhotoUrl = avatarUri;
 
             if (avatarUri && (avatarUri.startsWith('file://') || avatarUri.startsWith('content://'))) {
-                // Upload to Firebase Storage
-                blob = await new Promise((resolve, reject) => {
-                    const xhr = new XMLHttpRequest();
-                    xhr.onload = function () {
-                        resolve(xhr.response);
-                    };
-                    xhr.onerror = function (e) {
-                        console.log("[EditParticipantScreen] XHR failed for URI:", avatarUri, e);
-                        reject(new TypeError("Network request failed"));
-                    };
-                    xhr.responseType = "blob";
-                    xhr.open("GET", avatarUri, true);
-                    xhr.send(null);
+                finalPhotoUrl = await uploadTripMedia(avatarUri, {
+                    tripId, purpose: 'avatar', targetUid: participant.id || participant.uid, contentType: 'image/jpeg',
                 });
-                
-                // Create a unique filename
-                const filename = `participant_avatars/${participant.id || participant.uid}_${Date.now()}.jpg`;
-                const imageRef = storageRef(storage, filename);
-                
-                await uploadBytes(imageRef, blob);
-                finalPhotoUrl = await getDownloadURL(imageRef);
             }
 
             const updateProfile = httpsCallable(functions, 'updateParticipantProfile');
@@ -399,13 +380,6 @@ const EditParticipantScreen = () => {
             console.error("Error updating participant profile:", error);
             Alert.alert("Error", "Failed to update participant. " + error.message);
         } finally {
-            if (blob) {
-                try {
-                    blob.close();
-                } catch (e) {
-                    console.log("[EditParticipantScreen] Error closing blob:", e);
-                }
-            }
             setIsSaving(false);
         }
     };

@@ -19,7 +19,6 @@ import { StatusBar } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useIsFocused } from '@react-navigation/native';
 import { setAudioModeAsync } from 'expo-audio';
-import { useEventListener } from 'expo';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as WebBrowser from 'expo-web-browser';
 import { MaterialIcons, Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -248,21 +247,12 @@ const safePause = (p) => {
     }
 };
 
-const safeReplay = (p) => {
-    try {
-        if (p && typeof p.replay === 'function') {
-            p.replay();
-        }
-    } catch (e) {
-        // Shared object might be deallocated during navigation/unmount
-    }
-};
-
 const WelcomeScreen = ({ navigation }) => {
     const isMountedRef = React.useRef(true);
     const player = useVideoPlayer(require('../../../assets/Login_Animation_1080p.mp4'), (p) => {
         try {
             p.muted = true;
+            // Native looping owns replay; a second JS seek interrupts playback.
             p.loop = true;
             p.audioMixingMode = 'mixWithOthers';
             safePlay(p);
@@ -316,13 +306,6 @@ const WelcomeScreen = ({ navigation }) => {
             subscription.remove();
         };
     }, [isFocused, player]);
-
-    useEventListener(player, 'playToEnd', () => {
-        if (!isMountedRef.current) return;
-        safeReplay(player);
-        safePlay(player);
-    });
-
 
     const [modalVisible, setModalVisible] = React.useState(false);
     const [joinMethodVisible, setJoinMethodVisible] = React.useState(false);

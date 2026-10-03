@@ -38,7 +38,7 @@ exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) 
   // users join through the invitation/email-code enrollment endpoint instead.
   try {
     // Verify staff from Auth plus organization membership without depending on
-    // participant reconciliation/Firestore availability during staff sign-in.
+    // participant reconciliation availability during staff sign-in.
     const identityAccess = await calculateAccess(user.uid);
     const access = identityAccess.staff ? identityAccess : await refreshAccess(user.uid);
     if (!access.staff && !access.expires_at && (access.participant || user.customClaims?.role !== 'pending')) {
@@ -340,7 +340,6 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
 
   // 3. Delete from Auth (Admin SDK)
   await db.ref(`app_access/${targetUid}`).remove();
-  await admin.firestore().doc(`app_access/${targetUid}`).delete();
   await auth.deleteUser(targetUid);
 
   // 4. Delete from DB
@@ -356,7 +355,8 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
 });
 
 // ── Delete My Account (Bypasses recent login requirement by using Admin SDK) ───
-exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => {
+// Deletion requires a valid identity, even when the user has no active trip.
+exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
@@ -365,53 +365,62 @@ exports.deleteMyAccount = onCall({ region: "europe-west1" }, async (request) => 
   const orgId = request.auth.token.orgId;
   const userEmail = request.auth.token.email;
 
-  // 1. If admin, mark org for deletion (soft delete)
-  if (role === 'admin' && orgId) {
-    await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
-    await writeAuditLog(orgId, {
-      action: "ORG_DELETED_BY_OWNER",
-      byUid: uid,
-      targetId: orgId,
-    });
-  }
-
-  // 2. Cleanup Stripe Customer
-  let stripeCustomerId = null;
-  const userStripeSnap = await db.ref(`users/${uid}/stripe_customer_id`).get();
-  if (userStripeSnap.exists()) {
-    stripeCustomerId = userStripeSnap.val();
-  } else if (orgId) {
-    const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
-    if (orgStripeSnap.exists()) {
-      stripeCustomerId = orgStripeSnap.val();
+  let stage = "organization";
+  try {
+    // 1. If admin, mark org for deletion (soft delete)
+    if (role === 'admin' && orgId) {
+      await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+      await writeAuditLog(orgId, {
+        action: "ORG_DELETED_BY_OWNER",
+        byUid: uid,
+        targetId: orgId,
+      });
     }
-  }
-  await deleteStripeCustomer(stripeCustomerId, userEmail, orgId);
 
-  // 3. Cleanup user data
-  const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
-  const updates = {
-    [`users/${uid}`]: null,
-    [`otp_codes/${uid}`]: null,
-  };
-
-  if (joinedTripsSnap.exists()) {
-    const joinedTrips = joinedTripsSnap.val();
-    Object.keys(joinedTrips).forEach(tid => {
-      updates[`trips_participants/${tid}/${uid}`] = null;
-      const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
-      if (tripOrgId) {
-        updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
+    stage = "billing";
+    // 2. Cleanup Stripe Customer
+    let stripeCustomerId = null;
+    const userStripeSnap = await db.ref(`users/${uid}/stripe_customer_id`).get();
+    if (userStripeSnap.exists()) {
+      stripeCustomerId = userStripeSnap.val();
+    } else if (orgId) {
+      const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
+      if (orgStripeSnap.exists()) {
+        stripeCustomerId = orgStripeSnap.val();
       }
-    });
-  }
-  
-  await db.ref().update(updates);
+    }
+    await deleteStripeCustomer(stripeCustomerId, userEmail, orgId);
 
-  // 4. Delete from Auth (Admin SDK)
-  await db.ref(`app_access/${uid}`).remove();
-  await admin.firestore().doc(`app_access/${uid}`).delete();
-  await auth.deleteUser(uid);
+    stage = "profile-read";
+    // 3. Cleanup user data
+    const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
+    const updates = {
+      [`users/${uid}`]: null,
+      [`otp_codes/${uid}`]: null,
+    };
+
+    if (joinedTripsSnap.exists()) {
+      const joinedTrips = joinedTripsSnap.val();
+      Object.keys(joinedTrips).forEach(tid => {
+        updates[`trips_participants/${tid}/${uid}`] = null;
+        const tripOrgId = joinedTrips[tid]?.org_id || joinedTrips[tid]?.orgId;
+        if (tripOrgId) {
+          updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
+        }
+      });
+    }
+
+    stage = "profile-cleanup";
+    updates[`app_access/${uid}`] = null;
+    await db.ref().update(updates);
+
+    stage = "auth-delete";
+    await auth.deleteUser(uid);
+  } catch (error) {
+    console.error("Account deletion failed", { uid, stage, code: error.code, message: error.message });
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError("internal", "We couldn't finish deleting your account. Please try again. If this continues, contact support.");
+  }
 
   return { success: true };
 });

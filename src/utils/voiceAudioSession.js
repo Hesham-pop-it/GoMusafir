@@ -10,6 +10,11 @@ export function configureIOSVoiceAudio() {
     });
 }
 
+export async function restoreIOSVoiceAudio() {
+    await configureIOSVoiceAudio();
+    await AudioSession.startAudioSession();
+}
+
 export function installVoiceMicrophoneConfiguration(mediaDevices, configure = configureIOSVoiceAudio) {
     const getUserMedia = mediaDevices.getUserMedia.bind(mediaDevices);
     mediaDevices.getUserMedia = async constraints => {

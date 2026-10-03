@@ -47,6 +47,7 @@ const BusinessVerificationScreen = ({ route }) => {
     const [enrollmentChallenge, setEnrollmentChallenge] = useState(route?.params?.enrollmentChallenge);
     const [otp, setOtp] = useState('');
     const [isError, setIsError] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [resendLoading, setResendLoading] = useState(false);
     const [resendTimer, setResendTimer] = useState(route?.params?.resendDelay ?? 60);
@@ -126,6 +127,7 @@ const BusinessVerificationScreen = ({ route }) => {
             verifyingRef.current = true;
             setIsLoading(true);
             setIsError(false);
+            let verificationCompleted = enrollmentAuthenticated.current;
             try {
                 if (enrollmentChallenge) {
                     if (!enrollmentAuthenticated.current) {
@@ -136,6 +138,7 @@ const BusinessVerificationScreen = ({ route }) => {
                         await signInWithCustomToken(auth, complete.data.customToken);
                         enrollmentAuthenticated.current = true;
                     }
+                    verificationCompleted = true;
                     const joined = await completeTripJoin({
                         inviteCode: route.params.invitationCode, voiceConsent: true, locationConsent: true,
                     });
@@ -149,6 +152,7 @@ const BusinessVerificationScreen = ({ route }) => {
                     uid: userUid,
                     otp
                 });
+                verificationCompleted = true;
 
                 // Use merged params (route or recovered)
                 const activeParams = { ...recoveredParams, ...route?.params };
@@ -244,7 +248,11 @@ const BusinessVerificationScreen = ({ route }) => {
                         [{ text: "OK", onPress: () => navigation.navigate('Welcome') }]
                     );
                 } else {
-                    // Standard OTP mismatch or network error
+                    // Joining, network, and expired-code errors must not be
+                    // presented as a mismatch with the emailed code.
+                    setErrorMessage(verificationCompleted
+                        ? (error.message || 'Unable to finish joining. Please try again.')
+                        : (error.message || 'Unable to verify your code. Please try again.'));
                     setIsError(true);
                 }
             } finally {
@@ -263,7 +271,9 @@ const BusinessVerificationScreen = ({ route }) => {
                     email: userEmail, inviteCode: route.params.invitationCode,
                 });
                 setEnrollmentChallenge(result.data.challengeId);
+                navigation.setParams({ enrollmentChallenge: result.data.challengeId });
                 setOtp('');
+                setIsError(false);
                 setResendTimer(60);
                 return;
             }
@@ -274,6 +284,8 @@ const BusinessVerificationScreen = ({ route }) => {
                 isMobile: true
             });
             Alert.alert("Code Sent", "A new verification code has been sent to your business email.");
+            setOtp('');
+            setIsError(false);
             setResendTimer(60);
         } catch (error) {
             console.warn("OTP Resend Error:", error);
@@ -372,7 +384,7 @@ const BusinessVerificationScreen = ({ route }) => {
                                 caretHidden={true}
                                 autoFocus={true} // Boost focus on load
                             />
-                            {isError && <Text style={styles.errorText}>Wrong code</Text>}
+                            {isError && <Text style={styles.errorText}>{errorMessage}</Text>}
                         </Pressable>
 
                     </ScrollView>

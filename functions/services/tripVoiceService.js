@@ -12,21 +12,14 @@ const { guardedTransaction } = require('./guardedTransaction');
 
 async function updateState(orgId, tripId, change = state => state) {
   const trip = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
-  let changeError;
-  const result = await accessRef(orgId, tripId).transaction(previous => {
-    // RTDB may rerun this callback on a later socket event. Throwing there
-    // escapes the transaction promise and leaves the callable waiting until
-    // its deadline. Abort first, then reject in the awaiting request context.
-    changeError = undefined;
-    try {
-      const now = Date.now();
-      return change(settle(previous, trip, now), now);
-    } catch (error) {
-      changeError = error;
-      return undefined;
-    }
+  // Keep the server state cached while validating the transaction. A one-off
+  // get() does not prevent a synthetic null here, which makes participant
+  // joins reject an active room as "Channel not started" before any retry.
+  // The guard also safely propagates errors from asynchronous SDK retries.
+  const result = await guardedTransaction(accessRef(orgId, tripId), previous => {
+    const now = Date.now();
+    return change(settle(previous, trip, now), now);
   });
-  if (changeError) throw changeError;
   return result.snapshot.val();
 }
 

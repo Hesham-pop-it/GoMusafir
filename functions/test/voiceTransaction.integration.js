@@ -1,4 +1,4 @@
-// Exercise the actual RTDB SDK retry path; never connect this test to production.
+// Exercise actual RTDB SDK cold-cache validation; never connect to production.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
@@ -21,7 +21,11 @@ async function main() {
     vm.runInNewContext(fs.readFileSync(require.resolve('../services/tripVoiceService'), 'utf8'), {
       module, exports: module.exports, Date, console, process,
       require: name => name === '../admin' ? { db: client.database() } :
-        name === 'livekit-server-sdk' ? { RoomServiceClient: class { async deleteRoom() {} } } :
+        name === 'livekit-server-sdk' ? { RoomServiceClient: class {
+          async deleteRoom() {}
+          async listRooms() { return []; }
+          async listParticipants() { return []; }
+        } } :
         name === './guardedTransaction' ? require('../services/guardedTransaction') :
         name === './tripFeatureState' ? require('../services/tripFeatureState') : require(name),
     });
@@ -39,9 +43,9 @@ async function main() {
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Transaction hung')), 5000); }),
       ]), error => error === expected);
     } finally { clearTimeout(timer); }
-    assert.ok(attempts >= 2, 'Must exercise a real SDK retry, not just the initial callback');
+    assert.ok(attempts >= 1, 'Must validate the real server state');
     assert.equal((await seed.database().ref(`${ledger}/session/id`).get()).val(), 'ending-session');
-    console.log(`PASS: real SDK retried ${attempts} times, rejected correctly, and preserved the session`);
+    console.log('PASS: cold SDK reads the ending session and rejects without hanging');
     await seed.database().ref(ledger).set({ preTripVoiceUsedMs: 10228, session: {
       id: 'ending-session', status: 'ending', roomName: 'test-room', requestedAt: now,
       requestedBy: 'host', endReason: 'host_stopped',
@@ -60,6 +64,13 @@ async function main() {
     await module.exports.handleRoomEvent({ event: 'participant_joined', createdAt: Date.now() / 1000,
       room: { name: restarted.session.roomName, sid: 'new-room' }, participant: { identity: 'host' } });
     assert.equal((await seed.database().ref(`${ledger}/session/status`).get()).val(), 'active');
+    // reserveSession has already performed get() calls, but without a retained
+    // listener its transaction still sees null on a fresh SDK cache.
+    const participant = await module.exports.reserveSession('retry-test', 'trip', false, 'participant');
+    assert.equal(participant.session.id, restarted.session.id);
+    assert.equal(participant.session.roomName, restarted.session.roomName);
+    assert.equal(participant.session.status, 'active');
+    console.log('PASS: participant joins the active admin session on a cold SDK cache');
     await module.exports.stopSession('retry-test', 'trip');
     assert.equal((await seed.database().ref(`${ledger}/session`).get()).val(), null);
     console.log('PASS: restart, webhook activation, and stop complete on cold SDK caches');

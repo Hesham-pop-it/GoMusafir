@@ -24,10 +24,11 @@ test('central states switch at the exact 24-hour/start/end boundaries', () => {
   assert.equal(featureState(trip, END).voiceAccess, 'EXPIRED');
 });
 
-function fixture() {
+function fixture({ coldCache = false } = {}) {
   let now = MAY, sequence = 0, failDelete = false, failList = false, failedWritePath = null, retryValue;
   const data = { orgs: { o: { trips: { t: structuredClone(trip) }, staff: { host: 'admin', other: 'co-host', manager: 'manager' } } } };
   const rooms = new Map(), deleted = [], notifications = [], queued = [];
+  const listeners = new Set();
   const read = path => path.split('/').filter(Boolean).reduce((value, key) => value?.[key], data) ?? null;
   const write = (path, value) => {
     const parts = path.split('/').filter(Boolean); let at = data;
@@ -36,13 +37,18 @@ function fixture() {
   };
   const snap = value => ({ val: () => structuredClone(value), exists: () => value != null });
   const db = { ref: (path = '') => ({
-    on: (_, listener) => listener(snap(read(path))),
-    off: () => {},
+    on: (_, listener) => { listeners.add(path); listener(snap(read(path))); },
+    off: () => { listeners.delete(path); },
     get: async () => snap(read(path)),
     set: async value => write(path, value),
     transaction: async callback => {
       if (path === failedWritePath) { failedWritePath = null; throw new Error('Interrupted status write'); }
       let next;
+      if (coldCache && !listeners.has(path)) {
+        next = callback(null);
+        // Returning undefined aborts without checking the existing server data.
+        if (next === undefined) return { committed: false, snapshot: snap(null) };
+      }
       assert.doesNotThrow(() => { next = callback(structuredClone(read(path))); },
         'RTDB update callbacks must abort, not throw into the SDK event loop');
       if (retryValue !== undefined && next !== undefined) {
@@ -101,6 +107,7 @@ function fixture() {
   const refresh = () => service.refreshFeatures('o', 't');
   const stop = () => service.stopSession('o', 't');
   return { service, api, state, reserve, join, refresh, stop, rooms, deleted, notifications, queued, read, write,
+    listeners,
     setNow: value => now = value, advance: value => now += value,
     failDelete: value => failDelete = value, failList: value => failList = value,
     failWriteOnce: path => failedWritePath = path,
@@ -108,6 +115,27 @@ function fixture() {
     task: () => api.checkTripVoiceAccess({ data: { orgId: 'o', tripId: 't', dueAt: state().nextCheckAt, sessionId: state().session?.id || null } }),
   };
 }
+test('participant joins the active admin room with an empty SDK cache', async () => {
+  const f = fixture({ coldCache: true });
+  await f.reserve('host'); await f.join('host');
+  const roomName = f.state().session.roomName;
+  f.advance(2000);
+  const joined = await f.reserve('participant');
+  assert.equal(joined.session.roomName, roomName);
+  assert.equal(joined.session.status, 'active');
+  assert.equal(joined.preTripVoiceUsedSeconds, 2);
+  assert.equal(f.listeners.size, 0);
+});
+test('participant cannot start an absent or pending room with an empty SDK cache', async () => {
+  const f = fixture({ coldCache: true });
+  await assert.rejects(f.reserve('participant'), { code: 'failed-precondition', message: 'Channel not started.' });
+  await f.reserve('host');
+  const roomName = f.state().session.roomName;
+  await assert.rejects(f.reserve('participant'), { code: 'failed-precondition', message: 'Channel not started.' });
+  assert.equal(f.state().session.roomName, roomName);
+  assert.equal(f.state().session.status, 'pending');
+  assert.equal(f.listeners.size, 0);
+});
 
 test('viewing or reserving Voice consumes nothing before a real media connection', async () => {
   const f = fixture(); await f.refresh(); await f.reserve(); f.advance(45000); await f.refresh();

@@ -1,8 +1,8 @@
-import { fetchAppAccess } from '../../utils/participantAccess';
+import { uploadJoinPhoto } from '../../utils/uploadJoinPhoto';
 import { beginEnrollment } from '../../utils/enrollmentSession';
 import { completeTripJoin, prepareTripJoinSession } from '../../utils/completeTripJoin';
 import { invitationVerificationParams } from '../../utils/invitationOnboarding';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
     Text,
@@ -33,11 +33,10 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
 import GradientBorderButton from '../../components/GradientBorderButton';
-import { auth, functions, database, storage } from '../../config/firebase';
+import { auth, functions, database } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, fetchSignInMethodsForEmail, signOut } from 'firebase/auth';
 import { ref as dbRef, set, remove, update, serverTimestamp, get } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { safeSignOut, hasValidActiveTrip } from '../../utils/authUtils';
 
 
@@ -820,6 +819,24 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
 
     // Photo source modal state
     const [showSourceModal, setShowSourceModal] = useState(false);
+    const pendingPhotoSource = useRef(null);
+    const photoPickerBusy = useRef(false);
+    const photoScreenMounted = useRef(true);
+
+    useEffect(() => {
+        photoScreenMounted.current = true;
+        return () => {
+            photoScreenMounted.current = false;
+            pendingPhotoSource.current = null;
+        };
+    }, []);
+
+    // Android removes the modal on render; iOS signals native dismissal via onDismiss.
+    useEffect(() => {
+        if (!showSourceModal && Platform.OS !== 'ios') {
+            void launchPendingPhotoPicker();
+        }
+    }, [showSourceModal]);
 
     // Image cropping states
     const [cropModalVisible, setCropModalVisible] = useState(false);
@@ -882,6 +899,7 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
     ).current;
 
     const openCropper = (uri, width, height) => {
+        if (!photoScreenMounted.current) return;
         const w = Number(width) || CROP_SIZE;
         const h = Number(height) || CROP_SIZE;
         
@@ -971,51 +989,57 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
         }
     };
 
-    const takePhotoFromCamera = async () => {
-        setShowSourceModal(false);
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission Needed', 'Please allow camera access to take a photo.');
-            return;
-        }
+    const launchPendingPhotoPicker = async () => {
+        const source = pendingPhotoSource.current;
+        if (!source || !photoScreenMounted.current) return;
+        pendingPhotoSource.current = null;
 
-        let result = await ImagePicker.launchCameraAsync({
-            allowsEditing: false,
-            quality: 1,
-        });
+        try {
+            const permission = source === 'camera'
+                ? await ImagePicker.requestCameraPermissionsAsync()
+                : await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!photoScreenMounted.current) return;
+            if (permission.status !== 'granted') {
+                Alert.alert('Permission Needed', source === 'camera'
+                    ? 'Please allow camera access to take a photo.'
+                    : 'Please allow access to your gallery to upload a photo.');
+                return;
+            }
 
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-            const asset = result.assets[0];
-            setTimeout(() => {
-                resizeAndOpen(asset.uri, asset.width, asset.height);
-            }, 500);
-        }
-    };
+            const options = { mediaTypes: ['images'], allowsEditing: false, quality: 1 };
+            const result = source === 'camera'
+                ? await ImagePicker.launchCameraAsync(options)
+                : await ImagePicker.launchImageLibraryAsync(options);
+            const asset = result.assets?.[0];
+            if (result.canceled || !asset?.uri || !photoScreenMounted.current) return;
 
-    const pickImageFromGallery = async () => {
-        setShowSourceModal(false);
-        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (status !== 'granted') {
-            Alert.alert('Permission Needed', 'Please allow access to your gallery to upload a photo.');
-            return;
-        }
-
-        let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
-            allowsEditing: false,
-            quality: 1,
-        });
-
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-            const asset = result.assets[0];
-            setTimeout(() => {
-                resizeAndOpen(asset.uri, asset.width, asset.height);
-            }, 500);
+            // Let the native picker finish dismissing before presenting the cropper.
+            await new Promise(resolve => setTimeout(resolve, 500));
+            if (photoScreenMounted.current) {
+                await resizeAndOpen(asset.uri, asset.width, asset.height);
+            }
+        } catch (pickerError) {
+            console.warn('Could not select profile photo:', pickerError);
+            if (photoScreenMounted.current) {
+                Alert.alert('Photo unavailable', 'Could not open this photo. Please try again or choose another photo.');
+            }
+        } finally {
+            photoPickerBusy.current = false;
         }
     };
+
+    const selectPhotoSource = (source) => {
+        if (photoPickerBusy.current) return;
+        photoPickerBusy.current = true;
+        pendingPhotoSource.current = source;
+        setShowSourceModal(false);
+    };
+
+    const takePhotoFromCamera = () => selectPhotoSource('camera');
+    const pickImageFromGallery = () => selectPhotoSource('gallery');
 
     const pickImage = () => {
-        setShowSourceModal(true);
+        if (!photoPickerBusy.current) setShowSourceModal(true);
     };
 
     const handleSaveCrop = async () => {
@@ -1205,6 +1229,7 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
             {/* Upload Source Action Sheet Modal */}
             <Modal
                 isVisible={showSourceModal}
+                onDismiss={launchPendingPhotoPicker}
                 onBackdropPress={() => setShowSourceModal(false)}
                 onBackButtonPress={() => setShowSourceModal(false)}
                 onSwipeComplete={() => setShowSourceModal(false)}
@@ -1287,6 +1312,7 @@ export const JoinTermsScreen = ({ navigation, route }) => {
     const [isLoading, setIsLoading] = useState(false);
     const previousData = route.params || {};
     const joiningRef = useRef(false);
+    const uploadedPhotoRef = useRef(null);
 
     const handleContinue = async () => {
         if (joiningRef.current) return;
@@ -1298,45 +1324,15 @@ export const JoinTermsScreen = ({ navigation, route }) => {
         setIsLoading(true);
         try {
             let photoURL = previousData.photoURL;
-            console.log("[JoinTerms] Starting profile picture upload. Image URI:", previousData.image);
-            console.log("[JoinTerms] Auth currentUser UID:", auth.currentUser?.uid);
-
-            await prepareTripJoinSession();
-            await fetchAppAccess(); // Provision enrollment media permissions before profile upload.
-
-            // S22: Upload image to Storage if present as local URI
-            if (previousData.image && auth.currentUser) {
-                let blob = null;
-                try {
-                    // Use XMLHttpRequest to get the local URI blob stably in React Native
-                    blob = await new Promise((resolve, reject) => {
-                        const xhr = new XMLHttpRequest();
-                        xhr.onload = function () {
-                            resolve(xhr.response);
-                        };
-                        xhr.onerror = function (e) {
-                            console.log("[JoinTerms] XHR failed for URI:", previousData.image, e);
-                            reject(new TypeError("Network request failed"));
-                        };
-                        xhr.responseType = "blob";
-                        xhr.open("GET", previousData.image, true);
-                        xhr.send(null);
-                    });
-
-                    const picRef = storageRef(storage, `users/${auth.currentUser.uid}/profile_pic.jpg`);
-                    await uploadBytes(picRef, blob);
-                    photoURL = await getDownloadURL(picRef);
-                    console.log("[JoinTerms] Storage upload successful. photoURL:", photoURL);
-                } catch (imgError) {
-                    throw new Error("Your photo could not be uploaded. Please retry before continuing.");
-                } finally {
-                    if (blob) {
-                        try {
-                            blob.close();
-                        } catch (e) {
-                            console.log("[JoinTerms] Error closing blob:", e);
-                        }
-                    }
+            const user = await prepareTripJoinSession();
+            if (previousData.image) {
+                const cached = uploadedPhotoRef.current;
+                if (cached?.uid === user.uid && cached?.uri === previousData.image) {
+                    photoURL = cached.url;
+                } else {
+                    photoURL = await uploadJoinPhoto(previousData.image);
+                    if (auth.currentUser?.uid !== user.uid) throw new Error('Your account changed. Please try again.');
+                    uploadedPhotoRef.current = { uid: user.uid, uri: previousData.image, url: photoURL };
                 }
             }
 

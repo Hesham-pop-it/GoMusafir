@@ -13,15 +13,9 @@
       "enabled": false
     },
     "singleProjectMode": true,
-    "firestore": {
-      "port": 18080
-    },
     "storage": {
       "port": 19198
     }
-  },
-  "firestore": {
-    "rules": "firestore.rules"
   },
   "storage": {
     "rules": "storage.rules"

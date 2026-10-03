@@ -1,36 +1,13 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Server-owned authorization mirror; clients cannot modify it.
-    function access() {
-      return firestore.get(/databases/(default)/documents/app_access/$(request.auth.uid)).data;
-    }
-    function fresh() {
-      return request.auth != null && request.auth.token.auth_time >= access().revoked_before;
-    }
-    function appAccess() {
-      return fresh() && (access().staff == true || access().expires_at > request.time.toMillis());
-    }
-    function tripAccess(tripId) {
-      return fresh() && (access().staff == true || (tripId in access().trips && access().trips[tripId] > request.time.toMillis()));
-    }
-    match /chat_media/{tripId}/{fileName} {
-      allow read, write: if tripAccess(tripId);
-    }
-    match /users/{userId}/{allPaths=**} {
-      allow read: if appAccess() || (fresh() && request.auth.uid == userId);
-      allow write: if fresh() && request.auth.uid == userId
-                   && (request.resource == null || (request.resource.size < 5 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*')));
-    }
-    match /participant_avatars/{fileName} {
-      allow read, write: if appAccess();
-    }
+    // Uploads are authorized by backend functions using Auth and Realtime Database.
+    // Signed, create-only uploads bypass client rules; all direct client writes are denied.
     match /trips/{fileName} {
       allow read: if true;
-      allow write: if appAccess() && access().staff == true
-                   && request.resource.size < 5 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }

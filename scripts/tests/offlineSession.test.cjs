@@ -8,7 +8,7 @@ const errors = read('src/utils/sessionErrors.js').replaceAll('export const ', 'c
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 const snapshot = data => ({ val: () => data, exists: () => data != null });
 
-async function fixture({ online = false, role = 'participant', noUser = false, tokenCode, accessCode, pendingWrite = false, cachedToken = false, initialNetworkRead, unverified = false, enrolling = unverified, mountedRoute = null } = {}) {
+async function fixture({ online = false, role = 'participant', noUser = false, tokenCode, accessCode, pendingWrite = false, cachedToken = false, initialNetworkRead, unverified = false, enrolling = unverified, mountedRoute = null, missingProfile = false } = {}) {
     const state = { resolved: !!mountedRoute, route: mountedRoute || 'Welcome', ready: false, offline: false, failed: false };
     const listeners = new Map(), intervals = [], timeouts = [];
     let resets = 0;
@@ -25,19 +25,19 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
         Network: { addNetworkStateListener: cb => { networkListener = cb; return { remove() {} }; }, getNetworkStateAsync: async () => { networkReads++; return networkReads === 1 && initialNetworkRead ? initialNetworkRead : network(); } },
         AppState: { addEventListener: () => ({ remove() {} }) },
         setSessionResolved: v => state.resolved = v, setInitialRoute: v => state.route = v,
-        setAppIsReady: v => state.ready = v, setOffline: v => state.offline = v, setSyncFailed: v => state.failed = v,
+        setAppIsReady: v => state.ready = v, setOffline: v => state.offline = v, setSyncFailed: v => state.failed = v, setProfileMissing: v => state.profileMissing = v,
         AsyncStorage: { getItem: async key => key === 'device_id' ? 'device' : null, setItem: async () => {}, multiRemove: async () => {} },
         Linking: { getInitialURL: async () => null, addEventListener: () => ({ remove() {} }) },
         onAuthStateChanged: (_, cb) => { authListener = cb; cb(auth.currentUser); return () => {}; },
         ref: (_, key) => key,
         onValue: (key, cb) => {
             listeners.set(key, cb);
-            if (key === 'users/user' && online) cb(snapshot({ joined_trips: { trip: true } }));
+            if (key === 'users/user' && online) cb(snapshot(missingProfile ? null : { joined_trips: { trip: true } }));
             return () => listeners.delete(key);
         },
         get: async key => {
             if (!online) throw { code: 'database/network-error' };
-            return snapshot(key.endsWith('join_flow_status') ? null : { joined_trips: { trip: true } });
+            return snapshot(key.endsWith('join_flow_status') || missingProfile ? null : { joined_trips: { trip: true } });
         },
         set: async () => { if (pendingWrite) await new Promise(() => {}); },
         watchParticipantAccess: () => () => {}, onAppAccessPublished: cb => { accessPublished = cb; return () => {}; }, isEnrolling: () => enrolling,
@@ -52,7 +52,8 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
     };
     vm.createContext(context);
     const app = read('App.js');
-    const effect = app.slice(app.indexOf('  useEffect(() => {'), app.indexOf('\n  useEffect(() => {', app.indexOf('  useEffect(() => {') + 1));
+    const start = app.indexOf('  useEffect(() => {\n    let unsubscribeAuth;');
+    const effect = app.slice(start, app.indexOf('\n  useEffect(() => {', start + 1));
     vm.runInContext(errors + '\n' + effect, context);
     await flush();
     return {
@@ -268,5 +269,33 @@ for (const role of ['participant', 'admin']) {
 test('new unverified invitation account stays on onboarding while OTP is being prepared', async () => {
     const f = await fixture({ online: true, unverified: true, mountedRoute: 'JoinEmail' });
     assert.equal(f.resets(), 0);
+    assert.equal(f.signouts(), 0);
+});
+
+test('online missing profile is an account issue and preserves sign-in until the user chooses to leave', async () => {
+    const f = await fixture({ online: true, missingProfile: true });
+    assert.equal(f.state.profileMissing, true);
+    assert.equal(f.state.offline, false);
+    assert.equal(f.state.resolved, false);
+    assert.equal(f.signouts(), 0);
+    await f.retry();
+    assert.equal(f.state.profileMissing, true);
+    await f.logout();
+    assert.equal(f.state.profileMissing, false);
+    assert.equal(f.state.route, 'Welcome');
+});
+test('profile arriving after a missing profile clears the account warning', async () => {
+    const f = await fixture({ online: true, missingProfile: true });
+    f.listeners.get('users/user')(snapshot({ joined_trips: { trip: true } }));
+    await flush();
+    assert.equal(f.state.profileMissing, false);
+    assert.equal(f.state.resolved, true);
+});
+test('offline missing profile is not classified as an account issue', async () => {
+    const f = await fixture({ cachedToken: true });
+    f.listeners.get('users/user')(snapshot(null));
+    await flush();
+    assert.notEqual(f.state.profileMissing, true);
+    assert.equal(f.state.offline, true);
     assert.equal(f.signouts(), 0);
 });

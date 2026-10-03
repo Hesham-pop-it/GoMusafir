@@ -1,7 +1,7 @@
 import { updateLiveActivity, isMissingLiveActivity } from '../utils/liveActivityUpdates';
 import { handleVoiceWidgetAction } from '../utils/voiceWidgetActions';
 import { resolveVoiceWidgetSpeaker } from '../utils/voiceWidgetSpeaker';
-import { configureIOSVoiceAudio } from '../utils/voiceAudioSession';
+import { configureIOSVoiceAudio, restoreIOSVoiceAudio } from '../utils/voiceAudioSession';
 import { isVoiceStaff } from '../utils/voiceRole';
 import { monitorVoiceSpeaking } from '../utils/voiceSpeakingMonitor';
 import { watchVoiceChannelStatus } from '../utils/voiceChannelStatus';
@@ -389,8 +389,19 @@ export const VoiceProvider = ({ children }) => {
 
         const handleRoomReconnected = async () => {
             console.log("[VoiceContext] LiveKit Room reconnected, ensuring mic state. isMuted:", isMutedRef.current);
+            if (Platform.OS === 'ios') {
+                await restoreIOSVoiceAudio().catch(error => console.warn('[VoiceContext] Audio recovery failed:', error));
+            }
             if (room?.localParticipant) {
                 await room.localParticipant.setMicrophoneEnabled(!isMutedRef.current).catch(() => {});
+            }
+        };
+
+        const handleAudioSubscribed = (track) => {
+            if (track.kind !== 'audio') return;
+            track.setVolume(1.0);
+            if (Platform.OS === 'ios') {
+                restoreIOSVoiceAudio().catch(error => console.warn('[VoiceContext] Audio playback recovery failed:', error));
             }
         };
 
@@ -415,6 +426,7 @@ export const VoiceProvider = ({ children }) => {
 
         room.on('disconnected', handleRoomDisconnected);
         room.on('reconnected', handleRoomReconnected);
+        room.on(RoomEvent.TrackSubscribed, handleAudioSubscribed);
         room.on('dataReceived', onDataReceived);
 
         // Auto-disconnect on Logout
@@ -427,6 +439,7 @@ export const VoiceProvider = ({ children }) => {
         return () => {
             room.off('disconnected', handleRoomDisconnected);
             room.off('reconnected', handleRoomReconnected);
+            room.off(RoomEvent.TrackSubscribed, handleAudioSubscribed);
             room.off('dataReceived', onDataReceived);
             unsubscribeAuth();
         };

@@ -6,7 +6,7 @@ import { registerGlobals } from '@livekit/react-native';
 registerGlobals();
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, Text, TextInput, Alert, AppState, ActivityIndicator, Platform } from 'react-native';
+import { View, StyleSheet, Text, TextInput, Alert, AppState, ActivityIndicator, Platform, TouchableOpacity } from 'react-native';
 import { journeyWidget } from './src/services/journeyWidgetService';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreenNative from 'expo-splash-screen';
@@ -73,6 +73,7 @@ export default function App() {
   const [sessionResolved, setSessionResolved] = useState(false);
   const [offline, setOffline] = useState(false);
   const [syncFailed, setSyncFailed] = useState(false);
+  const [profileMissing, setProfileMissing] = useState(false);
   const [initialRoute, setInitialRoute] = useState("Welcome");
 
   const [fontsLoaded] = useFonts({
@@ -116,6 +117,7 @@ export default function App() {
       setInitialRoute(route);
       setSessionResolved(true);
       setSyncFailed(false);
+      setProfileMissing(false);
       setAppIsReady(true);
       retryNeeded = false;
     };
@@ -313,16 +315,19 @@ export default function App() {
                   try {
                     const userData = snapshot.val() || {};
 
+                    const idTokenResult = await user.getIdTokenResult(true);
+                    if (!isCurrent() || isForceSigningOut) return;
+                    confirmConnection();
                     if (!snapshot.exists()) {
+                      // Enrollment can publish Auth before the profile is created.
+                      if (isEnrolling()) return;
+                      setProfileMissing(true);
                       retryNeeded = true;
                       setSyncFailed(true);
                       setAppIsReady(true);
                       return;
                     }
-
-                    const idTokenResult = await user.getIdTokenResult(true);
-                    if (!isCurrent() || isForceSigningOut) return;
-                    confirmConnection();
+                    setProfileMissing(false);
                     const role = idTokenResult.claims.role || 'participant';
                     const isStaff = role === 'admin' || role === 'co-host' || role === 'manager';
 
@@ -542,7 +547,7 @@ export default function App() {
             <AppRootLayout>
               {sessionResolved && <RootNavigator initialRouteName={initialRoute} />}
               {sessionResolved && <TemplateAlertPopup />}
-              {!sessionResolved && !offline && !syncFailed && (
+              {!sessionResolved && !offline && !profileMissing && (
                 <View style={styles.connectionState} accessibilityLiveRegion="polite">
                   <ActivityIndicator size="large" color="#FFFFFF" />
                   <Text style={styles.connectionTitle}>Restoring your session</Text>
@@ -550,7 +555,7 @@ export default function App() {
                 </View>
               )}
               <CompatModal
-                isVisible={offline || syncFailed}
+                isVisible={offline || profileMissing}
                 animationIn="zoomIn"
                 backdropOpacity={0.65}
                 style={styles.connectionModal}
@@ -560,17 +565,31 @@ export default function App() {
                     <Ionicons name="cloud-offline-outline" size={32} color={Colors.dark.primary} />
                   </View>
                   <Text style={styles.connectionTitle}>
-                    {offline ? 'No internet connection' : 'Unable to connect'}
+                    {offline ? 'No internet connection' : 'Account unavailable'}
                   </Text>
                   <Text style={styles.connectionMessage}>
-                    An internet connection is required to load or update online features.
+                    {offline
+                      ? 'An internet connection is required to load or update online features.'
+                      : 'Your sign-in is valid, but your account profile is missing. Account deletion may not have finished. Please contact support if you recently deleted your account.'}
                   </Text>
-                  {auth?.currentUser && (
+                  {auth?.currentUser && !profileMissing && (
                     <Text style={styles.connectionMessage}>Your sign-in is saved. You don’t need to log in again.</Text>
+                  )}
+                  {profileMissing && !offline && (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.reconnectStatus}
+                      onPress={() => signOut(auth).catch(error => {
+                        console.warn('[App] Sign out failed:', error);
+                        Alert.alert('Unable to sign out', 'Please try again.');
+                      })}
+                    >
+                      <Text style={{ color: Colors.dark.primary, fontSize: 16 }}>Sign out</Text>
+                    </TouchableOpacity>
                   )}
                   <View style={styles.reconnectStatus}>
                     <ActivityIndicator size="small" color={Colors.dark.primary} />
-                    <Text style={styles.reconnectText}>Reconnecting automatically…</Text>
+                    <Text style={styles.reconnectText}>{profileMissing && !offline ? 'Checking your account again…' : 'Retrying automatically…'}</Text>
                   </View>
                 </View>
               </CompatModal>

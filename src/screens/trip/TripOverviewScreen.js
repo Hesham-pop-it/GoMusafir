@@ -147,6 +147,8 @@ const TripOverviewScreen = () => {
 
     const [liveTripData, setLiveTripData] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [tripLoadError, setTripLoadError] = useState(null);
+    const [tripLoadAttempt, setTripLoadAttempt] = useState(0);
     const initialIsAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : false);
     const [isAdmin, setIsAdmin] = useState(initialIsAdmin);
     const [userRole, setUserRole] = useState(initialIsAdmin ? 'admin' : 'participant');
@@ -324,7 +326,17 @@ const TripOverviewScreen = () => {
 
     // Real-time Data Synchronization
     useEffect(() => {
-        let tripRef;
+        let cancelled = false;
+        let unsubscribeTrip;
+        setIsLoading(true);
+        setTripLoadError(null);
+        setLiveTripData(null);
+        const onTripError = (error) => {
+            if (cancelled) return;
+            console.warn('Unable to load trip:', error);
+            setTripLoadError('Unable to load trip details. Please try again.');
+            setIsLoading(false);
+        };
 
         const syncData = async () => {
             try {
@@ -368,8 +380,8 @@ const TripOverviewScreen = () => {
                     });
                 }
 
-                let activeTripId = tripId;
-                let activeOrgId = orgId;
+                let activeTripId = passedTripId || trip?.id || trip?.tripId || trip?.trip_id;
+                let activeOrgId = passedOrgId || trip?.orgId || trip?.org_id;
                 const myUid = auth.currentUser?.uid;
 
                 // S22: If no trip info passed (app start), fetch current_trip from user profile (The Secure Store)
@@ -420,44 +432,42 @@ const TripOverviewScreen = () => {
                     }
                 }
 
-                if (invitationCode) {
-                    // Participant View: Resolve Admin ID and Trip ID first
-                    const inviteRef = ref(database, `invites/${invitationCode}`);
-                    onValue(inviteRef, (snapshot) => {
-                        const inviteData = snapshot.val();
-                        if (inviteData && inviteData.org_id && inviteData.trip_id) {
-                            tripRef = ref(database, `orgs/${inviteData.org_id}/trips/${inviteData.trip_id}`);
-                            onValue(tripRef, (tripSnapshot) => {
-                                const data = tripSnapshot.val();
-                                setLiveTripData({ ...data, orgId: inviteData.org_id, id: inviteData.trip_id });
-                                setIsLoading(false);
-                            });
-                        } else {
-                            setIsLoading(false);
+                if (cancelled) return;
+                if (activeOrgId && activeTripId) {
+                    // Joining already resolves membership IDs. Invitation records are private.
+                    setResolvedOrgId(activeOrgId);
+                    const tripRef = ref(database, `orgs/${activeOrgId}/trips/${activeTripId}`);
+                    unsubscribeTrip = onValue(tripRef, (snapshot) => {
+                        if (cancelled) return;
+                        if (!snapshot.exists()) {
+                            onTripError(new Error('Trip not found'));
+                            return;
                         }
-                    }, { onlyOnce: true });
-                } else if (activeOrgId && activeTripId) {
-                    // Direct sync (Admin or Resolved Participant)
-                    tripRef = ref(database, `orgs/${activeOrgId}/trips/${activeTripId}`);
-                    onValue(tripRef, (snapshot) => {
-                        if (snapshot.exists()) {
-                            setLiveTripData({ ...snapshot.val(), orgId: activeOrgId, id: activeTripId });
-                        }
+                        const data = snapshot.val();
+                        setLiveTripData({
+                            ...data,
+                            orgId: activeOrgId,
+                            id: activeTripId,
+                            startDate: data.start_date ?? data.startDate,
+                            endDate: data.end_date ?? data.endDate,
+                        });
+                        setTripLoadError(null);
                         setIsLoading(false);
-                    });
+                    }, onTripError);
                 } else {
-                    setIsLoading(false);
+                    onTripError(new Error('Missing trip organization'));
                 }
             } catch (error) {
-                setIsLoading(false);
+                onTripError(error);
             }
         };
 
         syncData();
         return () => {
-            // Cleanup would require tracking all listeners, for now we let it be
+            cancelled = true;
+            unsubscribeTrip?.();
         };
-    }, [invitationCode, trip]);
+    }, [passedTripId, passedOrgId, trip, tripLoadAttempt]);
 
     // 0. Fetch Global Visibility Config
     useEffect(() => {
@@ -497,7 +507,7 @@ const TripOverviewScreen = () => {
     })();
 
     const tripData = {
-        title: displayTrip.title || 'Loading Trip...',
+        title: displayTrip.title || (isLoading ? 'Loading Trip...' : 'Trip unavailable'),
         date: displayTrip.date || '---',
         location: displayTrip.location || '---',
         participants: participantsCount || displayTrip.participants || 0,
@@ -1305,16 +1315,6 @@ const TripOverviewScreen = () => {
         setSelectedParticipant(participant);
         setDetailVisible(true);
 
-        // Only staff roles are authorised to call getParticipantProfile
-        const isStaff = isAdminRef.current ||
-            userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
-
-        if (!isStaff) {
-            // Regular participants can open the modal but cannot fetch privileged profile data
-            setIsDecrypting(false);
-            return;
-        }
-
         try {
             await ChatEncryption.initialize();
             const getProfile = httpsCallable(functions, 'getParticipantProfile');
@@ -1351,6 +1351,8 @@ const TripOverviewScreen = () => {
 
                     newData.email = resolvedEmail || 'N/A';
                     newData.phone = resolvedPhone || 'N/A';
+                    newData.rawProfile = { ...prev.rawProfile, ...result.data.profile };
+                    Object.assign(newData, result.data.visibility || {});
 
                     let rawFirstName = '';
                     let rawLastName = '';
@@ -2001,6 +2003,11 @@ const TripOverviewScreen = () => {
                                 end={{ x: 1, y: 1 }}
                             >
                                 <Text style={styles.tripTitle}>{tripData.title}</Text>
+                                {tripLoadError && (
+                                    <TouchableOpacity accessibilityRole="button" onPress={() => setTripLoadAttempt(attempt => attempt + 1)}>
+                                        <Text style={{ color: Colors.white }}>{tripLoadError} Tap to retry.</Text>
+                                    </TouchableOpacity>
+                                )}
                                 <View style={styles.infoRow}>
                                     <Svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <Path d="M12.3423 14.0894H4.4471C3.95455 14.0894 3.51196 14.1251 3.06223 13.8538C2.39835 13.4541 2.19134 12.7616 2.19134 12.0406V7.51483C2.19134 6.43692 1.85583 4.50952 2.86235 3.78139C3.28353 3.47444 3.78322 3.53155 4.27578 3.53155H11.1787C11.5214 3.53155 11.8854 3.50299 12.2281 3.53155C13.1989 3.61007 13.8128 4.45241 13.8414 5.37328C13.8913 6.90806 13.8414 8.44998 13.8414 9.98475C13.8414 11.2982 14.2982 14.018 12.3494 14.0965C11.6927 14.1251 11.4357 14.9674 12.2423 14.9317C13.4844 14.8818 14.6766 14.0965 14.9692 12.8402C15.0835 12.3547 15.0335 11.8051 15.0335 11.3054C15.0335 9.5493 15.0335 7.80037 15.0335 6.0443C15.0335 5.51605 15.0835 4.92356 14.9193 4.41672C14.5409 3.28884 13.4844 2.70348 12.3423 2.68921C11.0074 2.67493 9.67248 2.68921 8.33044 2.68921C6.85278 2.68921 5.36797 2.66779 3.8903 2.68921C2.93374 2.70348 2.00574 3.11752 1.45607 3.92417C1.04918 4.51666 1.00635 5.14485 1.00635 5.82301V11.0056C1.00635 11.4767 0.992068 11.9478 1.00635 12.4118C1.0349 13.6182 1.82727 14.6105 3.0194 14.8603C3.56907 14.9746 4.18298 14.9246 4.74692 14.9246H12.2352C12.8991 14.9246 13.1418 14.0894 12.3423 14.0894Z" fill="#B99A4A" />

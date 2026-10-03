@@ -20,6 +20,9 @@ try {
 // Deploy with: firebase deploy --only functions (or target a specific group)
 
 const authFunctions = require("./groups/authFunctions");
+exports.uploadProfilePhoto = require('./groups/profilePhotoFunctions').uploadProfilePhoto;
+exports.prepareMediaUpload = require('./groups/mediaFunctions').prepareMediaUpload;
+exports.completeMediaUpload = require('./groups/mediaFunctions').completeMediaUpload;
 const orgFunctions  = require("./groups/orgFunctions");
 const tripFunctions = require("./groups/tripFunctions");
 const inviteFunctions  = require("./groups/inviteFunctions");

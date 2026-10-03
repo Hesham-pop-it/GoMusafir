@@ -1,4 +1,5 @@
-const { admin, db, auth } = require('../admin');
+const { db, auth } = require('../admin');
+const { guardedTransaction } = require('./guardedTransaction');
 const { HttpsError } = require('firebase-functions/v2/https');
 const STAFF_ROLES = ['admin', 'co-host', 'manager'];
 
@@ -35,37 +36,37 @@ async function calculateAccess(uid, now = Date.now()) {
   return { staff, trips, current_trip: user.current_trip || null, participant: user.account_type === 'participant' || Object.keys(user.joined_trips || {}).length > 0, expires_at: Math.max(0, ...Object.values(trips)), record };
 }
 
-// The RTDB record is server-owned. Firestore is an authorization mirror used
-// by Storage rules, which cannot read RTDB. Neither contains profile/PII data.
+// Access state is server-owned and lives entirely in Realtime Database.
 async function refreshAccess(uid) {
   const accessRef = db.ref(`app_access/${uid}`);
-  const firestore = admin.firestore();
-  const mirrorRef = firestore.doc(`app_access/${uid}`);
-  // Read the mirror before calculating eligibility. Firestore retries this
-  // transaction if another refresh wins, so an older grant cannot overwrite a
-  // newer revocation. A monotonically increasing version orders RTDB writes.
-  const value = await firestore.runTransaction(async transaction => {
-    const mirror = await transaction.get(mirrorRef);
-    const old = mirror.data() || (await accessRef.get()).val() || {};
+  let value;
+  // Recalculate after a concurrent refresh; never publish eligibility computed
+  // against an older access version over a newer revocation or membership grant.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const old = (await accessRef.get()).val() || {};
     const access = await calculateAccess(uid);
-    const lostAccess = !access.staff && !access.expires_at &&
-      (old.staff || old.expires_at > 0 || (!old.participant && access.participant));
-    const revokedBefore = lostAccess
-      ? Math.max(old.revoked_before || 0, Math.floor(Date.now() / 1000) + 1)
-      : old.revoked_before || 0;
-    const next = { staff: access.staff, participant: access.participant || old.participant === true,
-      trips: access.trips, current_trip: access.staff ? access.current_trip : (access.trips[access.current_trip] ? access.current_trip : Object.keys(access.trips)[0] || null),
-      expires_at: access.expires_at, revoked_before: revokedBefore,
-      revocation_pending: !access.staff && (lostAccess || old.revocation_pending === true), version: (old.version || 0) + 1 };
-    transaction.set(mirrorRef, next);
-    return next;
-  });
-  await accessRef.transaction(current => {
-    if ((current?.version || 0) >= value.version) return;
-    return value;
-  });
+    const result = await guardedTransaction(accessRef, current => {
+      current = current || {};
+      if ((current.version || 0) !== (old.version || 0)) return;
+      const lostAccess = !access.staff && !access.expires_at &&
+        (current.staff || current.expires_at > 0 || (!current.participant && access.participant));
+      return { staff: access.staff, participant: access.participant || current.participant === true,
+        trips: access.trips, current_trip: access.staff ? access.current_trip : (access.trips[access.current_trip] ? access.current_trip : Object.keys(access.trips)[0] || null),
+        expires_at: access.expires_at,
+        revoked_before: lostAccess
+          ? Math.max(current.revoked_before || 0, Math.floor(Date.now() / 1000) + 1)
+          : current.revoked_before || 0,
+        revocation_pending: !access.staff && (lostAccess || current.revocation_pending === true),
+        version: (current.version || 0) + 1 };
+    });
+    if (result.committed) {
+      value = result.snapshot.val();
+      break;
+    }
+  }
+  if (!value) throw new HttpsError('aborted', 'Your trip access is updating. Please retry.');
   if (!value.staff && value.current_trip) {
-    await db.ref(`users/${uid}/current_trip`).transaction(current => {
+    await guardedTransaction(db.ref(`users/${uid}/current_trip`), current => {
       if (current && value.trips[current]) return;
       return value.current_trip;
     });
@@ -73,15 +74,10 @@ async function refreshAccess(uid) {
   if (value.revocation_pending) {
     await auth.revokeRefreshTokens(uid);
     await db.ref(`users/${uid}/active_device_id`).remove();
-    await firestore.runTransaction(async transaction => {
-      const current = (await transaction.get(mirrorRef)).data();
-      if (current?.version === value.version) transaction.set(mirrorRef, { ...current, revocation_pending: false });
-    });
-    await accessRef.transaction(current => {
+    await guardedTransaction(accessRef, current => {
       if (current?.version !== value.version) return;
       return { ...current, revocation_pending: false };
     });
-    value.revocation_pending = false;
   }
   return (await accessRef.get()).val() || value;
 }

@@ -64,7 +64,7 @@ test('data-only notifications use the same sounds on both platforms without redi
 test('a foreground SOS interrupts standard audio and cannot be interrupted by standard audio', () => {
     const players=[];
     const ctx={...policy,console,setTimeout:()=>1,clearTimeout:()=>{},require:()=>1,
-        createAudioPlayer:()=>{const p={removed:false,play(){},remove(){this.removed=true},addListener(event,fn){this.finish=()=>fn({didJustFinish:true});return{remove(){}}}};players.push(p);return p;}};
+        createAudioPlayer:(_source, options)=>{assert.equal(options?.keepAudioSessionActive,true,'Notification completion must not deactivate an ongoing voice call');const p={removed:false,play(){},remove(){this.removed=true},addListener(event,fn){this.finish=()=>fn({didJustFinish:true});return{remove(){}}}};players.push(p);return p;}};
     const source=fs.readFileSync(require.resolve('../src/services/notificationAudio'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
     vm.createContext(ctx);vm.runInContext(source,ctx);
     ctx.playNotificationSound({type:'chat_message'});

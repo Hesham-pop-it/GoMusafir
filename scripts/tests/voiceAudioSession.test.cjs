@@ -6,11 +6,27 @@ const code = babel.transformFileSync(require.resolve('../../src/utils/voiceAudio
     presets: ['babel-preset-expo'], babelrc: false, configFile: false,
 }).code;
 
-function load(configure) {
-    const context = { exports: {}, require: name => name === '@livekit/react-native' ? { AudioSession: { setAppleAudioConfiguration: configure } } : require(name) };
+function load(configure, startAudioSession = async () => {}) {
+    const context = { exports: {}, require: name => name === '@livekit/react-native' ? { AudioSession: { setAppleAudioConfiguration: configure, startAudioSession } } : require(name) };
     vm.runInNewContext(code, context);
     return context.exports;
 }
+
+test('incoming audio and reconnect recovery configure the voice route before reactivating iOS audio', async () => {
+    const calls = [];
+    const api = load(async config => {
+        assert.equal(config.audioCategory, 'playAndRecord');
+        assert.ok(config.audioCategoryOptions.includes('defaultToSpeaker'));
+        calls.push('configure');
+    }, async () => calls.push('activate'));
+    await api.restoreIOSVoiceAudio();
+    assert.deepEqual(calls, ['configure', 'activate']);
+});
+
+test('audio recovery surfaces activation failure', async () => {
+    const api = load(async () => {}, async () => { throw new Error('Audio activation failed'); });
+    await assert.rejects(api.restoreIOSVoiceAudio(), /Audio activation failed/);
+});
 
 test('each microphone acquisition applies full configuration before capture', async () => {
     const calls = [];

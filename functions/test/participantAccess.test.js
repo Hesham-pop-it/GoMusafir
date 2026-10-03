@@ -13,7 +13,7 @@ function fixture(overrides = {}) {
     app_access: { p: { expires_at: now + 60000, revoked_before: 0 } },
     ...overrides,
   };
-  const mirrors = {};
+  let beforeTransaction;
   const revocations = [];
   const record = { customClaims: {}, tokensValidAfterTime: new Date(0).toISOString() };
   const read = key => key.split('/').reduce((node, part) => node?.[part], data);
@@ -25,22 +25,26 @@ function fixture(overrides = {}) {
   const adminMock = {
     auth: { getUser: async () => record, revokeRefreshTokens: async uid => revocations.push(uid) },
     db: { ref: key => ({ get: async () => ({ val: () => read(key), exists: () => read(key) != null }),
+      on: (_event, callback) => callback(), off() {},
       set: async value => write(key, value), remove: async () => write(key, null),
-      transaction: async callback => { const value = callback(read(key));if (value !== undefined) write(key, value); } }) },
-    admin: { firestore: () => ({
-      doc: key => ({ key }),
-      runTransaction: async callback => callback({ get: async doc => ({ data: () => mirrors[doc.key] }),
-        set: (doc, value) => { mirrors[doc.key] = value; } }),
-    }) },
+      transaction: async callback => {
+        if (beforeTransaction) { const hook = beforeTransaction; beforeTransaction = null; hook(); }
+        const value = callback(read(key) ?? null);
+        if (value !== undefined) write(key, value);
+        return { committed: value !== undefined, snapshot: { val: () => read(key) } };
+      } }) },
+    admin: {},
   };
   class HttpsError extends Error { constructor(code, message) { super(message);this.code = code; } }
   const sandbox = { module: { exports: {} }, require: name => {
     if (name === '../admin') return adminMock;
+    if (name === './guardedTransaction') return require('../services/guardedTransaction');
     if (name === 'firebase-functions/v2/https') return { HttpsError };
     throw new Error(`Unexpected import ${name}`);
   }, Date, Math, Number, Object };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../services/participantAccessService.js'), 'utf8'), sandbox);
-  return { api: sandbox.module.exports, data, mirrors, record, revocations,
+  return { api: sandbox.module.exports, data, record, revocations,
+    beforeTransaction: callback => { beforeTransaction = callback; },
     request: { auth: { uid: 'p', token: { auth_time: Math.floor(now / 1000) } } } };
 }
 
@@ -69,7 +73,7 @@ test('closing last trip revokes once, publishes deny, and preserves account and 
   assert.equal(value.expires_at, 0);
   assert.equal(f.data.users.p, user);
   assert.equal(f.revocations.length, 1);
-  assert.equal(f.mirrors['app_access/p'].expires_at, 0);
+  assert.equal(f.data.app_access.p.expires_at, 0);
   await f.api.refreshAccess('p');
   assert.equal(f.revocations.length, 1);
   await assert.rejects(f.api.requireFreshIdentity(f.request), { code: 'unauthenticated' });
@@ -122,12 +126,24 @@ test('a pending revocation is completed on reconciliation', async () => {
   assert.equal(result.revocation_pending, false);
   assert.equal(f.revocations.length, 1);
 });
-test('an older access calculation cannot replace a newer RTDB version', async () => {
-  const f = fixture();f.mirrors['app_access/p'] = { version: 2, expires_at: 0, revoked_before: 0 };
-  f.data.app_access.p = { version: 100, expires_at: 0, revoked_before: 9999999999 };
-  await f.api.refreshAccess('p');
-  assert.equal(f.data.app_access.p.version, 100);
-  assert.equal(f.data.app_access.p.expires_at, 0);
+test('a concurrent refresh forces recalculation instead of restoring revoked access', async () => {
+  const f = fixture();
+  f.beforeTransaction(() => {
+    f.data.orgs.o.trips.t.status = 'closed';
+    f.data.app_access.p = { version: 100, participant: true, expires_at: 0, revoked_before: 9999999999 };
+  });
+  const value = await f.api.refreshAccess('p');
+  assert.equal(value.version, 101);
+  assert.equal(value.expires_at, 0);
+  assert.equal(value.revoked_before, 9999999999);
+});
+
+test('first access refresh creates the RTDB record using only Realtime Database', async () => {
+  const f = fixture({ app_access: {} });
+  const value = await f.api.refreshAccess('p');
+  assert.equal(value.version, 1);
+  assert.ok(value.trips.t > Date.now());
+  assert.equal(f.data.app_access.p, value);
 });
 
 for (const role of ['admin', 'co-host', 'manager']) {

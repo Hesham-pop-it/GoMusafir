@@ -22,7 +22,9 @@ export function playNotificationSound(notification) {
     if (current?.sound === SOS.sound && profile.sound !== SOS.sound) return;
     stopNotificationSound();
     try {
-        const player = createAudioPlayer(sources[profile.sound]);
+        // Expo otherwise deactivates the shared iOS audio session when this
+        // effect finishes, silencing an ongoing LiveKit call as well.
+        const player = createAudioPlayer(sources[profile.sound], { keepAudioSessionActive: true });
         const entry = { player, sound: profile.sound };
         current = entry;
         const cleanup = () => { if (current === entry) stopNotificationSound(); };

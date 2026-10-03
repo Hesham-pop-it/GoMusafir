@@ -28,14 +28,13 @@ import Logo from '../../components/Logo';
 import { Typography } from '../../constants/Typography';
 import { database, auth } from '../../config/firebase';
 import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
-import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { uploadTripMedia } from '../../utils/uploadTripMedia';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
 import { createAudioPlayer, useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
-import { storage } from '../../config/firebase';
 import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
@@ -1072,26 +1071,9 @@ const TripChatScreen = () => {
         setIsUploading(true);
         setShowAttachments(false);
 
-        let blob = null;
         try {
-            // Use XMLHttpRequest to get the local URI blob stably in React Native
-            blob = await new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.onload = function () {
-                    resolve(xhr.response);
-                };
-                xhr.onerror = function (e) {
-                    console.log("[TripChatScreen] XHR failed for URI:", uri, e);
-                    reject(new TypeError("Network request failed"));
-                };
-                xhr.responseType = "blob";
-                xhr.open("GET", uri, true);
-                xhr.send(null);
-            });
-
             const isVoice = type === 'voice';
             const isVideo = type === 'video';
-            const extension = isVoice ? 'm4a' : isVideo ? 'mp4' : 'jpg';
             const contentType = isVoice ? 'audio/m4a' : isVideo ? 'video/mp4' : 'image/jpeg';
 
             const senderUid = auth.currentUser?.uid;
@@ -1100,13 +1082,7 @@ const TripChatScreen = () => {
                 return;
             }
 
-            const timestamp = Date.now();
-            const filename = `${timestamp}_${senderUid}.${extension}`;
-            const fileRef = storageRef(storage, `chat_media/${tripId}/${filename}`);
-            const metadata = { contentType };
-
-            await uploadBytes(fileRef, blob, metadata);
-            const downloadUrl = await getDownloadURL(fileRef);
+            const downloadUrl = await uploadTripMedia(uri, { tripId, contentType });
 
             let thumbnailDownloadUrl = null;
             if (isVideo) {
@@ -1116,24 +1092,7 @@ const TripChatScreen = () => {
                         quality: 0.8,
                     });
                     if (thumbResult?.uri) {
-                        const thumbBlob = await new Promise((resolve, reject) => {
-                            const xhr = new XMLHttpRequest();
-                            xhr.onload = function () {
-                                resolve(xhr.response);
-                            };
-                            xhr.onerror = function (e) {
-                                console.log("[TripChatScreen] Thumb XHR failed:", e);
-                                reject(new TypeError("Thumbnail request failed"));
-                            };
-                            xhr.responseType = "blob";
-                            xhr.open("GET", thumbResult.uri, true);
-                            xhr.send(null);
-                        });
-                        const thumbFilename = `thumb_${timestamp}_${senderUid}.jpg`;
-                        const thumbRef = storageRef(storage, `chat_media/${tripId}/${thumbFilename}`);
-                        await uploadBytes(thumbRef, thumbBlob, { contentType: 'image/jpeg' });
-                        thumbnailDownloadUrl = await getDownloadURL(thumbRef);
-                        try { thumbBlob.close(); } catch (e) {}
+                        thumbnailDownloadUrl = await uploadTripMedia(thumbResult.uri, { tripId, contentType: 'image/jpeg' });
                     }
                 } catch (thumbErr) {
                     console.log("[TripChatScreen] Could not generate/upload video thumbnail:", thumbErr);
@@ -1173,13 +1132,6 @@ const TripChatScreen = () => {
             console.error("[TripChatScreen] Failed to upload/send media:", error);
             alert("Failed to send media. Please try again.");
         } finally {
-            if (blob) {
-                try {
-                    blob.close();
-                } catch (e) {
-                    console.log("[TripChatScreen] Error closing blob:", e);
-                }
-            }
             setIsUploading(false);
         }
     };

@@ -363,59 +363,10 @@ exports.removeParticipantFromTrip = onCall({ region: "europe-west1" }, async (re
 
   return { success: true };
 });
-// ── Get Participant Profile (Decrypted for Admins) ───────────────────────────
+// Resolve profile data and enforce trip membership and field visibility on the server.
 exports.getParticipantProfile = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
-
-  const { targetUid, tripId } = request.data;
-  const orgId = request.auth.token.orgId;
-
-  if (!targetUid || !tripId) {
-    throw new HttpsError("invalid-argument", "targetUid and tripId are required.");
-  }
-
-  // Security: Verify trip belongs to caller's org
-  const tripOrgSnap = await db.ref(`trips_orgs/${tripId}`).get();
-  if (!tripOrgSnap.exists() || tripOrgSnap.val() !== orgId) {
-    throw new HttpsError("permission-denied", "Access denied to this trip's data.");
-  }
-
-  // Fetch target user data
-  const userSnap = await db.ref(`users/${targetUid}`).get();
-  if (!userSnap.exists()) throw new HttpsError("not-found", "User not found.");
-
-  const userData = userSnap.val();
-  const { decrypt } = require("../services/kmsService");
-
-  let profile = userData.profile || {};
-  let email = userData.email || "N/A";
-  let phone = userData.profile?.phone || userData.phone || "N/A";
-  let fullName = userData.full_name || "Guest";
-
-  // Try to decrypt the full profile blob if it exists
-  if (userData.p_profile) {
-    try {
-      const decryptedProfile = JSON.parse(decrypt(userData.p_profile));
-      profile = decryptedProfile;
-      email = decryptedProfile.email;
-      phone = decryptedProfile.phone;
-      fullName = `${decryptedProfile.firstName} ${decryptedProfile.lastName}`.trim();
-    } catch (e) {
-    }
-  } else {
-    // Legacy single-field decryption fallback
-    email = userData.p_email ? decrypt(userData.p_email) : email;
-    phone = userData.p_phone ? decrypt(userData.p_phone) : phone;
-  }
-
-  return {
-    uid: targetUid,
-    email: email,
-    phone: phone,
-    fullName: fullName,
-    profile: profile
-  };
+  return require('../services/participantProfileService').getParticipantProfile(request);
 });
 
 // ── Delete Trip ───────────────────────────────────────────────────────────────
