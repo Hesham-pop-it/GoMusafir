@@ -31,8 +31,30 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# Local environment files (keep sanitized templates versioned)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+
+# Server credentials and local authentication
+*firebase-adminsdk*.json
+service-account*.json
+serviceAccount*.json
+credentials.json
+.aws/
+.config/gcloud/
+*.keystore
+
+# Logs and Firebase local cache may contain credentials or personal data
+*.log
+.firebase/
+
+# Internal security assessments
+/GoMusafir_Enterprise_Security_Audit_Achmea And Leidschendam.xlsx
+/security_audit_scope.xlsx
+/security_audit_scope_mapping.md
 
 # typescript
 *.tsbuildinfo
