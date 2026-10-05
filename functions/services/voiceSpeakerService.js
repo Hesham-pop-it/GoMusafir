@@ -81,6 +81,9 @@ async function updateSpeakers(orgId, tripId, command = {}) {
       if (!isStaff(uid) && (!members[uid] || muteSnap.val() === true)) {
         throw new HttpsError('permission-denied', 'Speaking is currently disabled by the organizer.');
       }
+      if (isStaff(uid) && Object.keys(state.entries).filter(id => id !== uid && isStaff(id)).length >= MAX_SPEAKERS) {
+        throw new HttpsError('resource-exhausted', 'All four microphones are occupied by organizers. Mute an organizer before unmuting.');
+      }
       if (!state.entries[uid]) {
         state.entries[uid] = { sid: participant.sid, requestId, order: ++state.nextOrder,
           status: 'queued' };
@@ -102,6 +105,7 @@ async function updateSpeakers(orgId, tripId, command = {}) {
       }
     }
     const ordered = Object.entries(state.entries).sort(([aUid, a], [bUid, b]) =>
+      Number(!isStaff(aUid)) - Number(!isStaff(bUid)) ||
       Number(a.status === 'queued') - Number(b.status === 'queued') || a.order - b.order || aUid.localeCompare(bUid));
     const selected = new Set(ordered.slice(0, MAX_SPEAKERS).map(([id]) => id));
     for (const [id, entry] of ordered) {

@@ -71,6 +71,45 @@ test('four total slots include staff; fifth and sixth requests wait in FIFO orde
   assert.deepEqual(f.writes.slice(-2), [{ uid: 'host', enabled: false }, { uid: 'b', enabled: true }]);
 });
 
+for (const organizer of ['host', 'cohost', 'manager']) {
+  test(`${organizer} unmutes directly and preempts a participant without exceeding four slots`, async () => {
+    const f = fixture();
+    for (const uid of ['a', 'b', 'c', 'd', 'e']) await f.request(uid);
+    await f.request(organizer);
+    assert.equal(f.state().entries[organizer].status, 'granted');
+    assert.equal(f.state().entries.d.status, 'queued');
+    assert.equal(f.state().entries.d.requestId, 'd');
+    assert.deepEqual(f.writes.slice(-2), [{ uid: 'd', enabled: false }, { uid: organizer, enabled: true }]);
+    await f.release(organizer);
+    assert.equal(f.state().entries.d.status, 'granted');
+    assert.equal(f.state().entries.e.status, 'queued');
+    assert.equal(f.peak(), 4);
+  });
+}
+
+test('a fifth organizer receives a capacity error instead of joining the queue', async () => {
+  const f = fixture();
+  Object.assign(f.data.get('orgs/o/staff'), { a: 'admin', b: 'admin' });
+  for (const uid of ['host', 'cohost', 'manager', 'a']) await f.request(uid);
+  await assert.rejects(f.request('b'), { code: 'resource-exhausted' });
+  assert.equal(f.state().entries.b, undefined);
+  assert.equal(f.participants.get('b').permission.canPublish, false);
+  await f.request('host');
+  assert.equal(f.state().entries.host.status, 'granted');
+});
+
+test('failed preemption cannot enable the organizer until the participant is muted', async () => {
+  const f = fixture();
+  for (const uid of ['a', 'b', 'c', 'd']) await f.request(uid);
+  f.fail('d');
+  await assert.rejects(f.request('host'), /unreachable/);
+  assert.equal(f.participants.get('host').permission.canPublish, false);
+  f.fail(null);
+  await f.update();
+  assert.deepEqual(f.writes.slice(-2), [{ uid: 'd', enabled: false }, { uid: 'host', enabled: true }]);
+  assert.equal(f.state().entries.host.status, 'granted');
+});
+
 test('simultaneous requests cannot race past capacity; aborted operations can retry', async () => {
   const f = fixture();
   const uids = ['host', 'a', 'b', 'c', 'd', 'e'];

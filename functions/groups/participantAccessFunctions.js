@@ -150,8 +150,18 @@ exports.beginParticipantEnrollment = onCall({ region: 'europe-west1', secrets: [
   const digest = crypto.createHash('sha256').update(`${challengeId}:${code}`).digest('hex');
   await db.ref(`enrollment_challenges/${challengeId}`).set({ uid: user.uid, inviteCode, digest,
     expires_at: now + 10 * 60 * 1000, attempts: 0 });
-  await require('../services/emailService').sendEmail({ to: normalized, subject: 'Your GoMusāfir trip joining code',
-    html: `<p>Use this code to join your next trip:</p><h1>${code}</h1><p>It expires in 10 minutes.</p>` });
+  await require('../services/emailService').sendEmail({
+    to: normalized,
+    subject: 'Your GoMusāfir trip joining code',
+    html: `
+      <div style="font-family: Arial, sans-serif; text-align: center; color: #333;">
+        <h2 style="color: #B99A4A;">GoMusāfir Verification</h2>
+        <p>Use this code to join your next trip:</p>
+        <h1 style="background: #1A1814; color: #FFF; padding: 20px; border-radius: 8px; font-size: 36px; letter-spacing: 4px;">${code}</h1>
+        <p>This code will expire in 10 minutes.</p>
+      </div>
+    `,
+  });
   return { challengeId };
 });
 exports.completeParticipantEnrollment = onCall({ region: 'europe-west1' }, async request => {

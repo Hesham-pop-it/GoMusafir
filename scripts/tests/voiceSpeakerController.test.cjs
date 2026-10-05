@@ -39,6 +39,28 @@ test('microphone opens only after both a server slot and LiveKit permission arri
     assert.deepEqual(f.sent.map(c => c.action), ['request', 'release']);
 });
 
+for (const released of [false, true]) {
+    test(`participant preempted by organizer resumes only while still holding (released=${released})`, async () => {
+        const f = fixture();
+        f.controller.setMuted(false);
+        f.controller.updatePermission(true);
+        f.state();
+        await flush();
+        f.state('queued');
+        f.controller.updatePermission(false);
+        await flush();
+        assert.deepEqual(f.hardware, [true, false]);
+        assert.equal(f.intent.at(-1), true);
+        if (released) f.controller.setMuted(true);
+        f.state();
+        f.controller.updatePermission(true);
+        await flush();
+        assert.deepEqual(f.hardware, released ? [true, false] : [true, false, true]);
+        f.controller.dispose();
+        await flush();
+    });
+}
+
 test('release while request is pending cancels it and ignores a late grant', async () => {
     let finish;
     const f = fixture({ send: command => command.action === 'request' ? new Promise(resolve => { finish = resolve; }) : undefined });

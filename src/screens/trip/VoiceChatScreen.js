@@ -393,6 +393,8 @@ const VoiceChatContent = ({
                                 <View style={styles.controlRow}>
                                     <TouchableOpacity
                                         onPress={handleToggleMute}
+                                        accessibilityState={{ busy: wantsToSpeak && isMuted }}
+                                        accessibilityLabel={wantsToSpeak && isMuted ? 'Unmuting microphone. Tap to cancel.' : undefined}
                                         style={[
                                             styles.controlButtonOutline,
                                             { flex: 1 },
@@ -400,7 +402,7 @@ const VoiceChatContent = ({
                                         ]}
                                     >
                                         <Text style={[styles.controlText, !isMuted && { color: '#FFFFFF' }]}>
-                                            {wantsToSpeak && isMuted ? 'Cancel Request' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                            {wantsToSpeak && isMuted ? 'Unmuting...' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                         </Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity

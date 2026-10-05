@@ -7,6 +7,13 @@ waiting person receives permission automatically. Organizers can move a request
 to the front or revoke a speaker through the participant microphone control.
 Moving someone forward does not turn on a microphone they have not requested.
 
+Admin, Co-Host and Manager unmute directly and have priority over regular
+participants. If all slots are occupied, the latest admitted regular participant
+returns to the waiting queue before the organizer's permission is enabled. They
+can regain a slot while still holding to talk. If four organizers already occupy
+the slots, another organizer receives a microphones-full error rather than joining
+the queue. Organizer priority never increases the four-publisher limit.
+
 The queue is shown on Voice Chat and Trip Overview. Organizer microphone toggles
 and lock-screen controls use the same allocator. Global mute clears participant
 requests and permissions while retaining staff slots. All connected users can

@@ -2122,6 +2122,8 @@ const TripOverviewScreen = () => {
                                     <>
                                         <TouchableOpacity
                                             onPress={handleToggleMute}
+                                            accessibilityState={{ busy: wantsToSpeak && isMuted, disabled: !isChannelStarted }}
+                                            accessibilityLabel={wantsToSpeak && isMuted ? 'Unmuting microphone. Tap to cancel.' : undefined}
                                             disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
@@ -2139,7 +2141,7 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, isMuted ? { color: '#FFF', fontFamily: Typography.sans.semiBold } : { color: 'rgba(255, 255, 255, 0.6)' }]}>
-                                                {wantsToSpeak && isMuted ? 'Cancel Request' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                                {wantsToSpeak && isMuted ? 'Unmuting...' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity

@@ -513,9 +513,10 @@ const TripChatScreen = () => {
     const [participantProfiles, setParticipantProfiles] = useState({});
     const [readPointers, setReadPointers] = useState({});
     const [isUploading, setIsUploading] = useState(false);
+    // Set up recording only on an explicit request: Expo's audio setup replaces
+    // LiveKit's iOS voice-chat mode and Android communication mode.
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const [isRecording, setIsRecording] = useState(false);
-    const recorderReady = useRef(false); // tracks whether prepareToRecordAsync has been called
     const [playbackInstances, setPlaybackInstances] = useState({}); // To track playing states per message
     const [replyingTo, setReplyingTo] = useState(null);
     const [pendingImageUri, setPendingImageUri] = useState(null);
@@ -530,22 +531,6 @@ const TripChatScreen = () => {
 
     const inputRef = useRef(null);
     const flatListRef = useRef(null);
-
-    // Pre-warm audio recording so the first press is instant
-    useEffect(() => {
-        const prewarmRecorder = async () => {
-            try {
-                const { status } = await requestRecordingPermissionsAsync();
-                if (status !== 'granted') return;
-                await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-                await recorder.prepareToRecordAsync();
-                recorderReady.current = true;
-            } catch (e) {
-                // Non-fatal: recording will fall back to on-demand setup
-            }
-        };
-        prewarmRecorder();
-    }, []);
 
     useEffect(() => {
         if (!tripId || !resolvedOrgId) return;
@@ -1177,24 +1162,19 @@ const TripChatScreen = () => {
         if (isRecording) return;
 
         try {
-            if (!recorderReady.current) {
-                // Fallback: setup on-demand if pre-warm didn't finish
-                const { status } = await requestRecordingPermissionsAsync();
-                if (status !== 'granted') {
-                    alert('Microphone permission is required to record voice messages.');
-                    return;
-                }
-                await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-                await recorder.prepareToRecordAsync();
-                recorderReady.current = true;
+            const { status } = await requestRecordingPermissionsAsync();
+            if (status !== 'granted') {
+                alert('Microphone permission is required to record voice messages.');
+                return;
             }
+            await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+            await recorder.prepareToRecordAsync();
 
             Vibration.vibrate(50);
             recorder.record();
             setIsRecording(true);
         } catch (err) {
             setIsRecording(false);
-            recorderReady.current = false;
             console.error("Error starting recording:", err);
         }
     };
@@ -1210,12 +1190,6 @@ const TripChatScreen = () => {
             if (uri) {
                 uploadAndSendMedia(uri, 'voice');
             }
-
-            // Re-prepare so the next press is also instant
-            recorderReady.current = false;
-            recorder.prepareToRecordAsync().then(() => {
-                recorderReady.current = true;
-            }).catch(() => {});
         } catch (error) {
             console.error("Error stopping recording:", error);
         }
@@ -2283,7 +2257,8 @@ const VoicePlayer = ({ uri, isMe }) => {
                 setIsPlaying(true);
             }
         } else {
-            const newPlayer = createAudioPlayer(uri);
+            // LiveKit may still be using the shared audio session when playback ends.
+            const newPlayer = createAudioPlayer(uri, { keepAudioSessionActive: true });
             newPlayer.play();
             setPlayer(newPlayer);
             setIsPlaying(true);

@@ -13,7 +13,7 @@ export default function VoiceSpeakerQueue({ profiles = {} }) {
     return <View style={styles.container}>
         <View style={styles.heading}>
             <Text style={styles.title}>{occupied}/4 microphones</Text>
-            {wantsToSpeak && isMuted && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel speaking request"
+            {!isAdmin && wantsToSpeak && isMuted && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel speaking request"
                 onPress={() => setIsMuted(true)} style={styles.cancel}>
                 <Text style={styles.status}>Cancel request</Text><Ionicons name="close" size={18} color="#FFF" />
             </TouchableOpacity>}
@@ -33,7 +33,7 @@ export default function VoiceSpeakerQueue({ profiles = {} }) {
                 </TouchableOpacity>
             </>}
         </View>)}
-        {wantsToSpeak && isMuted && !queue.some(([id]) => id === uid) && <Text style={styles.label}>Requesting microphone...</Text>}
+        {wantsToSpeak && isMuted && !queue.some(([id]) => id === uid) && <Text style={styles.label}>{isAdmin ? 'Unmuting microphone...' : 'Requesting microphone...'}</Text>}
     </View>;
 }
 
