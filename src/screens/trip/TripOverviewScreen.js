@@ -34,7 +34,7 @@ import Svg, { Path, G, Defs, ClipPath, Rect, Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
@@ -44,6 +44,7 @@ import { useVoice } from '../../context/VoiceContext';
 import { useTracks } from '@livekit/react-native';
 import { Track, RoomEvent } from 'livekit-client';
 import SpeakerGlow from '../../components/SpeakerGlow';
+import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
 import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
@@ -181,6 +182,7 @@ const TripOverviewScreen = () => {
         isGlobalMuteActive: isAllMuted,
         isMuted,
         setIsMuted,
+        wantsToSpeak,
         loading: voiceLoading,
         stopping: voiceStopping,
         connect,
@@ -218,6 +220,14 @@ const TripOverviewScreen = () => {
     const [voicePresence, setVoicePresence] = useState({});
     const [appPresence, setAppPresence] = useState({});
     const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
+    const holdToTalkRef = React.useRef(false);
+    useFocusEffect(React.useCallback(() => () => {
+        if (holdToTalkRef.current) {
+            holdToTalkRef.current = false;
+            setIsHoldToTalkActive(false);
+            setIsMuted(true);
+        }
+    }, [setIsMuted]));
     const [organizerId, setOrganizerId] = useState(null);
 
     useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
@@ -316,11 +326,13 @@ const TripOverviewScreen = () => {
             return;
         }
         setIsHoldToTalkActive(true);
+        holdToTalkRef.current = true;
         setIsMuted(false);
     };
 
     const handleHoldToTalkEnd = () => {
         setIsHoldToTalkActive(false);
+        holdToTalkRef.current = false;
         setIsMuted(true);
     };
 
@@ -919,7 +931,7 @@ const TripOverviewScreen = () => {
     }, [tripId, orgId]);
 
     const handleToggleMute = async () => {
-        const nextState = !isMuted;
+        const nextState = wantsToSpeak || !isMuted;
 
         // If the room is globally muted by the admin, participants cannot unmute themselves
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
@@ -2127,7 +2139,7 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, isMuted ? { color: '#FFF', fontFamily: Typography.sans.semiBold } : { color: 'rgba(255, 255, 255, 0.6)' }]}>
-                                                {isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                                {wantsToSpeak && isMuted ? 'Cancel Request' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
@@ -2192,13 +2204,16 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, { fontSize: responsiveFontSize(16) }, isHoldToTalkActive && { color: '#FFFFFF' }]}>
-                                                {isAllMuted ? 'Muted by Organizer' : 'Hold to Talk'}
+                                                {isAllMuted ? 'Muted by Organizer' : wantsToSpeak && isMuted ? 'Waiting to Speak' : 'Hold to Talk'}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
                                 )}
                             </View>
                         </View>
+
+                        {isConnected && activeTripId === tripId && <VoiceSpeakerQueue
+                            profiles={Object.fromEntries(participantsList.map(p => [p.id, { name: p.name }]))} />}
 
                         {/* Map and Chat Row */}
                         <View style={styles.rowContainer}>

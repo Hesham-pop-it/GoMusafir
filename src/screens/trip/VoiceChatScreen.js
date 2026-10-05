@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { 
     LiveKitRoom, 
     useTracks, 
@@ -42,6 +42,7 @@ import { httpsCallable } from 'firebase/functions';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import PreTripVoiceAllowance from '../../components/PreTripVoiceAllowance';
 import SpeakerGlow from '../../components/SpeakerGlow';
+import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
 import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
@@ -92,6 +93,15 @@ const VoiceChatContent = ({
     const [participantMap, setParticipantMap] = useState({});
     const [speakingUids, setSpeakingUids] = useState([]);
     const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
+    const { wantsToSpeak, speakerState } = useVoice();
+    const holdToTalkRef = useRef(false);
+    useFocusEffect(React.useCallback(() => () => {
+        if (holdToTalkRef.current) {
+            holdToTalkRef.current = false;
+            setIsHoldToTalkActive(false);
+            setIsMuted(true);
+        }
+    }, [setIsMuted]));
 
     const participantIdentities = React.useMemo(() => {
         return (participants || []).map(p => p.identity).filter(Boolean).sort().join(',');
@@ -233,17 +243,19 @@ const VoiceChatContent = ({
             return;
         }
         setIsHoldToTalkActive(true);
+        holdToTalkRef.current = true;
         setIsMuted(false);
     };
 
     const handleHoldToTalkEnd = async () => {
         setIsHoldToTalkActive(false);
+        holdToTalkRef.current = false;
         setIsMuted(true);
     };
 
     const handleToggleMute = async () => {
         try {
-            const nextState = !isMuted;
+            const nextState = wantsToSpeak || !isMuted;
             
             // If the room is globally muted by the admin, participants cannot unmute themselves
             if (!nextState && isGlobalMuteActive && !isAdmin) {
@@ -274,7 +286,7 @@ const VoiceChatContent = ({
                 await handleToggleMute();
             } else if (isAdmin) {
                 // Admin can mute/unmute others
-                const shouldMute = participant.isMicrophoneEnabled;
+                const shouldMute = speakerState?.entries?.[participant.identity]?.status === 'granted' || participant.isMicrophoneEnabled;
                 await sendMuteCommand(participant.identity, shouldMute);
             } else {
                 // Participant clicked on another participant's mic icon
@@ -388,7 +400,7 @@ const VoiceChatContent = ({
                                         ]}
                                     >
                                         <Text style={[styles.controlText, !isMuted && { color: '#FFFFFF' }]}>
-                                            {isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                            {wantsToSpeak && isMuted ? 'Cancel Request' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                         </Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
@@ -432,7 +444,7 @@ const VoiceChatContent = ({
                                         ]}
                                     >
                                         <Text style={[styles.controlText, isHoldToTalkActive && { color: '#FFFFFF' }]}>
-                                            {isGlobalMuteActive ? 'Muted by Admin' : 'Hold to Talk'}
+                                            {isGlobalMuteActive ? 'Muted by Admin' : wantsToSpeak && isMuted ? 'Waiting to Speak' : 'Hold to Talk'}
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
@@ -459,6 +471,7 @@ const VoiceChatContent = ({
                         )}
                     </View>
 
+                    <VoiceSpeakerQueue profiles={participantMap} />
                     <View style={styles.statusRow}>
                         <View style={styles.networkStatus}>
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>

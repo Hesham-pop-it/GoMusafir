@@ -6,6 +6,7 @@ import { isVoiceStaff } from '../utils/voiceRole';
 import { monitorVoiceSpeaking } from '../utils/voiceSpeakingMonitor';
 import { watchVoiceChannelStatus } from '../utils/voiceChannelStatus';
 import { requestVoiceToken } from '../utils/requestVoiceToken';
+import { createVoiceSpeakerController } from '../utils/voiceSpeakerController';
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,22 +32,6 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import VoiceInactivityMonitor from '../components/VoiceInactivityMonitor';
 
 const VoiceContext = createContext();
-
-const stringToUint8Array = (str) => {
-    const arr = [];
-    for (let i = 0; i < str.length; i++) {
-        arr.push(str.charCodeAt(i));
-    }
-    return new Uint8Array(arr);
-};
-
-const uint8ArrayToString = (arr) => {
-    let str = '';
-    for (let i = 0; i < arr.length; i++) {
-        str += String.fromCharCode(arr[i]);
-    }
-    return str;
-};
 
 const getWidgetsDir = () => {
     if (!widgetsDirectory) return null;
@@ -96,7 +81,15 @@ export const VoiceProvider = ({ children }) => {
     const [localSpeaking, setLocalSpeaking] = useState(false);
     const [isChannelActive, setIsChannelActive] = useState(null); // null means loading
     const [isGlobalMuteActive, setIsGlobalMuteActive] = useState(false);
-    const [isMuted, setIsMuted] = useState(true);
+    const [isMuted, setMutedState] = useState(true);
+    const [wantsToSpeak, setWantsToSpeak] = useState(false);
+    const [speakerState, setSpeakerState] = useState(null);
+    const [speakerConnectionVersion, setSpeakerConnectionVersion] = useState(0);
+    const speakerController = useRef(null);
+    const setIsMuted = React.useCallback(muted => {
+        if (speakerController.current) speakerController.current.setMuted(muted);
+        else if (muted) setMutedState(true);
+    }, []);
     const [loading, setLoading] = useState(false);
     const [stopping, setStopping] = useState(false);
     const stoppingRef = useRef(false);
@@ -136,6 +129,54 @@ export const VoiceProvider = ({ children }) => {
     const room = useRef(new Room({
         audioLevelInterval: 20, // More frequent updates for more responsive UI
     })).current;
+
+    useEffect(() => {
+        setSpeakerState(null);
+        if (!isConnected || !activeTripId || !activeOrgId || !currentUser?.uid) return;
+        const uid = currentUser.uid;
+        const roomName = room.name;
+        const participantSid = room.localParticipant.sid;
+        const call = httpsCallable(functions, 'updateVoiceSpeaker');
+        const controller = createVoiceSpeakerController({
+            participantSid,
+            send: async command => {
+                // Contention is brief; retry the same idempotent command.
+                for (let attempt = 0; ; attempt++) {
+                    try { return await call({ ...command, tripId: activeTripId, roomName }); }
+                    catch (error) {
+                        if (error.code !== 'functions/aborted' || attempt >= 8) throw error;
+                        await new Promise(resolve => setTimeout(resolve, 250 + Math.random() * 400));
+                    }
+                }
+            },
+            setMicrophone: enabled => room.name === roomName && room.localParticipant.sid === participantSid
+                ? room.localParticipant.setMicrophoneEnabled(enabled) : Promise.resolve(),
+            onMuted: muted => {
+                if (speakerController.current !== controller) return;
+                isMutedRef.current = muted; setMutedState(muted);
+            },
+            onIntent: wanted => { if (speakerController.current === controller) setWantsToSpeak(wanted); },
+            onError: error => {
+                if (speakerController.current === controller) Alert.alert('Microphone unavailable', error.message || 'Please try again.');
+            },
+        });
+        speakerController.current = controller;
+        const permissionChanged = () => controller.updatePermission(room.localParticipant.permissions?.canPublish);
+        room.on(RoomEvent.ParticipantPermissionsChanged, permissionChanged);
+        permissionChanged();
+        const unsubscribe = onValue(ref(database, `voice_speakers/${activeOrgId}/${activeTripId}`), snapshot => {
+            const value = snapshot.val();
+            const state = value?.roomName === roomName ? value : null;
+            setSpeakerState(state);
+            controller.updateState(state, uid);
+        }, error => { controller.setMuted(true); console.warn('Speaker queue unavailable:', error.code); });
+        return () => {
+            unsubscribe();
+            room.off(RoomEvent.ParticipantPermissionsChanged, permissionChanged);
+            controller.dispose();
+            if (speakerController.current === controller) speakerController.current = null;
+        };
+    }, [isConnected, activeTripId, activeOrgId, currentUser?.uid, room, speakerConnectionVersion]);
 
     // React to Firebase Auth state changes globally
     useEffect(() => {
@@ -392,9 +433,8 @@ export const VoiceProvider = ({ children }) => {
             if (Platform.OS === 'ios') {
                 await restoreIOSVoiceAudio().catch(error => console.warn('[VoiceContext] Audio recovery failed:', error));
             }
-            if (room?.localParticipant) {
-                await room.localParticipant.setMicrophoneEnabled(!isMutedRef.current).catch(() => {});
-            }
+            setIsMuted(true);
+            setSpeakerConnectionVersion(version => version + 1);
         };
 
         const handleAudioSubscribed = (track) => {
@@ -405,29 +445,9 @@ export const VoiceProvider = ({ children }) => {
             }
         };
 
-        const onDataReceived = (payload, participant) => {
-            try {
-                const str = uint8ArrayToString(payload);
-                const data = JSON.parse(str);
-                
-                if (data.targetIdentity === auth.currentUser?.uid) {
-                    if (data.type === 'mute') {
-                        setIsMuted(true);
-                        Alert.alert("Microphone Muted", "You have been muted by the organizer.");
-                    } else if (data.type === 'unmute') {
-                        setIsMuted(false);
-                        Alert.alert("Microphone Unmuted", "You have been unmuted by the organizer.");
-                    }
-                }
-            } catch (e) {
-                // Silently fail on non-JSON or malformed data
-            }
-        };
-
         room.on('disconnected', handleRoomDisconnected);
         room.on('reconnected', handleRoomReconnected);
         room.on(RoomEvent.TrackSubscribed, handleAudioSubscribed);
-        room.on('dataReceived', onDataReceived);
 
         // Auto-disconnect on Logout
         const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
@@ -440,7 +460,6 @@ export const VoiceProvider = ({ children }) => {
             room.off('disconnected', handleRoomDisconnected);
             room.off('reconnected', handleRoomReconnected);
             room.off(RoomEvent.TrackSubscribed, handleAudioSubscribed);
-            room.off('dataReceived', onDataReceived);
             unsubscribeAuth();
         };
     }, [room, isConnected]);
@@ -589,20 +608,7 @@ export const VoiceProvider = ({ children }) => {
         prevGlobalMute.current = isGlobalMuteActive;
     }, [isGlobalMuteActive, isAdmin]);
 
-    // Sync local mute state with hardware
-    useEffect(() => {
-        let cancelled = false;
-        if (room?.localParticipant && isConnected) {
-            room.localParticipant.setMicrophoneEnabled(!isMuted).catch(err => {
-                console.log("Failed to sync mic state:", err);
-                if (!cancelled && !isMuted) {
-                    setIsMuted(true);
-                    Alert.alert('Microphone unavailable', 'Unable to turn on your microphone. Please try again.');
-                }
-            });
-        }
-        return () => { cancelled = true; };
-    }, [isMuted, room, isConnected]);
+    // The speaker controller owns hardware changes after permission is granted.
 
     // Clear any legacy auto-reconnect session flag on startup
     useEffect(() => {
@@ -1253,7 +1259,7 @@ export const VoiceProvider = ({ children }) => {
         await handleVoiceWidgetAction(event, {
             connected: isConnectedRef.current,
             admin: isAdminRef.current,
-            muted: isMutedRef.current,
+            muted: isMutedRef.current && !wantsToSpeak,
             globallyMuted: isGlobalMuteActive,
             tripId: activeTripIdRef.current,
             orgId: activeOrgIdRef.current,
@@ -1261,8 +1267,6 @@ export const VoiceProvider = ({ children }) => {
             disconnect,
             stop: stopChannel,
             setMuted: async muted => {
-                await room.localParticipant.setMicrophoneEnabled(!muted);
-                isMutedRef.current = muted;
                 setIsMuted(muted);
             },
             setGlobalMuted: async muted => {
@@ -1293,12 +1297,9 @@ export const VoiceProvider = ({ children }) => {
     const sendMuteCommand = React.useCallback(async (targetIdentity, muteState = true) => {
         if (!room || !isConnected) return;
         try {
-            const data = stringToUint8Array(JSON.stringify({
-                type: muteState ? 'mute' : 'unmute',
-                targetIdentity: targetIdentity
-            }));
-            await room.localParticipant.publishData(data, {
-                destinationIdentities: [targetIdentity]
+            await httpsCallable(functions, 'updateVoiceSpeaker')({
+                tripId: activeTripIdRef.current, roomName: room.name,
+                action: muteState ? 'revoke' : 'grant', targetUid: targetIdentity,
             });
 
             // Also record in-app notification in RTDB for the target participant
@@ -1306,8 +1307,8 @@ export const VoiceProvider = ({ children }) => {
             const oId = activeOrgIdRef.current || activeOrgId;
             if (tId && oId && targetIdentity) {
                 const notifType = muteState ? 'voice_muted' : 'voice_unmuted';
-                const title = muteState ? 'Microphone Muted' : 'Microphone Unmuted';
-                const message = muteState ? 'You were muted by the organizer.' : 'You were unmuted by the organizer.';
+                const title = muteState ? 'Microphone Muted' : 'Speaking Request Prioritized';
+                const message = muteState ? 'Your speaking permission was revoked by the organizer.' : 'Your speaking request was moved to the front by the organizer.';
                 const timestamp = Date.now();
 
                 push(ref(database, `trips_active/${oId}/${tId}/notifications/${targetIdentity}`), {
@@ -1352,6 +1353,8 @@ export const VoiceProvider = ({ children }) => {
         isGlobalMuteActive, 
         isMuted, 
         setIsMuted,
+        wantsToSpeak,
+        speakerState,
         loading: loading || stopping,
         stopping,
         connect,
@@ -1373,6 +1376,8 @@ export const VoiceProvider = ({ children }) => {
         isGlobalMuteActive, 
         isMuted, 
         setIsMuted,
+        wantsToSpeak,
+        speakerState,
         loading,
         stopping,
         connect,

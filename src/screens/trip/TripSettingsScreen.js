@@ -893,7 +893,7 @@ const TripSettingsScreen = () => {
                         )}
 
                         {['admin', 'co-host', 'manager'].includes(userRole) && (
-                            <TripDateSettings orgId={resolvedOrgId} tripId={resolvedTripId} />
+                            <TripDateSettings orgId={resolvedOrgId} tripId={resolvedTripId} participantCount={filledSeats} />
                         )}
 
                         {/* Visibility Settings */}

@@ -98,6 +98,10 @@ exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
 exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
 exports.onActiveHostsUpdated  = voiceFunctions.onActiveHostsUpdated;
 exports.livekitWebhook        = voiceFunctions.livekitWebhook;
+const voiceSpeakerFunctions = require('./groups/voiceSpeakerFunctions');
+exports.updateVoiceSpeaker = voiceSpeakerFunctions.updateVoiceSpeaker;
+exports.onVoiceGlobalMuteChanged = voiceSpeakerFunctions.onVoiceGlobalMuteChanged;
+exports.reconcileVoiceSpeakers = voiceSpeakerFunctions.reconcileVoiceSpeakers;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;

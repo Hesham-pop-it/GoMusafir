@@ -23,6 +23,7 @@ import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { functions, auth } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
+import { parseInvitationCode, invitationErrorMessage } from '../../utils/invitationLink';
 
 const ErrorIcon = () => (
     <Svg width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -89,6 +90,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
     const autoJoin = async (code) => {
         setIsLoading(true);
         try {
+            code = parseInvitationCode(code);
+            if (!code) throw { code: 'invalid-argument' };
             const getMetadata = httpsCallable(functions, 'getInviteMetadata');
             const result = await getMetadata({ inviteCode: code });
             const tripDetails = result.data;
@@ -113,7 +116,7 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
             }
             navigation.navigate('JoinEmail', { invitationCode: code, tripDetails });
         } catch (error) {
-            setErrorMsg('Invalid link. Please check the link and try again');
+            setErrorMsg(invitationErrorMessage(error));
             setIsValid(false);
         } finally {
             setIsLoading(false);
@@ -135,22 +138,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
         setIsLoading(true);
 
         try {
-            // Extract code from link (e.g. app.gomusafir.app/link/XYZ)
-            let codeInput = invitationLink.trim();
-
-            // Enforce link format if it's a URL or contains certain patterns
-            if (codeInput.includes('://') || codeInput.includes('.')) {
-                if (!codeInput.includes('app.gomusafir.app/link/')) {
-                    setErrorMsg('Invalid link. Please check the link and try again');
-                    setIsValid(false);
-                    setIsLoading(false);
-                    return;
-                }
-            }
-
-            if (codeInput.includes('/')) {
-                codeInput = codeInput.split('/').pop().split('?')[0];
-            }
+            const codeInput = parseInvitationCode(invitationLink);
+            if (!codeInput) throw { code: 'invalid-argument' };
 
             // Call getInviteMetadata
             const getMetadata = httpsCallable(functions, 'getInviteMetadata');
@@ -197,8 +186,8 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
             navigation.navigate('JoinEmail', { invitationCode: codeInput, tripDetails });
 
         } catch (error) {
-            console.log(error);
-            setErrorMsg('Invalid link. Please check the link and try again');
+            console.warn('[JoinWithLink] Invitation validation failed:', error.code);
+            setErrorMsg(invitationErrorMessage(error));
             setIsValid(false);
         } finally {
             setIsLoading(false);

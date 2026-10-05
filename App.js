@@ -547,7 +547,7 @@ export default function App() {
             <AppRootLayout>
               {sessionResolved && <RootNavigator initialRouteName={initialRoute} />}
               {sessionResolved && <TemplateAlertPopup />}
-              {!sessionResolved && !offline && !profileMissing && (
+              {!sessionResolved && !offline && !profileMissing && !syncFailed && (
                 <View style={styles.connectionState} accessibilityLiveRegion="polite">
                   <ActivityIndicator size="large" color="#FFFFFF" />
                   <Text style={styles.connectionTitle}>Restoring your session</Text>
@@ -555,7 +555,7 @@ export default function App() {
                 </View>
               )}
               <CompatModal
-                isVisible={offline || profileMissing}
+                isVisible={offline || profileMissing || (!sessionResolved && syncFailed)}
                 animationIn="zoomIn"
                 backdropOpacity={0.65}
                 style={styles.connectionModal}
@@ -565,12 +565,14 @@ export default function App() {
                     <Ionicons name="cloud-offline-outline" size={32} color={Colors.dark.primary} />
                   </View>
                   <Text style={styles.connectionTitle}>
-                    {offline ? 'No internet connection' : 'Account unavailable'}
+                    {offline ? 'No internet connection' : profileMissing ? 'Account unavailable' : 'Unable to restore your session'}
                   </Text>
                   <Text style={styles.connectionMessage}>
                     {offline
                       ? 'An internet connection is required to load or update online features.'
-                      : 'Your sign-in is valid, but your account profile is missing. Account deletion may not have finished. Please contact support if you recently deleted your account.'}
+                      : profileMissing
+                        ? 'Your sign-in is valid, but your account profile is missing. Account deletion may not have finished. Please contact support if you recently deleted your account.'
+                        : 'The account service is temporarily unavailable. We will retry automatically.'}
                   </Text>
                   {auth?.currentUser && !profileMissing && (
                     <Text style={styles.connectionMessage}>Your sign-in is saved. You don’t need to log in again.</Text>

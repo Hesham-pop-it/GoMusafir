@@ -45,6 +45,10 @@ async function main() {
     await check(role, 'trip_feature_access/o/t/preTripVoiceUsedSeconds', 'PUT', 0, false);
     await check(role, 'trip_feature_access/o/t', 'PUT', { voiceAccess: 'FULL' }, false);
     await check(role, 'voice_rooms/forged', 'PUT', { tripId: 't', orgId: 'o' }, false);
+    await check(role, 'voice_speakers/o/t', 'GET', undefined, true);
+    await check(role, 'voice_speakers/o/t/entries/forged', 'PUT', { status: 'granted' }, false);
+    await check(role, 'voice_speaker_locks/forged', 'PUT', { owner: 'forged' }, false);
+    await check(role, 'voice_speaker_locks/forged', 'GET', undefined, false);
     await check(role, 'trips_active/o/t/voice_channel/isChannelStarted', 'PUT', true, false);
     await check(role, 'trips_active/o/t/voice_channel', 'PUT', { isChannelStarted: true }, false);
     await check(role, 'orgs/o/trips/t/voice_state/is_active', 'PUT', true, false);

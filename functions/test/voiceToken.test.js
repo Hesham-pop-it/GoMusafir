@@ -33,7 +33,11 @@ function fixture({ denied = false, unavailable = false } = {}) {
       if (name === '../admin') return { db: { ref: () => ({ get: async () => ({ val: () => null }) }) } };
       if (name === 'livekit-server-sdk') return { AccessToken: class {
         constructor() { minted++; }
-        addGrant(grant) { assert.equal(grant.room, 'reserved-room'); }
+        addGrant(grant) {
+          assert.equal(grant.room, 'reserved-room');
+          assert.equal(grant.canPublish, false, 'joining must not bypass the speaker allocator');
+          assert.equal(grant.canSubscribe, true);
+        }
         async toJwt() { return 'signed-token'; }
       }, WebhookReceiver: class {} };
       throw new Error(name);
