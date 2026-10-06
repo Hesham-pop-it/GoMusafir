@@ -329,7 +329,7 @@ export default function TemplateAlertPopup() {
                 showBanner(newestGlobalNotif);
             }
         }, (err) => {
-            console.log("[TemplateAlertPopup] userNotifs error:", err?.message);
+            console.log("[TemplateAlertPopup] userNotifs error:", { code: err?.code, message: err?.message });
         });
 
         // 2. Trip-level Notifications & Chat Listeners Management
@@ -484,7 +484,7 @@ export default function TemplateAlertPopup() {
                         showBanner(newestTripNotif);
                     }
                 }, (err) => {
-                    console.log("[TemplateAlertPopup] trip notif error:", err?.message);
+                    console.log("[TemplateAlertPopup] trip notif error:", { code: err?.code, message: err?.message });
                 });
 
                 // Direct Trip Chat Listener (ensures instant in-app popups even if cloud functions are delayed)
@@ -551,13 +551,13 @@ export default function TemplateAlertPopup() {
                         showBanner(newestChatMsg);
                     }
                 }, (err) => {
-                    console.log("[TemplateAlertPopup] chat listener error:", err?.message);
+                    console.log("[TemplateAlertPopup] chat listener error:", { code: err?.code, message: err?.message });
                 });
 
                 tripListenersMap.set(tripId, { unsubNotif, unsubChat, orgId });
             }
         }, (err) => {
-            console.log("[TemplateAlertPopup] user listener error:", err?.message);
+            console.log("[TemplateAlertPopup] user listener error:", { code: err?.code, message: err?.message });
         });
 
         return () => {

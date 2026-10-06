@@ -4,17 +4,20 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/services/visibilityData.js'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 function fixture(){
- const state={calls:[],queue:[],data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false};
+ const state={calls:[],queue:[],data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set()};
  const auth={get currentUser(){return state.uid?{uid:state.uid}:null;}};
  const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible})',{
   auth,functions:{},URL,console,
+  AppState:{get currentState(){return state.appState;},addEventListener:(_,listener)=>{
+    state.stateListeners.add(listener);return {remove:()=>state.stateListeners.delete(listener)};
+  }},
   httpsCallable:(_,name)=>async params=>{state.calls.push({name,params});if(state.wait)await state.wait;if(state.fail)throw Error('denied');return {data:state.data};},
   get:async()=>{throw Error('raw read not allowed');},onValue:()=>{throw Error('raw subscription not allowed');},
-  setTimeout:fn=>{const item={fn};state.queue.push(item);return item;},clearTimeout:item=>{item.cancelled=true;},
+  setTimeout:fn=>{const item={fn};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
  });
  const ref=path=>({toString:()=>`https://example.test/${path}`});
  const tick=async()=>{const item=state.queue.shift();if(item&&!item.cancelled)await item.fn();};
- return {state,api,ref,tick};
+ return {state,api,ref,tick,changeState:next=>{state.appState=next;for(const listener of state.stateListeners)listener(next);}};
 }
 test('profile reads use one authorized directory request instead of raw PII',async()=>{
  const f=fixture();const [a,b]=await Promise.all([
@@ -48,4 +51,31 @@ test('late responses cannot repopulate an unmounted screen or a different accoun
   assert.equal(values.length,0);
   stop();
  }
+});
+
+test('screen polling pauses in background and resumes immediately on foreground',async()=>{
+ const f=fixture(),values=[];
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
+ await f.tick();assert.equal(f.state.calls.length,1);
+ f.changeState('background');await f.tick();assert.equal(f.state.calls.length,1);
+ f.state.data.locations={};f.changeState('active');await f.tick();
+ assert.equal(f.state.calls.length,2);assert.deepEqual(Object.keys(values.at(-1)),[]);
+ stop();assert.equal(f.state.stateListeners.size,0);
+});
+test('background-interrupted requests do not publish errors and foreground failures still clear data',async()=>{
+ const f=fixture(),values=[],errors=[];
+ const stop=f.api.onVisibleValue(f.ref('users/a'),null,snap=>values.push(snap.val()),error=>errors.push(error));
+ let resolve;f.state.wait=new Promise(done=>{resolve=done;});
+ const pending=f.tick();f.changeState('background');f.state.fail=true;resolve();await pending;
+ assert.equal(errors.length,0);assert.equal(values.length,0);
+ f.changeState('active');await f.tick();
+ assert.equal(errors.length,1);assert.equal(values.at(-1),null);
+ stop();
+});
+test('listeners created in the background wait until the app becomes active',async()=>{
+ const f=fixture();f.changeState('background');
+ const stop=f.api.onVisibleValue(f.ref('users/a'),null,()=>{});
+ await f.tick();assert.equal(f.state.calls.length,0);
+ f.changeState('active');await f.tick();assert.equal(f.state.calls.length,1);
+ stop();
 });

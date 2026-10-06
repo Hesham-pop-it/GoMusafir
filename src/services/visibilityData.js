@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { get, onValue } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../config/firebase';
@@ -48,6 +49,34 @@ export async function getVisibleSnapshot(target, tripId) {
     if (!request) return get(target);
     return select(await load(request), request);
 }
+// iOS/Android can suspend networking in the background. Screen-data polling
+// follows app visibility; location tracking is managed by its own native service.
+function startForegroundPolling(task) {
+    let stopped = false, timer = null, revision = 0;
+    let state = AppState.currentState;
+    const active = () => !state || state === 'active';
+    const poll = async () => {
+        if (stopped || !active()) return;
+        const started = revision;
+        const isCurrent = () => !stopped && active() && revision === started;
+        try { await task(isCurrent); }
+        finally { if (isCurrent()) timer = setTimeout(poll, 4000); }
+    };
+    const subscription = AppState.addEventListener('change', next => {
+        if (next === state) return;
+        state = next;
+        revision += 1;
+        clearTimeout(timer);
+        if (active()) timer = setTimeout(poll, 0);
+    });
+    if (active()) timer = setTimeout(poll, 0);
+    return () => {
+        stopped = true;
+        revision += 1;
+        clearTimeout(timer);
+        subscription.remove();
+    };
+}
 export function onVisibleValue(target, tripId, callback, onError = () => {}) {
     const request = resolve(target, tripId);
     if (!request) return onValue(target, callback, onError);
@@ -55,12 +84,12 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
     const key = `${uid}:${request.tripId}:${request.section}`;
     let group = subscriptions.get(key);
     if (!group) {
-        group = { clients: new Set(), timer: null, stopped: false };
+        group = { clients: new Set(), stopPolling: null, stopped: false };
         subscriptions.set(key, group);
-        const poll = async () => {
+        const poll = async isCurrent => {
             try {
                 const data = await load(request);
-                if (!group.stopped && auth.currentUser?.uid === uid) {
+                if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
                     for (const client of group.clients) {
                         const next = select(data, client.request);
                         const signature = JSON.stringify(next.val());
@@ -69,14 +98,12 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
                 }
             } catch (error) {
                 // Access loss must clear old coordinates/profile data, never retain it.
-                if (!group.stopped && auth.currentUser?.uid === uid) {
+                if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
                     for (const client of group.clients) { client.signature = undefined; client.callback(snapshot(null)); client.onError(error); }
                 }
-            } finally {
-                if (!group.stopped && auth.currentUser?.uid === uid) group.timer = setTimeout(poll, 4000);
             }
         };
-        group.timer = setTimeout(poll, 0);
+        group.stopPolling = startForegroundPolling(poll);
     }
     const client = { request, callback, onError };
     group.clients.add(client);
@@ -85,7 +112,7 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
         listeners.get(request.path)?.delete(stop);
         if (!group.clients.size) {
             group.stopped = true;
-            clearTimeout(group.timer);
+            group.stopPolling();
             subscriptions.delete(key);
         }
     };
@@ -106,16 +133,12 @@ export function useVisibilityRevision(tripId) {
     const [revision, setRevision] = useState('');
     useEffect(() => {
         if (!tripId) { setRevision(''); return; }
-        let stopped = false, timer;
-        const poll = async () => {
+        return startForegroundPolling(async isCurrent => {
             try {
                 const data = await load({ tripId, section: 'directory' });
-                if (!stopped) setRevision(JSON.stringify(data.users));
-            } catch (_) { if (!stopped) setRevision('unavailable'); }
-            if (!stopped) timer = setTimeout(poll, 4000);
-        };
-        poll();
-        return () => { stopped = true; clearTimeout(timer); };
+                if (isCurrent()) setRevision(JSON.stringify(data.users));
+            } catch (_) { if (isCurrent()) setRevision('unavailable'); }
+        });
     }, [tripId, auth.currentUser?.uid]);
     return revision;
 }
