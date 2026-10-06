@@ -4,10 +4,11 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/services/visibilityData.js'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 function fixture(){
- const state={calls:[],queue:[],data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set()};
+ const state={calls:[],queue:[],data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
  const auth={get currentUser(){return state.uid?{uid:state.uid}:null;}};
- const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible})',{
+ const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible,useVisibilityRevision,visibilitySignature})',{
   auth,functions:{},URL,console,
+  useState:()=>['',value=>state.revisions.push(value)],useEffect:callback=>{state.cleanup=callback();},
   AppState:{get currentState(){return state.appState;},addEventListener:(_,listener)=>{
     state.stateListeners.add(listener);return {remove:()=>state.stateListeners.delete(listener)};
   }},
@@ -78,4 +79,35 @@ test('listeners created in the background wait until the app becomes active',asy
  await f.tick();assert.equal(f.state.calls.length,0);
  f.changeState('active');await f.tick();assert.equal(f.state.calls.length,1);
  stop();
+});
+
+test('identical reordered participant and coordinate maps do not refresh subscribers',async()=>{
+ const f=fixture(),values=[];
+ f.state.data.locations={a:{lat:1,lng:2},b:{lat:3,lng:4}};
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
+ await f.tick();
+ f.state.data.locations={b:{lng:4,lat:3},a:{lng:2,lat:1}};
+ await f.tick();assert.equal(values.length,1);
+ f.state.data.locations.b.lat=5;
+ await f.tick();assert.equal(values.length,2);
+ delete f.state.data.locations.b;
+ await f.tick();assert.equal(values.length,3);assert.equal(values.at(-1).b,undefined);
+ stop();
+});
+test('visibility revisions stay stable across server completion order but change on privacy revocation',async()=>{
+ const f=fixture();
+ f.state.data.users={a:{profile:{firstName:'A',lastName:'One'}},b:{profile:{firstName:'B',lastName:'Two'}}};
+ f.api.useVisibilityRevision('t');await f.tick();
+ f.state.data.users={b:{profile:{lastName:'Two',firstName:'B'}},a:{profile:{lastName:'One',firstName:'A'}}};
+ await f.tick();assert.equal(f.state.revisions[0],f.state.revisions[1]);
+ f.state.data.users.b.profile={firstName:'',lastName:''};
+ await f.tick();assert.notEqual(f.state.revisions[1],f.state.revisions[2]);
+ f.state.cleanup();
+});
+test('semantic comparison preserves array order, nulls, and real field changes',()=>{
+ const f=fixture(),signature=f.api.visibilitySignature;
+ assert.equal(signature({b:{d:1,c:2},a:null}),signature({a:null,b:{c:2,d:1}}));
+ assert.notEqual(signature([1,2]),signature([2,1]));
+ assert.notEqual(signature({a:null}),signature({}));
+ assert.notEqual(signature({a:false}),signature({a:true}));
 });

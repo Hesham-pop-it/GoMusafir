@@ -4,6 +4,16 @@ import { get, onValue } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../config/firebase';
 
+// Directory entries finish parallel server reads in an arbitrary order. Compare
+// JSON values by content so unchanged polls do not rebuild screens or close
+// participant details. Array order remains meaningful (for example chat lists).
+function visibilitySignature(value) {
+    return JSON.stringify(value, (_, entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return entry;
+        return Object.fromEntries(Object.keys(entry).sort().map(key => [key, entry[key]]));
+    });
+}
+
 const inFlight = new Map();
 const listeners = new Map();
 const subscriptions = new Map();
@@ -92,7 +102,7 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
                 if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
                     for (const client of group.clients) {
                         const next = select(data, client.request);
-                        const signature = JSON.stringify(next.val());
+                        const signature = visibilitySignature(next.val());
                         if (client.signature !== signature) { client.signature = signature; client.callback(next); }
                     }
                 }
@@ -136,7 +146,7 @@ export function useVisibilityRevision(tripId) {
         return startForegroundPolling(async isCurrent => {
             try {
                 const data = await load({ tripId, section: 'directory' });
-                if (isCurrent()) setRevision(JSON.stringify(data.users));
+                if (isCurrent()) setRevision(visibilitySignature(data.users));
             } catch (_) { if (isCurrent()) setRevision('unavailable'); }
         });
     }, [tripId, auth.currentUser?.uid]);
