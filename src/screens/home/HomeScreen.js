@@ -1,3 +1,4 @@
+import { onVisibleValue } from '../../services/visibilityData';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -454,7 +455,7 @@ const HomeScreen = ({ navigation }) => {
 
         // 1. Get user's org context
         const userRef = ref(database, `users/${user.uid}`);
-        const unsubscribeUser = onValue(userRef, (snapshot) => {
+        const unsubscribeUser = onVisibleValue(userRef, null, (snapshot) => {
             const userData = snapshot.val();
             if (!userData) {
                 setIsLoading(false);

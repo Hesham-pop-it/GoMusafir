@@ -11,6 +11,11 @@ const { notificationSound } = require("./notificationSoundConfig");
  */
 async function sendPushNotification(uid, title, body, data = {}, options = {}) {
     try {
+        const { redactNotification } = require('./notificationPrivacy');
+        const safe = redactNotification({ ...data, title, message: body });
+        title = safe.title || title;
+        body = safe.message || body;
+        data = safe;
         const {
             androidChannelId: requestedChannelId,
             interruptionLevel = "active", // 'active', 'time-sensitive', 'passive', 'critical'

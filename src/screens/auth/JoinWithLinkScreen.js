@@ -78,14 +78,14 @@ const JoinWithLinkScreen = ({ navigation, route }) => {
     }, []);
 
     useEffect(() => {
-        const code = route.params?.invitationCode;
+        const code = route.params?.invitationCode || route.params?.code;
         if (code) {
             setInvitationLink(code);
             // We need a small delay or use a separate function to ensure state is updated
             // But handleContinue can take the code directly if we refactor it slightly
             autoJoin(code);
         }
-    }, [route.params?.invitationCode]);
+    }, [route.params?.invitationCode, route.params?.code]);
 
     const autoJoin = async (code) => {
         setIsLoading(true);

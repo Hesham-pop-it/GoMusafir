@@ -11,7 +11,7 @@ export function resolveVoiceWidgetSpeaker({ connected, muted, localSpeaking, loc
     const participant = remoteParticipants.get(uid);
     const profile = activeSpeaker?.uid === uid ? activeSpeaker : null;
     return {
-        name: profiles[uid]?.name || profile?.name || participant.name || 'Speaker',
+        name: profiles[uid]?.name || profile?.name || 'Speaker',
         avatar: avatarCache[uid] || '',
         isSpeaking: true,
     };

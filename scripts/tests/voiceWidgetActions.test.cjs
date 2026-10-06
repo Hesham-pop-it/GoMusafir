@@ -6,7 +6,7 @@ const source = fs.readFileSync(require.resolve('../../src/utils/voiceWidgetActio
 const run = vm.runInNewContext(source.replace('export async function', 'async function') + '\nhandleVoiceWidgetAction');
 function fixture(overrides = {}) {
     const calls = [];
-    const session = { connected: true, admin: true, muted: false, globallyMuted: false,
+    const session = { validate: async () => true, connected: true, admin: true, muted: false, globallyMuted: false,
         tripId: 'trip', orgId: 'org', ...overrides };
     for (const name of ['connect', 'disconnect', 'stop', 'setMuted', 'setGlobalMuted']) {
         session[name] = async (...args) => calls.push([name, ...args]);
@@ -40,4 +40,17 @@ test('disconnected controls and unrelated events have no effect', async () => {
 test('microphone errors propagate for visible failure handling', async () => {
     const f = fixture(); f.session.setMuted = async () => {throw new Error('mic failed');};
     await assert.rejects(f.tap('mute_myself'), /mic failed/);
+});
+
+test('every widget control requires current server validation, even with cached connection and admin flags', async () => {
+    for (const validate of [undefined, async () => false]) {
+        const f = fixture({ validate });
+        for (const target of ['join_channel', 'leave_channel', 'stop_channel', 'mute_myself', 'hold_to_talk', 'mute_channel']) await f.tap(target);
+        assert.deepEqual(f.calls, []);
+    }
+});
+test('rejected validation never invokes a widget control', async () => {
+    const f = fixture({ validate: async () => { throw new Error('revoked'); } });
+    await assert.rejects(f.tap('mute_channel'), /revoked/);
+    assert.deepEqual(f.calls, []);
 });

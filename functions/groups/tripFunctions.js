@@ -540,3 +540,8 @@ exports.uploadTripPhoto = onCall({ region: 'europe-west1' }, async request => {
   const { getDownloadURL } = require('firebase-admin/storage');
   return { url: await getDownloadURL(file) };
 });
+
+// Sensitive trip data is filtered on the server for this viewer on every read.
+for (const name of ['getVisibleTripData', 'requestParticipantLocation', 'respondToLocationRequest']) {
+  exports[name] = onCall({ region: 'europe-west1' }, request => require('../services/tripVisibilityService')[name](request));
+}

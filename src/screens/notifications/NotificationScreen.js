@@ -1,3 +1,5 @@
+import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
 import React, { useEffect, useState } from 'react';
 import {
     View,
@@ -7,6 +9,7 @@ import {
     TouchableOpacity,
     StatusBar,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -29,7 +32,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
         const setupListener = async () => {
             try {
-                const userSnap = await get(ref(database, `users/${uid}`));
+                const userSnap = await getVisibleSnapshot(ref(database, `users/${uid}`), null);
                 const userData = userSnap.val() || {};
 
                 // Collect all trip/org pairs for this user
@@ -136,7 +139,7 @@ const NotificationScreen = ({ navigation, route }) => {
                                     const globalVis = globalVisSnap.val() || {};
 
                                     // Fetch target user's personal visibility config
-                                    const userVisSnap = await get(ref(database, `users/${targetUid}/participant_visibility/${tId}`));
+                                    const userVisSnap = await getVisibleSnapshot(ref(database, `users/${targetUid}/participant_visibility/${tId}`), tId);
                                     const userVis = userVisSnap.val() || {};
 
                                     const targetRoleSnap = await get(ref(database, `orgs/${oId}/staff/${targetUid}`));
@@ -145,7 +148,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
                                     const isViewerStaff = Boolean(orgAdminMap[oId]);
 
-                                    const profSnap = await get(ref(database, `users/${targetUid}/profile`));
+                                    const profSnap = await getVisibleSnapshot(ref(database, `users/${targetUid}/profile`), tId);
                                     const prof = profSnap.val() || {};
 
                                     resolvedName = getParticipantDisplayName({
@@ -199,7 +202,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
                 // Listen to user-level push notifications (system, account, push alerts)
                 const userGlobalRef = ref(database, `users/${uid}/notifications`);
-                const unsubUserGlobal = onValue(userGlobalRef, (snapshot) => {
+                const unsubUserGlobal = onVisibleValue(userGlobalRef, null, (snapshot) => {
                     if (snapshot.exists()) {
                         allNotifsMap['user_global'] = snapshot.val();
                     } else {
@@ -212,7 +215,7 @@ const NotificationScreen = ({ navigation, route }) => {
                 // Listen to each trip's notifications path
                 tripOrgPairs.forEach(({ tripId: tId, orgId: oId }) => {
                     const notifRef = ref(database, `trips_active/${oId}/${tId}/notifications/${uid}`);
-                    const unsub = onValue(notifRef, (snapshot) => {
+                    const unsub = onVisibleValue(notifRef, tId, (snapshot) => {
                         if (snapshot.exists()) {
                             allNotifsMap[tId] = snapshot.val();
                         } else {
@@ -311,6 +314,19 @@ const NotificationScreen = ({ navigation, route }) => {
         await navigateToNotificationTarget(item, navigation);
     };
 
+    const handleLocationResponse = async (item, accept) => {
+        try {
+            await respondToLocationRequest(item.tripId, item.id, accept);
+            if (accept) {
+                await startLiveLocationTracking(item.orgId, item.tripId);
+                await syncCurrentUserLocationNow();
+            }
+            setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, status: accept ? 'accepted' : 'declined' } : n));
+        } catch (error) {
+            Alert.alert('Location request', error.message || 'Could not respond. Please retry.');
+        }
+    };
+
     const rendernotificationItem = ({ item }) => {
         let iconName = 'bell-outline';
         let iconColor = '#FFF';
@@ -339,6 +355,16 @@ const NotificationScreen = ({ navigation, route }) => {
                 <View style={styles.contentWrapper}>
                     <Text style={[styles.cardTitle, !item.seen && { fontWeight: 'bold' }]}>{item.title}</Text>
                     <Text style={styles.cardDescription}>{item.description}</Text>
+                    {item.type === 'location_request' && item.status === 'pending' && item.expiresAt > Date.now() && (
+                        <View style={{ flexDirection: 'row', gap: 20, marginTop: 12 }}>
+                            <TouchableOpacity accessibilityRole="button" onPress={() => handleLocationResponse(item, true)}>
+                                <Text style={{ color: '#B99A4A' }}>Share for 15 minutes</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity accessibilityRole="button" onPress={() => handleLocationResponse(item, false)}>
+                                <Text style={{ color: '#FFF' }}>Decline</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
                     {Boolean(item.timestamp) && (
                         <Text style={styles.timeText}>
                             {formatNotificationTime(item.timestamp)}

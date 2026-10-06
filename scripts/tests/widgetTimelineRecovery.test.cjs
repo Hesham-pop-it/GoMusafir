@@ -44,3 +44,19 @@ test('a slow startup read cannot overwrite a newer voice snapshot', async () => 
     await pending;
     assert.deepEqual(snapshots, [liveProps]);
 });
+
+test('logout erases cached trip and speaker data and defeats an in-flight recovery', async () => {
+    let finish; const snapshots = []; let reloads = 0;
+    const recovery = createWidgetTimelineRecovery({
+        getTimeline: () => new Promise(resolve => { finish = resolve; }),
+        updateSnapshot: props => snapshots.push(props), reload: () => reloads++,
+    });
+    const pending = recovery.refresh(); recovery.clear();
+    finish([{ props: { tripId: 'old', activeChannelName: 'Private trip' } }]);
+    await pending;
+    assert.equal(reloads, 0);
+    assert.equal(snapshots.length, 1);
+    for (const key of ['tripId', 'orgId', 'activeChannelImageURL', 'activeSpeakerName', 'activeSpeakerAvatar']) assert.equal(snapshots[0][key], '');
+    assert.equal(snapshots[0].isConnected, false);
+    assert.equal(snapshots[0].isAdmin, false);
+});

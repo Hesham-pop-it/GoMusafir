@@ -24,18 +24,21 @@ test('legacy cross-source duplicates are suppressed, distinct identical messages
     assert.equal(claimNotification({...item,id:'fcm-one',_pushOnly:true},'push'),false);
     assert.equal(claimNotification({...item,id:'two'},'database'),true);
 });
-test('foreground uses only the in-app channel; background OS payload is never redisplayed', async () => {
+for (const platform of ['ios', 'android']) {
+test(`${platform}: foreground uses only the in-app channel; background OS payload is never redisplayed`, async () => {
     let banners=0, systems=0;
+    const channels=[];
     const state={currentState:'active'};
     const source=fs.readFileSync(require.resolve('../src/services/notificationService'),'utf8')
         .replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
-    const ctx={AppState:state,Platform:{OS:'ios'},Constants:{executionEnvironment:'native'},ExecutionEnvironment:{StoreClient:'expo'},
+    const ctx={AppState:state,Platform:{OS:platform},Constants:{executionEnvironment:'native'},ExecutionEnvironment:{StoreClient:'expo'},
         normalizeNotification, ...require('../functions/services/notificationSoundConfig'), publishForegroundNotification:()=>banners++,
-        notifee:{displayNotification:async()=>systems++},AndroidImportance:{HIGH:4},Set,Map,console};
+        notifee:{displayNotification:async()=>systems++,createChannel:async channel=>channels.push(channel)},AndroidImportance:{HIGH:4},Set,Map,console};
     vm.createContext(ctx);vm.runInContext(source,ctx);
     const remote={messageId:'one',data:{type:'chat_message'},notification:{title:'Hello',body:'World'}};
     await ctx.presentRemoteNotification(remote);
     assert.equal(banners,1);assert.equal(systems,0);
+    assert.equal(channels.length,0);
     state.currentState='background';
     await ctx.presentRemoteNotification(remote,true);
     assert.equal(systems,0);
@@ -47,4 +50,6 @@ test('foreground uses only the in-app channel; background OS payload is never re
     state.currentState='inactive';
     await ctx.presentRemoteNotification(remote);
     assert.equal(systems,2);
+    assert.equal(channels.length,platform==='android'?2:0);
 });
+}

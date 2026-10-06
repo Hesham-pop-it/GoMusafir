@@ -1,3 +1,4 @@
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue } from '../../services/visibilityData';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -88,12 +89,13 @@ const VoiceChatContent = ({
     globalVisibilityConfig,
     userRole
 }) => {
+    const visibilityRevision = useVisibilityRevision(tripId);
     const room = useRoomContext();
     const participants = useParticipants();
     const [participantMap, setParticipantMap] = useState({});
     const [speakingUids, setSpeakingUids] = useState([]);
     const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
-    const { wantsToSpeak, speakerState } = useVoice();
+    const { wantsToSpeak, speakerState, adminConnectionPending } = useVoice();
     const holdToTalkRef = useRef(false);
     useFocusEffect(React.useCallback(() => () => {
         if (holdToTalkRef.current) {
@@ -160,8 +162,8 @@ const VoiceChatContent = ({
             if (bIndex !== -1 && aIndex === -1) return 1;
             
             // Rule 3: The rest of the participants in a consistent, deterministic order across ALL devices
-            const aName = (participantMap[aId]?.name || a.name || aId || '').trim();
-            const bName = (participantMap[bId]?.name || b.name || bId || '').trim();
+            const aName = (participantMap[aId]?.name || aId || '').trim();
+            const bName = (participantMap[bId]?.name || bId || '').trim();
             const nameDiff = aName.localeCompare(bName, undefined, { sensitivity: 'base' });
             if (nameDiff !== 0) return nameDiff;
 
@@ -175,17 +177,17 @@ const VoiceChatContent = ({
         if (uids.length === 0 || !tripId) return;
 
         uids.forEach(async (uid) => {
-            if (!participantMap[uid]) {
+            {
                 try {
                     const profileRef = ref(database, `users/${uid}/profile`);
                     const fullNameRef = ref(database, `users/${uid}/full_name`);
                     const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
                     const [profileSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
-                        get(profileRef),
-                        get(fullNameRef),
-                        get(visibilityRef),
-                        get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+                        getVisibleSnapshot(profileRef, tripId),
+                        getVisibleSnapshot(fullNameRef, tripId),
+                        getVisibleSnapshot(visibilityRef, tripId),
+                        getVisibleSnapshot(ref(database, `users/${uid}/photo_url`), tripId).catch(() => ({ val: () => null }))
                     ]);
 
                     const rawProfile = profileSnap.val() || {};
@@ -198,7 +200,7 @@ const VoiceChatContent = ({
                     const visibility = visSnap.val() || {};
                     const targetRole = staffData?.[uid];
                     const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
-                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdmin;
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
 
                     const displayName = getParticipantDisplayName({
                         profile,
@@ -234,7 +236,7 @@ const VoiceChatContent = ({
                 }
             }
         });
-    }, [participantIdentities, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId]);
+    }, [participantIdentities, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId, visibilityRevision]);
 
 
     const handleHoldToTalkStart = async () => {
@@ -426,9 +428,9 @@ const VoiceChatContent = ({
                                     onPress={staffInChatCount >= 2 ? onDisconnect : onStopChannel}
                                     disabled={loading}
                                 >
-                                    {loading ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name={staffInChatCount >= 2 ? "exit-outline" : "stop-circle-outline"} size={20} color="#FFF" style={{ marginRight: 8 }} />}
+                                    {loading || adminConnectionPending ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name={staffInChatCount >= 2 ? "exit-outline" : "stop-circle-outline"} size={20} color="#FFF" style={{ marginRight: 8 }} />}
                                     <Text style={[styles.controlText, { color: '#FFF' }]}>
-                                        {loading ? (staffInChatCount >= 2 ? 'Leaving…' : 'Stopping…') : staffInChatCount >= 2 ? 'Leave Channel' : 'Stop Voice Chat'}
+                                        {loading ? (staffInChatCount >= 2 ? 'Leaving…' : 'Stopping…') : adminConnectionPending ? 'Checking admin connection…' : staffInChatCount >= 2 ? 'Leave Channel' : 'Stop Voice Chat'}
                                     </Text>
                                 </TouchableOpacity>
                             </>
@@ -466,8 +468,8 @@ const VoiceChatContent = ({
                                         }
                                     ]}
                                 >
-                                    {loading ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name="refresh-outline" size={20} color="#FFF" style={{ marginRight: 8, transform: [{ scaleX: -1 }] }} />}
-                                    <Text style={[styles.controlText, { color: '#fff' }]}>{loading ? 'Leaving…' : 'Channel Leave'}</Text>
+                                    {loading || adminConnectionPending ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons name="refresh-outline" size={20} color="#FFF" style={{ marginRight: 8, transform: [{ scaleX: -1 }] }} />}
+                                    <Text style={[styles.controlText, { color: '#fff' }]}>{loading ? 'Leaving…' : adminConnectionPending ? 'Checking admin connection…' : 'Channel Leave'}</Text>
                                 </TouchableOpacity>
                             </>
                         )}
@@ -481,6 +483,12 @@ const VoiceChatContent = ({
                                 <Text style={[styles.statusText, { color: '#34C759' }]}>Live Connected</Text>
                             </View>
                             <Text style={styles.sectionTitle}>Participants</Text>
+                            <Text
+                                style={styles.participantCount}
+                                accessibilityLiveRegion="polite"
+                            >
+                                {participants.length} in voice chat
+                            </Text>
                         </View>
 
                         <View style={styles.avatarScrollContainer}>
@@ -520,7 +528,7 @@ const VoiceChatContent = ({
                     <View style={styles.listSection}>
                         {sortedParticipants.map((participant, index) => {
                             const pData = participantMap[participant.identity] || { 
-                                name: participant.name || 'User', 
+                                name: participantMap[participant.identity]?.name || 'Participant',
                                 avatar: 'https://randomuser.me/api/portraits/lego/1.jpg' 
                             };
                             const isSpeaking = speakingUids.includes(participant.identity);
@@ -593,6 +601,7 @@ const VoiceChatScreen = () => {
     // Core state and trip data
     const tripData = passedTrip || { image: require('../../../assets/Makkah.png') };
     const tripId = route.params?.tripId || tripData.id || tripData.tripId || resolvedVoiceTrip?.tripId;
+    const visibilityRevision = useVisibilityRevision(tripId);
     const orgId = route.params?.orgId || tripData.orgId || tripData.org_id || resolvedVoiceTrip?.orgId;
     const invitationCode = directCode || tripData.invitationCode;
     const isAdmin = passedIsAdmin === true || passedTrip?.isAdmin === true;
@@ -759,10 +768,10 @@ const VoiceChatScreen = () => {
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
                 const [profileSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
-                    get(profileRef),
-                    get(fullNameRef),
-                    get(visibilityRef),
-                    get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+                    getVisibleSnapshot(profileRef, tripId),
+                    getVisibleSnapshot(fullNameRef, tripId),
+                    getVisibleSnapshot(visibilityRef, tripId),
+                    getVisibleSnapshot(ref(database, `users/${uid}/photo_url`), tripId).catch(() => ({ val: () => null }))
                 ]);
 
                 const rawProfile = profileSnap.val() || {};
@@ -775,7 +784,7 @@ const VoiceChatScreen = () => {
                 const visibility = visSnap.val() || {};
                 const targetRole = staffData[uid];
                 const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
-                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdminState;
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
 
                 const displayName = getParticipantDisplayName({
                     profile,
@@ -814,14 +823,14 @@ const VoiceChatScreen = () => {
             const validParticipants = results.filter(p => p !== null);
             setTripParticipants(validParticipants);
         });
-    }, [staffData, participantUids, tripId, orgId, organizerId, globalVisibilityConfig, isAdminState, userRole]);
+    }, [staffData, participantUids, tripId, orgId, organizerId, globalVisibilityConfig, isAdminState, userRole, visibilityRevision]);
 
     useEffect(() => {
         if (!tripId || !orgId) return;
 
         // Listen to activeSpeaker in RTDB
         const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-        const unsub = onValue(speakerRef, (snapshot) => {
+        const unsub = onVisibleValue(speakerRef, tripId, (snapshot) => {
             if (snapshot.exists()) {
                 const speakerData = snapshot.val();
                 if (speakerData && speakerData.name) {
@@ -1182,6 +1191,11 @@ const styles = StyleSheet.create({
         color: '#FFF',
         fontFamily: 'CormorantGaramond',
         marginTop: 5,
+    },
+    participantCount: {
+        fontSize: responsiveFontSize(14),
+        color: '#CCC',
+        marginTop: 2,
     },
     avatarScrollContainer: {
         backgroundColor: '#23272A',

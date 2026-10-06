@@ -170,3 +170,14 @@ for (const role of ['admin', 'co-host', 'manager']) {
     assert.equal(f.revocations.length,0);
   });
 }
+
+test('unauthenticated callers cannot access app, trips or fresh identity', async () => {
+  const f = fixture();
+  await assert.rejects(f.api.requireFreshIdentity({}), { code: 'unauthenticated' });
+  await assert.rejects(f.api.requireAppAccess({}), { code: 'unauthenticated' });
+  await assert.rejects(f.api.requireTripAccess({}, 't'), { code: 'unauthenticated' });
+});
+test('disabled Auth account cannot use an otherwise active trip session', async () => {
+  const f = fixture(); f.record.disabled = true;
+  await assert.rejects(f.api.requireAppAccess(f.request), { code: 'unauthenticated' });
+});

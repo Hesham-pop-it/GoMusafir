@@ -1,3 +1,4 @@
+import { getVisibleSnapshot } from '../../services/visibilityData';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -336,7 +337,7 @@ const ParticipantsScreen = ({ navigation }) => {
                 
                 // Fallback: Get from profile if token claim isn't present
                 if (!orgId) {
-                    const profileSnap = await get(ref(database, `users/${user.uid}`));
+                    const profileSnap = await getVisibleSnapshot(ref(database, `users/${user.uid}`), null);
                     if (profileSnap.exists()) {
                         orgId = profileSnap.val().staff_org_id || profileSnap.val().org_id;
                     }
@@ -375,7 +376,7 @@ const ParticipantsScreen = ({ navigation }) => {
 
                                         // Fetch Profile
                                         try {
-                                            const uSnap = await get(ref(database, `users/${pUid}`));
+                                            const uSnap = await getVisibleSnapshot(ref(database, `users/${pUid}`), tripId);
                                             if (uSnap.exists()) {
                                                 const profileData = uSnap.val();
 
@@ -493,7 +494,11 @@ const ParticipantsScreen = ({ navigation }) => {
                             } catch (tripErr) {
                             }
                         }
-                        setAllParticipants(Array.from(participantsMap.values()));
+                        const visibleParticipants = Array.from(participantsMap.values());
+                        setAllParticipants(visibleParticipants);
+                        setSelectedParticipant(previous => previous
+                            ? visibleParticipants.find(p => p.id === previous.id && p.tripId === previous.tripId) || null
+                            : null);
                         setIsLoading(false);
                     } else {
                         setAllParticipants([]);
@@ -509,7 +514,20 @@ const ParticipantsScreen = ({ navigation }) => {
             }
         };
 
-        fetchAllParticipants();
+        let disposed = false, stop = null, refreshing = false;
+        const refresh = async () => {
+            if (refreshing || disposed) return;
+            refreshing = true;
+            try {
+                stop?.();
+                const nextStop = await fetchAllParticipants();
+                if (disposed) nextStop?.();
+                else stop = nextStop;
+            } finally { refreshing = false; }
+        };
+        refresh();
+        const timer = setInterval(refresh, 4000);
+        return () => { disposed = true; clearInterval(timer); stop?.(); };
     }, []);
 
 
@@ -551,7 +569,7 @@ const ParticipantsScreen = ({ navigation }) => {
             });
             // Update local state immediately for better UX
             setAllParticipants(prev => prev.filter(p => p.id !== participant.id));
-            setDetailsVisible(false);
+            setIsDetailsVisible(false);
         } catch (err) {
             alert("Failed to delete participant. Please check your permissions.");
         }

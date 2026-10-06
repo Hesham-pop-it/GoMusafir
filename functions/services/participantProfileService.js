@@ -4,30 +4,16 @@ const { requireTripAccess } = require('./participantAccessService');
 const { decrypt } = require('./kmsService');
 
 const roles = ['admin', 'co-host', 'manager'];
-const normalize = value => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
-const aliases = { name: ['name', 'firstname', 'first', 'fname'], lastname: ['lastname', 'last', 'surname', 'lname'],
-  email: ['email', 'emailaddress', 'mail'], phone: ['phone', 'phonenumber', 'mobile', 'cell'], photo: ['photo', 'profilephoto', 'profilepicture', 'avatar'] };
-function setting(config, field) {
-  const key = Object.keys(config || {}).find(key => aliases[field].includes(normalize(key)));
-  return normalize(config?.[key] || 'Show to organizer');
-}
-function visible(field, config, personal, self, staff, targetStaff) {
-  if (self) return true;
-  let option = setting(config, field);
-  if (option.includes('custom')) option = setting(personal, field);
-  if (/notshow|dontshow|hide|none|hidden/.test(option)) return false;
-  if (/everyone|all/.test(option)) return true;
-  return staff || (targetStaff && ['name', 'lastname', 'photo'].includes(field));
-}
+const { visible } = require('./visibilityPolicy');
 const value = (...values) => values.find(v => typeof v === 'string' && v.trim() && !['N/A', '***'].includes(v.trim())) || '';
 
-async function getParticipantProfile(request) {
+async function getParticipantProfile(request, context = null) {
   const { targetUid, tripId } = request.data || {};
   if (![targetUid, tripId].every(v => typeof v === 'string' && /^[\w-]{1,128}$/.test(v))) {
     throw new HttpsError('invalid-argument', 'targetUid and tripId are required.');
   }
-  const { orgId, trip, staff } = await requireTripAccess(request, tripId);
-  const [member, role, userSnap] = await Promise.all([
+  const { orgId, trip, staff } = context?.access || await requireTripAccess(request, tripId);
+  const [member, role, userSnap] = context?.snapshots || await Promise.all([
     db.ref(`trips_participants/${tripId}/${targetUid}`).get(),
     db.ref(`orgs/${orgId}/staff/${targetUid}`).get(),
     db.ref(`users/${targetUid}`).get(),
@@ -50,9 +36,10 @@ async function getParticipantProfile(request) {
     try { email = (await auth.getUser(targetUid)).email || ''; }
     catch (error) { if (error.code !== 'auth/user-not-found') throw error; }
   }
+  const nameParts = String(user.full_name || '').trim().split(/\s+/);
   const resolved = {
-    firstName: value(encrypted.firstName, profile.firstName, profile.first_name, user.first_name),
-    lastName: value(encrypted.lastName, profile.lastName, profile.last_name, user.last_name),
+    firstName: value(encrypted.firstName, profile.firstName, profile.first_name, user.first_name, nameParts[0]),
+    lastName: value(encrypted.lastName, profile.lastName, profile.last_name, user.last_name, nameParts.slice(1).join(' ')),
     email,
     phone: value(encrypted.phone, profile.phone, profile.phoneNumber, resolveEncrypted(user.p_phone), user.phone, user.phoneNumber),
     photoURL: value(profile.photoURL, encrypted.photoURL, user.photo_url),

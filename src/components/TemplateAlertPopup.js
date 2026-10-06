@@ -1,3 +1,4 @@
+import { onVisibleValue } from '../services/visibilityData';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     AppState,
@@ -261,7 +262,7 @@ export default function TemplateAlertPopup() {
         // 1. Global User-level Notifications Listener
         let isGlobalInitialLoad = true;
         const userNotifRef = ref(database, `users/${uid}/notifications`);
-        const unsubUserNotifs = onValue(userNotifRef, (snap) => {
+        const unsubUserNotifs = onVisibleValue(userNotifRef, null, (snap) => {
             if (!snap.exists()) {
                 isGlobalInitialLoad = false;
                 return;
@@ -335,7 +336,7 @@ export default function TemplateAlertPopup() {
         const tripListenersMap = new Map(); // key: tripId, val: { unsubNotif, unsubChat, orgId }
 
         const userRefPath = ref(database, `users/${uid}`);
-        const unsubUserData = onValue(userRefPath, async (snapshot) => {
+        const unsubUserData = onVisibleValue(userRefPath, null, async (snapshot) => {
             if (!snapshot.exists()) return;
 
             const userData = snapshot.val() || {};
@@ -391,7 +392,7 @@ export default function TemplateAlertPopup() {
 
                 // Trip-level Notifications
                 const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
-                const unsubNotif = onValue(notifRef, (notifSnapshot) => {
+                const unsubNotif = onVisibleValue(notifRef, tripId, (notifSnapshot) => {
                     if (!notifSnapshot.exists()) {
                         isTripNotifInitialLoad = false;
                         return;
@@ -488,7 +489,7 @@ export default function TemplateAlertPopup() {
 
                 // Direct Trip Chat Listener (ensures instant in-app popups even if cloud functions are delayed)
                 const chatRef = query(ref(database, `trips_active/${orgId}/${tripId}/chat`), limitToLast(5));
-                const unsubChat = onValue(chatRef, (chatSnapshot) => {
+                const unsubChat = onVisibleValue(chatRef, tripId, (chatSnapshot) => {
                     if (!chatSnapshot.exists()) {
                         isTripChatInitialLoad = false;
                         return;

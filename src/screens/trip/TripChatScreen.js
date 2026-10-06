@@ -1,3 +1,4 @@
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, offVisible } from '../../services/visibilityData';
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
@@ -493,6 +494,7 @@ const TripChatScreen = () => {
     const route = useRoute();
     const { trip, invitationCode: directCode, isAdmin: passedIsAdmin, userRole } = route.params || {};
     const tripId = trip?.id || trip?.tripId;
+    const visibilityRevision = useVisibilityRevision(tripId);
     const orgId = trip?.org_id || trip?.orgId;
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
     const invitationCode = directCode || trip?.invitationCode;
@@ -557,32 +559,17 @@ const TripChatScreen = () => {
 
     // Auto-focus keyboard on mount and start listening to DB
     useEffect(() => {
-        const initializeOfflineFirst = async () => {
-            if (!tripId) return;
-
-            // 1. Initialize DB and Load offline messages first
-            await ChatDatabase.init();
-            const localMsgs = await ChatDatabase.getMessages(tripId);
-
-            if (localMsgs.length > 0) {
-                setMessages(localMsgs.map(m => ({
-                    ...m,
-                    sender: m.sender_id === auth.currentUser?.uid ? 'me' : 'other',
-                    senderName: m.sender_name || 'Participant',
-                    time: new Date(m.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-                    rawTimestamp: m.timestamp
-                })));
-            }
-        };
-
-        initializeOfflineFirst();
+        // Stored chat identities cannot be trusted after visibility changes.
+        // Keep the conversation on the server and discard legacy local PII copies.
+        ChatDatabase.clearAll().catch(() => {});
+        setMessages([]);
 
         // Fetch current user's name first
         const fetchUserName = async () => {
             const myUid = auth.currentUser?.uid;
             if (myUid) {
                 try {
-                    const userSnap = await get(ref(database, `users/${myUid}`));
+                    const userSnap = await getVisibleSnapshot(ref(database, `users/${myUid}`), null);
                     if (userSnap.exists()) {
                         const userData = userSnap.val();
                         setCurrentUserFullName(userData.full_name || 'User');
@@ -624,47 +611,19 @@ const TripChatScreen = () => {
                 limitToLast(50)
             );
 
-            onChildAdded(chatRef, (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    // S18: Ensure rawTimestamp is ALWAYS a number for comparison
-                    let rawTs = data.timestamp;
-                    if (typeof rawTs !== 'number') rawTs = Date.now();
-
-                    const msg = {
-                        id: snapshot.key,
-                        ...data, // Include all fields (type, image_url, etc.)
-                        sender: data.sender_id === auth.currentUser?.uid ? 'me' : 'other',
-                        senderName: data.sender_name || 'Participant',
-                        time: new Date(rawTs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-                        rawTimestamp: rawTs,
-                        avatar: data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.sender_name || 'User')}&background=B99A4A&color=fff`,
-                    };
-
-                    setMessages((prev) => {
-                        const existingIndex = prev.findIndex(m => m.id === msg.id);
-                        if (existingIndex >= 0) {
-                            const updated = [...prev];
-                            updated[existingIndex] = { ...updated[existingIndex], ...msg };
-                            return updated;
-                        }
-                        // Prepend for inverted list (newest first in array)
-                        return [msg, ...prev];
-                    });
-
-                    // S24: Save to local encrypted database for offline access
-                    ChatDatabase.saveMessage(tripId, {
-                        id: snapshot.key,
-                        ...data,
-                        timestamp: rawTs,
-                        sender_name: data.sender_name || 'Participant',
-                        avatar: data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.sender_name || 'User')}&background=B99A4A&color=fff`
-                    });
-
-                    // Update our read pointer since we just "saw" a new message
-                    if (auth.currentUser?.uid) {
-                        set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
-                    }
+            onVisibleValue(chatRef, tripId, snapshot => {
+                const messages = Object.entries(snapshot.val() || {}).map(([id, data]) => ({
+                    ...data, id,
+                    sender: data.sender_id === auth.currentUser?.uid ? 'me' : 'other',
+                    senderName: data.sender_name || 'Participant',
+                    rawTimestamp: Number(data.timestamp) || 0,
+                    time: new Date(Number(data.timestamp) || 0).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                    avatar: data.avatar || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff',
+                })).sort((a, b) => b.rawTimestamp - a.rawTimestamp);
+                // Replace the snapshot: revocation must remove old names/coordinates.
+                setMessages(messages);
+                if (messages.length && auth.currentUser?.uid) {
+                    set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
                 }
             });
 
@@ -760,7 +719,7 @@ const TripChatScreen = () => {
             }
 
             return () => {
-                off(chatRef);
+                offVisible(chatRef);
                 unsubTrip();
                 unsubP();
                 unsubStaff();
@@ -780,10 +739,10 @@ const TripChatScreen = () => {
             try {
                 const profilePromises = currentParticipants.map(async (uid) => {
                     const [fullNameSnap, profileSnap, visSnap, photoSnap] = await Promise.all([
-                        get(ref(database, `users/${uid}/full_name`)),
-                        get(ref(database, `users/${uid}/profile`)),
-                        get(ref(database, `users/${uid}/participant_visibility/${tripId}`)),
-                        get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+                        getVisibleSnapshot(ref(database, `users/${uid}/full_name`), tripId),
+                        getVisibleSnapshot(ref(database, `users/${uid}/profile`), tripId),
+                        getVisibleSnapshot(ref(database, `users/${uid}/participant_visibility/${tripId}`), tripId),
+                        getVisibleSnapshot(ref(database, `users/${uid}/photo_url`), tripId).catch(() => ({ val: () => null }))
                     ]);
 
                     const fullName = fullNameSnap.val();
@@ -796,7 +755,7 @@ const TripChatScreen = () => {
                     const visibility = visSnap.val() || {};
                     const targetRole = staffData?.[uid];
                     const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
-                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdmin;
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
 
                     const displayName = getParticipantDisplayName({
                         profile,
@@ -849,7 +808,7 @@ const TripChatScreen = () => {
         };
 
         fetchProfiles();
-    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId]);
+    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId, visibilityRevision]);
 
     // Handle results if the activity was killed in the background (Android crash fix)
     useEffect(() => {
@@ -912,7 +871,8 @@ const TripChatScreen = () => {
         if (replyingTo) {
             const replySenderName = replyingTo.senderName || replyingTo.sender_name || 'Participant';
             messageData.replyTo = {
-                sender: replySenderName,
+                sender: 'Participant',
+                sender_id: replyingTo.sender_id,
                 text: replyingTo.type === 'image' ? '📷 Photo' :
                     replyingTo.type === 'video' ? '🎬 Video' :
                     replyingTo.type === 'location' ? '📍 Location' :

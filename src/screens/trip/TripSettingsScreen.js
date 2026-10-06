@@ -1,3 +1,4 @@
+import { getFieldSetting, normalizeVisibilityOption } from '../../utils/visibilityHelper';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -473,7 +474,7 @@ const TripSettingsScreen = () => {
         } else {
             // Participant updates their personal visibility setting
             // Only if global config says "Custom choice"
-            if (globalVisibilityConfig[field] === 'Custom choice') {
+            if (normalizeVisibilityOption(getFieldSetting(globalVisibilityConfig, field)) === 'custom choice') {
                 setVisibilitySettings(prev => ({ ...prev, [field]: option }));
                 try {
                     await update(ref(database, `users/${user.uid}/participant_visibility/${currentTripId}`), {
@@ -755,7 +756,7 @@ const TripSettingsScreen = () => {
             options = adminVisibilityOptions;
         } else {
             const adminSetting = globalVisibilityConfig[field] || 'Show to organizer';
-            if (adminSetting === 'Custom choice') {
+            if (normalizeVisibilityOption(adminSetting) === 'custom choice') {
                 currentValue = visibilitySettings[field] || 'Show to organizer';
                 options = participantVisibilityOptions;
             } else {

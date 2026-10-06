@@ -92,7 +92,7 @@ const ParticipantDetailModal = ({
     const { t } = useLanguage();
 
     const isCurrentUser = Boolean(participant?.id && auth.currentUser?.uid && participant.id === auth.currentUser?.uid);
-    const isViewerStaff = Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+    const isViewerStaff = Boolean(isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
     const isTargetStaff = Boolean(isStaffMember(participant?.id, staffData, organizerId, participant?.status));
     const personalVis = participant?.rawVisibility || participant?.visibility || {};
 
@@ -177,22 +177,13 @@ const ParticipantDetailModal = ({
         return null;
     };
 
-    const rawLat = parseCoord(liveLoc?.lat)
-        ?? parseCoord(liveLoc?.latitude)
-        ?? parseCoord(participant?.latitude)
-        ?? parseCoord(participant?.lat)
-        ?? parseCoord(participant?.location?.latitude)
-        ?? parseCoord(participant?.location?.lat);
-
-    const rawLng = parseCoord(liveLoc?.lng)
-        ?? parseCoord(liveLoc?.longitude)
-        ?? parseCoord(participant?.longitude)
-        ?? parseCoord(participant?.lng)
-        ?? parseCoord(participant?.location?.longitude)
-        ?? parseCoord(participant?.location?.lng);
+    // This map receives only server-authorized coordinates, including accepted
+    // temporary requests. Never resurrect coordinates from cached route/profile data.
+    const rawLat = parseCoord(liveLoc?.lat) ?? parseCoord(liveLoc?.latitude);
+    const rawLng = parseCoord(liveLoc?.lng) ?? parseCoord(liveLoc?.longitude);
 
     const hasValidLocation = Boolean(
-        (canSeeLocation || isViewerStaff || isCurrentUser) &&
+        Boolean(liveLoc) &&
         rawLat !== null &&
         rawLng !== null &&
         typeof rawLat === 'number' &&

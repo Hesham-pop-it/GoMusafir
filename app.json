@@ -92,6 +92,36 @@
               "scheme": "https",
               "host": "app.gomusafir.app",
               "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "app.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "www.app.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "join.gomusafir.app",
+              "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "join.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "www.join.gomusafir.app",
+              "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "www.join.gomusafir.app",
+              "pathPrefix": "/join"
             }
           ],
           "category": [
@@ -152,6 +182,7 @@
       "./plugins/withFirebaseSwiftFix",
       "./plugins/withXcodeBuildSettings",
       "./plugins/withNotificationSounds",
+      "./plugins/withVoiceTaskClose",
       "expo-font",
       [
         "expo-camera",

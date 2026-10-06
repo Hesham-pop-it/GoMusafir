@@ -1,3 +1,5 @@
+import { withProtectedSession } from './withProtectedSession';
+import { protectedSession } from '../services/protectedSessionService';
 import { brandedBrowserOptions } from '../utils/browserOptions';
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -50,6 +52,24 @@ import {
 } from '../screens/auth/JoinFlowScreens';
 
 import { handleAuthHandoffUrl } from '../utils/authHandoff';
+
+const ProtectedHomeScreen = withProtectedSession(HomeScreen);
+const ProtectedNotificationScreen = withProtectedSession(NotificationScreen);
+const ProtectedSettingsScreen = withProtectedSession(SettingsScreen);
+const ProtectedAudioKitsScreen = withProtectedSession(AudioKitsScreen);
+const ProtectedTripOverviewScreen = withProtectedSession(TripOverviewScreen);
+const ProtectedVoiceChatScreen = withProtectedSession(VoiceChatScreen);
+const ProtectedTripChatScreen = withProtectedSession(TripChatScreen);
+const ProtectedTripSettingsScreen = withProtectedSession(TripSettingsScreen);
+const ProtectedLiveLocationScreen = withProtectedSession(LiveLocationScreen);
+const ProtectedJourneyTeamScreen = withProtectedSession(JourneyTeamScreen);
+const ProtectedInviteMemberScreen = withProtectedSession(InviteMemberScreen);
+const ProtectedChangePasswordScreen = withProtectedSession(ChangePasswordScreen);
+const ProtectedParticipantsScreen = withProtectedSession(ParticipantsScreen);
+const ProtectedTripParticipantsScreen = withProtectedSession(TripParticipantsScreen);
+const ProtectedEditParticipantScreen = withProtectedSession(EditParticipantScreen);
+const ProtectedAlertHistoryScreen = withProtectedSession(AlertHistoryScreen);
+const ProtectedJourneySuccessScreen = withProtectedSession(JourneySuccessScreen);
 
 const STACK_LIMIT = 5;
 let isTrimming = false;
@@ -134,8 +154,21 @@ const checkAndOpenWebUrl = async (url) => {
     return false;
 };
 
+// Public enrollment links retain their normal flow; every protected deep link
+// is checked on both cold launch and delivery to an already-running app.
+const authenticatedLink = async url => {
+    if (!url) return url;
+    const parsed = Linking.parse(url);
+    const path = (parsed.path || parsed.hostname || '').replace(/^\//, '');
+    if (['home', 'notifications', 'trips', 'voicechat', 'tripchat', 'livelocation',
+        'alerts', 'trip-settings', 'participants', 'trip-participants', 'team', 'settings'].includes(path.split('/')[0])) {
+        if (!await protectedSession.validate()) return 'gomusafir://login';
+    }
+    return url;
+};
+
 const linking = {
-    prefixes: [Linking.createURL('/'), 'https://app.gomusafir.app', 'https://www.app.gomusafir.app', 'https://join.gomusafir.app', 'gomusafir://'],
+    prefixes: [Linking.createURL('/'), 'https://app.gomusafir.app', 'https://www.app.gomusafir.app', 'https://join.gomusafir.app', 'https://www.join.gomusafir.app', 'gomusafir://'],
     async getInitialURL() {
         const url = await Linking.getInitialURL();
         if (url && await checkAndOpenWebUrl(url)) {
@@ -150,7 +183,7 @@ const linking = {
             handleAuthHandoffUrl(url);
             return null;
         }
-        return url;
+        return await authenticatedLink(url);
     },
     subscribe(listener) {
         const onReceiveURL = async ({ url }) => {
@@ -172,7 +205,7 @@ const linking = {
             } catch (err) {
                 // Ignore if there's no web browser to dismiss
             }
-            listener(url);
+            listener(await authenticatedLink(url));
         };
 
 
@@ -184,8 +217,9 @@ const linking = {
 
     config: {
         screens: {
-            JoinWithLink: 'link/:invitationCode',
+            JoinWithLink: { path: 'link/:invitationCode', alias: ['join'] },
             TeamJoin: 'team-join',
+            Login: 'login',
             Home: 'home',
             Notifications: 'notifications',
             TripOverview: 'trips',
@@ -302,74 +336,74 @@ export default function RootNavigator({ initialRouteName = "Welcome" }) {
                     <Stack.Screen name="JoinTerms" component={JoinTermsScreen} />
                     <Stack.Screen 
                         name="Home" 
-                        component={HomeScreen} 
+                        component={ProtectedHomeScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
-                    <Stack.Screen name="Notifications" component={NotificationScreen} />
+                    <Stack.Screen name="Notifications" component={ProtectedNotificationScreen} />
                     <Stack.Screen 
                         name="Settings" 
-                        component={SettingsScreen} 
+                        component={ProtectedSettingsScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
-                    <Stack.Screen name="AudioKits" component={AudioKitsScreen} />
+                    <Stack.Screen name="AudioKits" component={ProtectedAudioKitsScreen} />
                     <Stack.Screen 
                         name="TripOverview" 
-                        component={TripOverviewScreen} 
+                        component={ProtectedTripOverviewScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
                     <Stack.Screen 
                         name="VoiceChat" 
-                        component={VoiceChatScreen} 
+                        component={ProtectedVoiceChatScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
                     <Stack.Screen 
                         name="TripChat" 
-                        component={TripChatScreen} 
+                        component={ProtectedTripChatScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
                     <Stack.Screen 
                         name="TripSettings" 
-                        component={TripSettingsScreen} 
+                        component={ProtectedTripSettingsScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
                     <Stack.Screen 
                         name="LiveLocation" 
-                        component={LiveLocationScreen} 
+                        component={ProtectedLiveLocationScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
                     <Stack.Screen name="BusinessLogin" component={BusinessLoginScreen} />
                     <Stack.Screen name="BusinessVerification" component={BusinessVerificationScreen} />
-                    <Stack.Screen name="JourneyTeam" component={JourneyTeamScreen} />
-                    <Stack.Screen name="InviteMember" component={InviteMemberScreen} />
-                    <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+                    <Stack.Screen name="JourneyTeam" component={ProtectedJourneyTeamScreen} />
+                    <Stack.Screen name="InviteMember" component={ProtectedInviteMemberScreen} />
+                    <Stack.Screen name="ChangePassword" component={ProtectedChangePasswordScreen} />
                     <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
                     <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
                     <Stack.Screen name="ForgotPasswordVerify" component={ForgotPasswordVerifyScreen} />
                     <Stack.Screen 
                         name="Participants" 
-                        component={ParticipantsScreen} 
+                        component={ProtectedParticipantsScreen}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
-                    <Stack.Screen name="TripParticipants" component={TripParticipantsScreen} />
-                    <Stack.Screen name="EditParticipant" component={EditParticipantScreen} />
-                    <Stack.Screen name="AlertHistory" component={AlertHistoryScreen} />
-                    <Stack.Screen name="JourneySuccess" component={JourneySuccessScreen} />
+                    <Stack.Screen name="TripParticipants" component={ProtectedTripParticipantsScreen} />
+                    <Stack.Screen name="EditParticipant" component={ProtectedEditParticipantScreen} />
+                    <Stack.Screen name="AlertHistory" component={ProtectedAlertHistoryScreen} />
+                    <Stack.Screen name="JourneySuccess" component={ProtectedJourneySuccessScreen} />
                 </Stack.Navigator>
             </NavigationContainer>
         </VoiceProvider>

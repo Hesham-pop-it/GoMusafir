@@ -520,3 +520,15 @@ exports.exchangeAuthHandoffToken = onCall({ enrollment: true, region: "europe-we
 });
 
 
+
+// Root account reads contain historic notifications. Return only the caller's
+// account and strip copied participant identities/locations from that history.
+exports.getOwnAccount = onCall({ enrollment: true, region: 'europe-west1' }, async request => {
+  requireAuth(request);
+  const user = (await db.ref(`users/${request.auth.uid}`).get()).val();
+  if (!user) return null;
+  const { redactNotification } = require('../services/notificationPrivacy');
+  if (user.notifications) user.notifications = Object.fromEntries(Object.entries(user.notifications)
+    .map(([key, value]) => [key, redactNotification(value)]));
+  return user;
+});

@@ -114,7 +114,7 @@ async function finishSession(orgId, tripId, session) {
   catch (error) { if (error.status !== 404 && error.code !== 'not_found') throw error; }
   await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).transaction(channel => {
     if ((channel?.sessionRequestedAt || 0) > session.requestedAt) return;
-    return { ...channel, isChannelStarted: false, activeSpeaker: null, active_hosts: null,
+    return { ...channel, isChannelStarted: false, activeSpeaker: null, active_hosts: null, presence: null,
       endReason: session.endReason, endRecipientUid: session.endReason === 'alone_timeout' ? session.soloUid : null, endedSessionId: session.id, sessionRequestedAt: session.requestedAt,
       lastUpdatedBy: 'system' };
   });
@@ -174,7 +174,9 @@ async function handleRoomEvent(event) {
     // Ignore a delayed event for a different incarnation of this room.
     if (!state.session.roomSid || state.session.roomSid === event.room.sid) await stopSession(orgId, tripId, 'room_finished', sessionId, Number(event.createdAt) * 1000);
   } else if (event.event === 'participant_left') {
-    await stopIfNoHosts(orgId, tripId, { sessionId, eventAt: Number(event.createdAt) * 1000 });
+    if (state.session.roomSid && event.room.sid !== state.session.roomSid) return;
+    await stopIfNoHosts(orgId, tripId, { sessionId, participantLeft: true,
+      leftUid: event.participant?.identity, eventAt: Number(event.createdAt) * 1000 });
   }
 }
 
@@ -185,6 +187,15 @@ async function stopIfNoHosts(orgId, tripId, event = {}) {
   const observedAt = Date.now();
   const rooms = await service.listRooms([state.session.roomName]);
   const listed = rooms.length ? await service.listParticipants(state.session.roomName) : [];
+  // Admin departure ends this room even if other members remain. Check the
+  // live roster so a delayed leave event cannot end an admin's new connection.
+  if (event.participantLeft && event.leftUid && !listed.some(p => p.identity === event.leftUid)) {
+    const role = (await db.ref(`orgs/${orgId}/staff/${event.leftUid}`).get()).val();
+    if (role === 'admin') {
+      await stopSession(orgId, tripId, 'admin_left', state.session.id);
+      return;
+    }
+  }
   // ACTIVE means ICE connectivity is established. Ignore tokens, app presence,
   // and participants whose media connection is still being negotiated.
   const participants = listed.filter(p => p.state === undefined || p.state === 2);
@@ -198,9 +209,11 @@ async function stopIfNoHosts(orgId, tripId, event = {}) {
     if (hasMembers) delete session.noHostsSince;
     else {
       session.noHostsSince = session.noHostsSince ?? now;
-      // A second successful server check after the grace period must still
-      // find nobody connected. Network errors never reach this transaction.
-      if (now >= session.noHostsSince + HOST_RECONNECT_GRACE_MS) {
+      // A signed leave event plus an empty current media roster confirms the
+      // last user left. Do not add another reconnect grace period after that.
+      // Unconfirmed empty polls retain grace; pending connections are protected.
+      if ((event.participantLeft && listed.length === 0) ||
+          now >= session.noHostsSince + HOST_RECONNECT_GRACE_MS) {
         session.status = 'ending';
         session.endReason = 'no_hosts';
       }
@@ -241,6 +254,24 @@ async function stopIfNoHosts(orgId, tripId, event = {}) {
     return settle(next, trip, now);
   });
   const next = result.snapshot.val();
+  if (result.committed) {
+    const staff = (await db.ref(`orgs/${orgId}/staff`).get()).val() || {};
+    // Media membership is authoritative after a crash/force-quit. Never let
+    // a delayed webhook clear a newer session or a newer roster snapshot.
+    await db.ref(`trips_active/${orgId}/${tripId}/voice_channel`).transaction(channel => {
+      if (!channel || channel.sessionId !== state.session.id ||
+          (channel.presenceCheckedAt || 0) > observedAt) return;
+      const presence = Object.fromEntries(listed.map(p => [p.identity, true]));
+      const activeHosts = Object.fromEntries(listed.filter(p => STAFF_ROLES.includes(staff[p.identity])).map(p => [p.identity, true]));
+      const appPresence = { ...channel.app_presence };
+      for (const uid of Object.keys(channel.presence || {})) {
+        if (!presence[uid]) delete appPresence[uid];
+      }
+      return { ...channel, presence, active_hosts: activeHosts, app_presence: appPresence,
+        presenceCheckedAt: observedAt,
+        activeSpeaker: presence[channel.activeSpeaker?.uid] ? channel.activeSpeaker : null };
+    });
+  }
   if (result.committed && next?.session?.status === 'ending') {
     await finishSession(orgId, tripId, next.session);
   }

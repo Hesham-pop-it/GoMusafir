@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-function fixture({ capacity = 2, failWrite = false, failAccess = false } = {}) {
+function fixture({ capacity = 2, failWrite = false, failAccess = false, authProfile = {} } = {}) {
   const data = { invites: { JOIN: { org_id: 'o', trip_id: 't' } }, orgs: { o: { trips: { t: {
     status: 'active', end_date: Date.now() + 60000, participants: 0, total_seats: capacity,
   } } } } };
@@ -24,19 +24,42 @@ function fixture({ capacity = 2, failWrite = false, failAccess = false } = {}) {
     assert.equal(read(`users/${uid}/joined_trips/t/org_id`),'o');
     return {trips:{t:Date.now()+60000},expires_at:Date.now()+60000,version:2};
   }};
-  const deps = {'../admin':{db,auth:{getUser:async()=>({emailVerified:true,email:'p@test.example'}),updateUser:async()=>{}},admin:{database:{ServerValue:{TIMESTAMP:123}}}},
+  const deps = {'../admin':{db,auth:{getUser:async()=>({emailVerified:true,email:'p@test.example',...authProfile}),updateUser:async()=>{}},admin:{database:{ServerValue:{TIMESTAMP:123}}}},
     'firebase-functions/v2/https':{HttpsError},'../services/participantAccessService':access,'./participantAccessService':access,
     '../middleware/participantAccessMiddleware':{onCall:(_,fn)=>fn},'../services/auditService':{writeAuditLog:async()=>{}},
     '../middleware/appCheckMiddleware':{verifyAppCheck:()=>{},requireAuth:()=>{}},
     '../middleware/validateSchema':{validate:(_,v)=>v,schemas:{}},'../middleware/rateLimiter':{checkRateLimit:()=>{}},
-    '../services/kmsService':{encrypt:v=>v},crypto:require('node:crypto')};
+    '../services/kmsService':{encrypt:v=>v,decrypt:v=>v},crypto:require('node:crypto')};
   function load(file){const module={exports:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),{
     module,exports:module.exports,require:key=>{if(deps[key])return deps[key];throw Error(key);},console,Date,Number,Object,
   });return module.exports;}
   deps['../services/participantJoinSeat']=load('services/participantJoinSeat.js');
   const join=load('groups/inviteFunctions.js').redeemInvitation;
-  return {data,read,join:uid=>join({auth:{uid:uid||'p'},data:{inviteCode:'JOIN'}}),premature:()=>prematureParticipant};
+  return {data,read,join:(uid,profile={})=>join({auth:{uid:uid||'p'},data:{inviteCode:'JOIN',...profile}}),premature:()=>prematureParticipant};
 }
+test('returning participant restores name and photo from Auth when basic profile is missing', async () => {
+  const f=fixture({authProfile:{displayName:'Ali Khan',photoURL:'https://example.test/ali.jpg'}});
+  await f.join();
+  assert.equal(f.read('users/p/profile/firstName'),'Ali');
+  assert.equal(f.read('users/p/profile/lastName'),'Khan');
+  assert.equal(f.read('users/p/profile/photoURL'),'https://example.test/ali.jpg');
+});
+test('returning participant restores encrypted profile without dropping preferences', async () => {
+  const f=fixture();
+  f.data.users={p:{p_profile:JSON.stringify({firstName:'Sara',lastName:'Ali',photoURL:'https://example.test/sara.jpg'}),profile:{likes:{t:true}}}};
+  await f.join();
+  assert.equal(f.read('users/p/profile/firstName'),'Sara');
+  assert.equal(f.read('users/p/photo_url'),'https://example.test/sara.jpg');
+  assert.equal(f.read('users/p/profile/likes/t'),true);
+});
+test('already joined participant can repair missing profile without another seat', async () => {
+  const f=fixture();
+  await f.join();
+  await f.join('p',{firstName:'Ali',lastName:'Khan',photoURL:'https://example.test/ali.jpg'});
+  assert.equal(f.read('users/p/profile/firstName'),'Ali');
+  assert.equal(f.read('users/p/photo_url'),'https://example.test/ali.jpg');
+  assert.equal(f.read('orgs/o/trips/t/participants'),1);
+});
 test('new registration publishes account type and membership together and returns access',async()=>{
   const f=fixture();const result=await f.join();assert.equal(result.tripId,'t');assert.ok(result.access.trips.t);
   assert.equal(f.premature(),false);assert.equal(f.read('users/p/current_trip'),'t');assert.equal(f.read('users/p/mfa_pending'),false);

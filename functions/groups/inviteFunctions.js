@@ -66,19 +66,7 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
 
   // Check if already joined
   const alreadyJoined = await db.ref(`trips_participants/${tripId}/${uid}`).get();
-  if (alreadyJoined.exists()) {
-    // Repair a legacy/partially completed join before publishing access.
-    await db.ref().update({
-      [`users/${uid}/joined_trips/${tripId}/org_id`]: orgId,
-      [`users/${uid}/joined_trips/${tripId}/status`]: 'joined',
-      [`users/${uid}/current_trip`]: tripId,
-      [`users/${uid}/join_flow_status`]: null,
-      [`users/${uid}/mfa_pending`]: false,
-      [`users/${uid}/account_type`]: 'participant',
-    });
-    const access = await refreshAccess(uid);
-    return { success: true, tripId, orgId, access, message: "Already joined." };
-  }
+
 
   // S16: No open redirects — all data comes from server-validated DB, not URL params
 
@@ -115,6 +103,15 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
   // Ensure user has basic structured info if missing (S12)
   const existingUserSnap = await db.ref(`users/${uid}`).get();
   const existingUser = existingUserSnap.val() || {};
+  let savedProfile = {};
+  if (existingUser.p_profile) {
+    try {
+      savedProfile = JSON.parse(require('../services/kmsService').decrypt(existingUser.p_profile)) || {};
+    } catch (_) { /* Fall back to the basic profile and Auth record. */ }
+  }
+  const basicProfile = existingUser.profile || {};
+  const savedName = userRecord.displayName || (existingUser.full_name?.includes('*') ? '' : existingUser.full_name) || '';
+  const nameParts = savedName.trim().split(/\s+/);
 
   if (!existingUser.p_email) {
     const { encrypt } = require("../services/kmsService");
@@ -123,16 +120,16 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
   }
 
   // S22/S12: Encrypt phone if provided and not already stored
-  let resolvedPhone = phone || existingUser.profile?.phone || "";
+  let resolvedPhone = phone || basicProfile.phone || savedProfile.phone || existingUser.phone || "";
   if (resolvedPhone && !existingUser.p_phone) {
     const { encrypt } = require("../services/kmsService");
     updates[`users/${uid}/p_phone`] = encrypt(resolvedPhone);
   }
 
   // S22: Force capture profile info and ENCRYPT IT (S12)
-  const resolvedFirstName = firstName || existingUser.profile?.firstName || "";
-  const resolvedLastName = lastName || existingUser.profile?.lastName || "";
-  const resolvedPhotoURL = photoURL || existingUser.profile?.photoURL || "";
+  const resolvedFirstName = firstName || basicProfile.firstName || basicProfile.first_name || savedProfile.firstName || existingUser.first_name || nameParts[0] || "";
+  const resolvedLastName = lastName || basicProfile.lastName || basicProfile.last_name || savedProfile.lastName || existingUser.last_name || nameParts.slice(1).join(' ') || "";
+  const resolvedPhotoURL = photoURL || basicProfile.photoURL || basicProfile.photo_url || savedProfile.photoURL || existingUser.photo_url || userRecord.photoURL || "";
 
   if (resolvedFirstName || resolvedLastName || resolvedPhone || resolvedPhotoURL || !existingUser.p_profile) {
     const { encrypt } = require("../services/kmsService");
@@ -149,6 +146,7 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
 
     // Also store unencrypted profile & photo fields for basic UI visibility / avatar rendering
     const unencryptedProfile = {
+      ...basicProfile,
       firstName: resolvedFirstName,
       lastName: resolvedLastName,
       phone: resolvedPhone,
@@ -191,6 +189,22 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
 
   // Final Merge and update
   
+  if (alreadyJoined.exists()) {
+    // Repair a legacy/partially completed join before publishing access.
+    await db.ref().update({
+      ...Object.fromEntries(Object.entries(updates).filter(([path]) =>
+        path.startsWith(`users/${uid}/`) && path !== `users/${uid}/joined_trips/${tripId}`)),
+      [`users/${uid}/joined_trips/${tripId}/org_id`]: orgId,
+      [`users/${uid}/joined_trips/${tripId}/status`]: 'joined',
+      [`users/${uid}/current_trip`]: tripId,
+      [`users/${uid}/join_flow_status`]: null,
+      [`users/${uid}/mfa_pending`]: false,
+      [`users/${uid}/account_type`]: 'participant',
+    });
+    const access = await refreshAccess(uid);
+    return { success: true, tripId, orgId, access, message: "Already joined." };
+  }
+
   await reserveParticipantJoinSeat(orgId, tripId, uid);
   let access;
   try {
@@ -227,7 +241,7 @@ exports.getTeamInviteMetadata = onCall({ enrollment: true, region: "europe-west1
   }
 
   const invite = inviteSnap.val();
-  if (invite.expiresAt && Date.now() > invite.expiresAt) {
+  if (!invite.redeemedBy && invite.expiresAt && Date.now() > invite.expiresAt) {
     throw new HttpsError("failed-precondition", "This invitation link has expired.");
   }
 
@@ -261,29 +275,42 @@ exports.redeemTeamInvitation = onCall({ enrollment: true, region: "europe-west1"
   }
 
   const invite = inviteSnap.val();
-  if (invite.expiresAt && Date.now() > invite.expiresAt) {
+  if (!invite.redeemedBy && invite.expiresAt && Date.now() > invite.expiresAt) {
     throw new HttpsError("failed-precondition", "This invitation link has expired.");
   }
 
   const { orgId, role } = invite;
 
-  // 1. Set Custom User Claims (S6)
-  await auth.setCustomUserClaims(uid, { role, orgId });
+  if (!invite.email || invite.email.trim().toLowerCase() !== userRecord.email?.trim().toLowerCase()) {
+    throw new HttpsError('permission-denied', 'Sign in with the email address this invitation was sent to.');
+  }
+  if (invite.redeemedBy && invite.redeemedBy !== uid) {
+    throw new HttpsError('permission-denied', 'This invitation has already been accepted.');
+  }
+  const userDbSnap = await db.ref(`users/${uid}`).get();
+  const existingUser = userDbSnap.exists() ? userDbSnap.val() : null;
+  if ((existingUser?.staff_org_id && existingUser.staff_org_id !== orgId) ||
+      (userRecord.customClaims?.orgId && userRecord.customClaims.orgId !== orgId)) {
+    throw new HttpsError('failed-precondition', 'This account already belongs to another team. Sign in with the invited account or contact the organizer.');
+  }
+  if (invite.redeemedBy === uid &&
+      (await db.ref(`orgs/${orgId}/staff/${uid}`).get()).val() !== role) {
+    throw new HttpsError('permission-denied', 'This invitation has already been used. Ask the organizer for a new invitation.');
+  }
 
   // 2. Perform atomic updates (S8 Isolation)
   const updates = {
     [`orgs/${orgId}/staff/${uid}`]: role,
     [`users/${uid}/staff_org_id`]: orgId,
-    [`org_invites/${token}`]: null, // Single-use (S15)
+    [`users/${uid}/join_flow_status`]: null,
+    [`users/${uid}/mfa_pending`]: false,
+    // Bind consumption to this UID so retries can finish claims/handoff safely.
+    [`org_invites/${token}/redeemedBy`]: uid,
+    [`org_invites/${token}/redeemedAt`]: invite.redeemedAt || Date.now(),
   };
 
   // S35: Ensure basic profile exists so they don't show as "Unknown User"
   // Fetch existing user record in Realtime Database to prevent overwriting their real name
-  const userDbSnap = await db.ref(`users/${uid}`).get();
-  const existingUser = userDbSnap.exists() ? userDbSnap.val() : null;
-
-  console.log("User record:", userRecord);
-  console.log("Existing user:", existingUser);
   
   let resolvedFirstName = firstName || "";
   let resolvedLastName = lastName || "";
@@ -379,12 +406,16 @@ exports.redeemTeamInvitation = onCall({ enrollment: true, region: "europe-west1"
 
   await db.ref().update(updates);
 
+  // Publish privileges only after membership commits. A retry can repair a
+  // failed claims update using the UID-bound invitation above.
+  await auth.setCustomUserClaims(uid, { ...userRecord.customClaims, role, orgId });
+
   // 3. Audit Logging (S20)
   await writeAuditLog(orgId, {
     action: "TEAM_MEMBER_JOINED",
     byUid: uid,
     extra: { role, inviteToken: token },
-  });
+  }).catch(error => console.warn('Team join audit failed:', error.message));
 
   return { success: true, orgId, role, handoffToken };
 });

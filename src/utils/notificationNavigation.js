@@ -1,3 +1,4 @@
+import { getVisibleSnapshot } from '../services/visibilityData';
 import { ref, update, get, set } from 'firebase/database';
 import { signOut } from 'firebase/auth';
 import { database, auth } from '../config/firebase';
@@ -75,7 +76,7 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
     // If tripId is missing, attempt to look up user's active/current trip
     if (!tripId && auth.currentUser) {
         try {
-            const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+            const userSnap = await getVisibleSnapshot(ref(database, `users/${auth.currentUser.uid}`), null);
             if (userSnap.exists()) {
                 const userData = userSnap.val() || {};
                 tripId = userData.current_trip || Object.keys(userData.joined_trips || {})[0];
@@ -136,6 +137,7 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
                 }
                 break;
 
+            case 'location_response':
             case 'location_request':
                 if (tripId) {
                     performNav('LiveLocation', {

@@ -1,7 +1,8 @@
+import { getVisibleSnapshot } from '../../services/visibilityData';
 import { signInWithCustomToken } from 'firebase/auth';
-import { beginEnrollment } from '../../utils/enrollmentSession';
+import { beginEnrollment, finishEnrollment } from '../../utils/enrollmentSession';
 import { completeTripJoin } from '../../utils/completeTripJoin';
-import { verificationContinuation } from '../../utils/invitationOnboarding';
+import { recoverVerificationParams, verificationContinuation } from '../../utils/invitationOnboarding';
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
@@ -25,7 +26,7 @@ import { responsiveFontSize } from '../../utils/responsive';
 import { Typography } from '../../constants/Typography';
 import { auth, database, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
-import { ref, set, update } from 'firebase/database';
+import { ref, set, update, get } from 'firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { safeSignOut } from '../../utils/authUtils';
 
@@ -67,25 +68,7 @@ const BusinessVerificationScreen = ({ route }) => {
 
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
 
-    const [recoveredParams, setRecoveredParams] = useState(null);
-
     useEffect(() => {
-        const recoverState = async () => {
-            if (!route?.params?.invitationCode && !route?.params?.teamInviteToken && userUid) {
-
-                try {
-                    const { get, ref } = await import('firebase/database');
-                    const snap = await get(ref(database, `users/${userUid}/join_flow_status`));
-                    if (snap.exists()) {
-                        setRecoveredParams(snap.val());
-                    }
-                } catch (e) {
-                    console.log("[Verification] Recovery failed:", e);
-                }
-            }
-        };
-        recoverState();
-
         // Auto focus on mount
         const timer = setTimeout(() => {
             inputRef.current?.focus();
@@ -121,6 +104,20 @@ const BusinessVerificationScreen = ({ route }) => {
 
     const enrollmentAuthenticated = useRef(false);
     const verifyingRef = useRef(false);
+    const resumeMissingParticipantProfile = async (params) => {
+        const user = auth.currentUser;
+        const snapshot = await getVisibleSnapshot(ref(database, `users/${user.uid}`), null);
+        const data = snapshot.val() || {};
+        const profile = data.profile || {};
+        const hasName = Boolean(profile.firstName || profile.first_name || data.first_name || user.displayName);
+        const photo = profile.photoURL || profile.photo_url || data.photo_url || user.photoURL;
+        if (hasName && photo) return false;
+        navigation.reset({ index: 0, routes: [{
+            name: 'JoinFirstName',
+            params: { ...params, isExistingUser: false, targetScreen: 'JoinFirstName' },
+        }] });
+        return true;
+    };
     const handleContinue = async () => {
         if (verifyingRef.current) return;
         if (otp.length === 6) {
@@ -139,6 +136,7 @@ const BusinessVerificationScreen = ({ route }) => {
                         enrollmentAuthenticated.current = true;
                     }
                     verificationCompleted = true;
+                    if (await resumeMissingParticipantProfile(route.params)) return;
                     const joined = await completeTripJoin({
                         inviteCode: route.params.invitationCode, voiceConsent: true, locationConsent: true,
                     });
@@ -147,15 +145,18 @@ const BusinessVerificationScreen = ({ route }) => {
                     } }] });
                     return;
                 }
-                const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
-                await verifyOTP({
-                    uid: userUid,
-                    otp
+                const activeParams = await recoverVerificationParams(route?.params, async () => {
+                    const snap = await get(ref(database, `users/${userUid}/join_flow_status`));
+                    return snap.val();
                 });
+                const verifyOTP = httpsCallable(functions, 'verifyCustomEmailOTP');
+                // Keep successful verification across a failed membership attempt.
+                // Do not consume the same single-use OTP a second time on retry.
+                if (!enrollmentAuthenticated.current) {
+                    await verifyOTP({ uid: userUid, otp });
+                    enrollmentAuthenticated.current = true;
+                }
                 verificationCompleted = true;
-
-                // Use merged params (route or recovered)
-                const activeParams = { ...recoveredParams, ...route?.params };
 
                 // On success, handle navigation
                 if (activeParams.isExistingUser) {
@@ -165,6 +166,7 @@ const BusinessVerificationScreen = ({ route }) => {
                             token: activeParams.teamInviteToken,
                         });
 
+                        await auth.currentUser.getIdToken(true);
                         const resData = result.data || {};
                         const newOrgId = resData.orgId;
 
@@ -177,12 +179,14 @@ const BusinessVerificationScreen = ({ route }) => {
                         // S2: Clear local security lock
                         await AsyncStorage.removeItem('mfa_lock');
 
+                        finishEnrollment();
                         // Navigate to Home
                         navigation.reset({
                             index: 0,
                             routes: [{ name: 'Home' }],
                         });
                     } else if (activeParams.invitationCode) {
+                        if (await resumeMissingParticipantProfile(activeParams)) return;
                         // S22: Accelerated path for existing users - Join trip immediately
                         const resData = await completeTripJoin({
                             inviteCode: activeParams.invitationCode,

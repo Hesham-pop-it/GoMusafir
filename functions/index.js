@@ -147,3 +147,7 @@ for (const name of ['getTripFeatureAccess', 'onTripFeatureDatesChanged', 'onTrip
 }
 
 exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;
+exports.getVisibleTripData = tripFunctions.getVisibleTripData;
+exports.requestParticipantLocation = tripFunctions.requestParticipantLocation;
+exports.respondToLocationRequest = tripFunctions.respondToLocationRequest;
+exports.getOwnAccount = authFunctions.getOwnAccount;

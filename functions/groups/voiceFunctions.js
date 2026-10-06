@@ -27,7 +27,7 @@ exports.generateLiveKitToken = firebaseOnCall({ region: "europe-west1", timeoutS
   const ttl = Math.max(1, Math.min(60, Math.floor((state.tripEndsAt - Date.now()) / 1000),
     state.voiceAccess === 'PRE_TRIP_LIMITED' ? Math.ceil(state.preTripVoiceRemainingSeconds) : 60));
   const token = new AccessToken(apiKey, apiSecret, { identity: request.auth.uid,
-    name: request.auth.token.name || request.auth.token.email || request.auth.uid, ttl });
+    name: "Participant", ttl });
   token.addGrant({ roomJoin: true, room: state.session.roomName, canPublish: false, canSubscribe: true,
     canPublishData: true, canUpdateOwnMetadata: false });
   return { token: await token.toJwt(), url: process.env.LIVEKIT_URL, featureAccess: state };

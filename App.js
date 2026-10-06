@@ -1,3 +1,4 @@
+import { getVisibleSnapshot, onVisibleValue } from './src/services/visibilityData';
 import { isEnrolling } from './src/utils/enrollmentSession';
 import { watchParticipantAccess, onAppAccessPublished } from './src/utils/participantAccess';
 // LiveKit requires browser globals (Event, EventTarget, WebRTC, URL etc.)
@@ -58,7 +59,9 @@ SplashScreenNative.preventAutoHideAsync();
 export default function App() {
   useEffect(() => {
     if (Platform.OS !== 'ios') return;
-    const refresh = () => journeyWidget.refresh().catch(error => {
+    // ActivityKit survives process termination; a new process has no voice room.
+    journeyWidget.endLiveActivities();
+    const refresh = () => (auth.currentUser ? journeyWidget.refresh() : Promise.resolve(journeyWidget.clear())).catch(error => {
       console.warn('[Widget] Timeline recovery failed:', error);
     });
     refresh();
@@ -424,14 +427,14 @@ export default function App() {
                   if (!isCurrent() || fetchingProfile) return;
                   fetchingProfile = true;
                   try {
-                    await refreshUser(await get(userRef));
+                    await refreshUser(await getVisibleSnapshot(userRef, null));
                   } catch (error) {
                     if (isCurrent()) handleSessionError(error, user);
                   } finally {
                     fetchingProfile = false;
                   }
                 };
-                unsubscribeUser = onValue(userRef, refreshUser, error => {
+                unsubscribeUser = onVisibleValue(userRef, null, refreshUser, error => {
                   if (isCurrent()) handleSessionError(error, user);
                 });
 

@@ -1,3 +1,4 @@
+import { getVisibleSnapshot, onVisibleValue, offVisible, requestParticipantLocation, respondToLocationRequest, isLocationGrantActive } from '../../services/visibilityData';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -5,6 +6,7 @@ import {
     StyleSheet,
     TouchableOpacity,
     Dimensions,
+    useWindowDimensions,
     Image,
     ScrollView,
     Linking,
@@ -17,7 +19,7 @@ import {
     Platform
 } from 'react-native';
 import Modal from '../../components/CompatModal';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -84,6 +86,10 @@ const MOCK_PARTICIPANTS = [
 
 const LiveLocationScreen = () => {
     const navigation = useNavigation();
+    const insets = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
+    const bottomNavigationHeight = 70 + insets.bottom;
+    const participantsSheetHeight = Math.min(windowHeight * 0.8, windowHeight - bottomNavigationHeight - insets.top - 16);
     const mapRef = useRef(null);
     const route = useRoute();
     const { trip: passedTrip, isAdmin: passedIsAdmin } = route.params || {};
@@ -100,6 +106,9 @@ const LiveLocationScreen = () => {
     const [userLocation, setUserLocation] = useState(null);
     const [participants, setParticipants] = useState({});
     const [selectedMarker, setSelectedMarker] = useState(null);
+    useEffect(() => {
+        if (selectedMarker && !participants[selectedMarker.id]) setSelectedMarker(null);
+    }, [participants, selectedMarker]);
     const [droppedPin, setDroppedPin] = useState(null);
     const [pinnedLocation, setPinnedLocation] = useState(null);
     const [isSafetyActive, setIsSafetyActive] = useState(false);
@@ -113,6 +122,12 @@ const LiveLocationScreen = () => {
     const [googleMapsModal, setGoogleMapsModal] = useState(false);
     const [userName, setUserName] = useState('User');
     const [selectedParticipant, setSelectedParticipant] = useState(null);
+    useEffect(() => {
+        if (selectedParticipant && !participants[selectedParticipant.id]) {
+            setSelectedParticipant(null);
+            setGoogleMapsModal(false);
+        }
+    }, [participants, selectedParticipant]);
     const [participantsList, setParticipantsList] = useState([]);
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
@@ -126,20 +141,18 @@ const LiveLocationScreen = () => {
 
 
     // Swipe down to close logic for modals - Interactive version
-    const createDraggableResponder = (setter, animatedValue) => PanResponder.create({
+    const createDraggableResponder = (setter, animatedValue, canDrag = () => true) => PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gestureState) => {
             const { dy, dx } = gestureState;
-            return dy > 5 && dy > Math.abs(dx);
+            return canDrag() && dy > 5 && dy > Math.abs(dx);
         },
         onMoveShouldSetPanResponderCapture: (_, gestureState) => {
             const { dy, dx } = gestureState;
-            return dy > 20 && dy > Math.abs(dx);
+            return canDrag() && dy > 20 && dy > Math.abs(dx);
         },
         onPanResponderMove: (_, gestureState) => {
-            if (gestureState.dy > 0) {
-                animatedValue.setValue(gestureState.dy);
-            }
+            animatedValue.setValue(Math.max(0, gestureState.dy));
         },
         onPanResponderRelease: (_, gestureState) => {
             if (gestureState.dy > 120 || (gestureState.dy > 50 && gestureState.vy > 0.5)) {
@@ -160,6 +173,13 @@ const LiveLocationScreen = () => {
             }
         },
         onPanResponderTerminationRequest: () => true,
+        onPanResponderTerminate: () => {
+            Animated.spring(animatedValue, {
+                toValue: 0,
+                friction: 8,
+                useNativeDriver: true,
+            }).start();
+        },
         onShouldBlockNativeResponder: () => true,
     });
 
@@ -168,7 +188,23 @@ const LiveLocationScreen = () => {
     const panYGoogleMaps = React.useRef(new Animated.Value(0)).current;
     const panYRequestSent = React.useRef(new Animated.Value(0)).current;
 
-    const participantsSwipe = createDraggableResponder(setShowParticipantsList, panYParticipants);
+    const participantsScrollOffset = useRef(0);
+    const participantsDragAllowed = useRef(true);
+    const participantsSwipe = React.useMemo(
+        () => createDraggableResponder(setShowParticipantsList, panYParticipants),
+        [panYParticipants],
+    );
+    const participantsBodySwipe = React.useMemo(
+        () => createDraggableResponder(setShowParticipantsList, panYParticipants, () => participantsDragAllowed.current),
+        [panYParticipants],
+    );
+    useEffect(() => {
+        if (showParticipantsList) {
+            participantsScrollOffset.current = 0;
+            participantsDragAllowed.current = true;
+            panYParticipants.setValue(0);
+        }
+    }, [showParticipantsList, panYParticipants]);
     const locationRequestSwipe = createDraggableResponder(setLocationRequestModal, panYLocationReq);
     const googleMapsSwipe = createDraggableResponder(setGoogleMapsModal, panYGoogleMaps);
     const requestSentSwipe = createDraggableResponder(setRequestSentVisible, panYRequestSent);
@@ -434,10 +470,10 @@ const LiveLocationScreen = () => {
 
         if (resolvedOrgId && tripId) {
             locationsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations`);
-            onValue(locationsRef, (snapshot) => {
+            onVisibleValue(locationsRef, tripId, (snapshot) => {
                 const locData = snapshot.val() || {};
                 // Merge remote data with our local participant list
-                setParticipants(prev => ({ ...prev, ...locData }));
+                setParticipants(locData);
             });
 
             // Listen for Safety Point
@@ -456,7 +492,7 @@ const LiveLocationScreen = () => {
             // Listen for Incoming Requests
             if (auth.currentUser?.uid) {
                 notifRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/notifications/${auth.currentUser.uid}`);
-                onValue(notifRef, (snap) => {
+                onVisibleValue(notifRef, tripId, (snap) => {
                     if (snap.exists()) {
                         const notifs = snap.val() || {};
                         const notifEntries = Object.entries(notifs).map(([id, val]) => ({
@@ -468,7 +504,7 @@ const LiveLocationScreen = () => {
                         // Find the latest pending location request
                         const pendingReqs = notifEntries
                             .filter(n => 
-                                n.type === 'location_request' && 
+                                n.type === 'location_request' && n.expiresAt > Date.now() &&
                                 n.status !== 'accepted' && 
                                 n.status !== 'declined' && 
                                 n.status !== 'dismissed' &&
@@ -518,9 +554,9 @@ const LiveLocationScreen = () => {
 
         return () => {
             if (locationWatcher) locationWatcher.remove();
-            if (locationsRef) off(locationsRef);
+            if (locationsRef) offVisible(locationsRef);
             if (safetyRef) off(safetyRef);
-            if (notifRef) off(notifRef);
+            if (notifRef) offVisible(notifRef);
             if (pinnedLocationRef) off(pinnedLocationRef);
             const officialParticipantsRef = ref(database, `trips_participants/${tripId}`);
             off(officialParticipantsRef);
@@ -534,13 +570,13 @@ const LiveLocationScreen = () => {
 
         const permsRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/location_permissions`);
         
-        const unsubscribe = onValue(permsRef, (snapshot) => {
+        const unsubscribe = onVisibleValue(permsRef, tripId, (snapshot) => {
             const allPerms = snapshot.val() || {};
             const myPermissions = {};
             
             // Extract permissions granted to ME
             Object.keys(allPerms).forEach(targetUid => {
-                if (allPerms[targetUid] && allPerms[targetUid][myUid] === true) {
+                if (allPerms[targetUid] && isLocationGrantActive(allPerms[targetUid][myUid])) {
                     myPermissions[targetUid] = true;
                 }
             });
@@ -551,24 +587,15 @@ const LiveLocationScreen = () => {
         return () => unsubscribe();
     }, [resolvedOrgId, tripId]);
 
-    // Fetch Trip Participants Profile Data - UID Targeted & Cached
+    // Keep joined participants' profiles and personal visibility current.
     useEffect(() => {
-        const uidsToFetch = activeParticipantUids;
-        if (uidsToFetch.length === 0 || !tripId) return;
-
-        uidsToFetch.forEach(async (uid) => {
-            try {
-                const profileRef = ref(database, `users/${uid}/profile`);
-                const nameRef = ref(database, `users/${uid}/full_name`);
-                const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
-                
-                const [userSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
-                    get(profileRef),
-                    get(nameRef),
-                    get(visibilityRef),
-                    get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
-                ]);
-
+        if (activeParticipantUids.length === 0 || !tripId) return;
+        const unsubscribers = [];
+        activeParticipantUids.forEach((uid) => {
+            const snapshots = {};
+            const updateProfile = () => {
+                if (Object.keys(snapshots).length !== 4) return;
+                const { profile: userSnap, name: nameSnap, visibility: visSnap, photo: photoSnap } = snapshots;
                 const rawProfile = userSnap.val() || {};
                 const photoUrl = photoSnap?.val();
                 const profile = {
@@ -577,9 +604,9 @@ const LiveLocationScreen = () => {
                 };
                 const fullName = nameSnap.val();
                 const visibility = visSnap.val() || {};
-                const targetRole = staffListRef.current?.[uid];
-                const isTargetStaff = isStaffMember(uid, staffListRef.current, organizerIdRef.current, targetRole);
-                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffListRef.current, organizerIdRef.current, userRole) || isAdmin;
+                const targetRole = staffData?.[uid];
+                const isTargetStaff = isStaffMember(uid, staffData, organizerIdRef.current, targetRole);
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
 
                 const displayName = getParticipantDisplayName({
                     profile,
@@ -629,11 +656,23 @@ const LiveLocationScreen = () => {
                     const filtered = prev.filter(p => p.id !== uid);
                     return [...filtered, pData];
                 });
-            } catch (err) {
+            };
+            for (const [key, path] of Object.entries({
+                profile: `users/${uid}/profile`,
+                name: `users/${uid}/full_name`,
+                visibility: `users/${uid}/participant_visibility/${tripId}`,
+                photo: `users/${uid}/photo_url`,
+            })) {
+                unsubscribers.push(onVisibleValue(ref(database, path), tripId, (snapshot) => {
+                    snapshots[key] = snapshot;
+                    updateProfile();
+                }, (error) => {
+                    console.warn('[LiveLocation] Could not load participant profile:', error.code);
+                }));
             }
         });
-    }, [activeParticipantUids, tripId, isAdmin, userRole, globalVisibilityConfig]);
-
+        return () => unsubscribers.forEach(unsubscribe => unsubscribe());
+    }, [activeParticipantUids, tripId, isAdmin, userRole, globalVisibilityConfig, staffData]);
 
     const centerOnUser = () => {
         if (userLocation && mapRef.current) {
@@ -656,36 +695,6 @@ const LiveLocationScreen = () => {
         });
         return () => unsubscribe();
     }, [resolvedOrgId]);
-
-    // Fetch Global Privacy Configuration
-    useEffect(() => {
-        if (!resolvedOrgId) return;
-        const privacyRef = ref(database, `orgs/${resolvedOrgId}/settings/privacy`);
-        const unsubscribe = onValue(privacyRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setGlobalVisibilityConfig(snapshot.val());
-            }
-        });
-        return () => unsubscribe();
-    }, [resolvedOrgId]);
-
-    // Handler for Toggling Safety Center Check-in
-    const toggleSafetyCenter = async () => {
-        const activeOrgId = resolvedOrgId || orgId;
-        if (!activeOrgId || !tripId || !userLocation || !auth.currentUser?.uid) return;
-
-        const safetyRef = ref(database, `trips_active/${activeOrgId}/${tripId}/safety_locations/${auth.currentUser.uid}`);
-        if (safetyCenterLocations[auth.currentUser.uid]) {
-            await remove(safetyRef);
-        } else {
-            await set(safetyRef, {
-                lat: userLocation.latitude,
-                lng: userLocation.longitude,
-                created_at: serverTimestamp(),
-                by: auth.currentUser.uid
-            });
-        }
-    };
 
     const toggleSafetyPoint = async () => {
         const activeOrgId = resolvedOrgId || orgId;
@@ -757,7 +766,7 @@ const LiveLocationScreen = () => {
         const targetUid = participant.id;
         if (targetUid === myUid) return true;
 
-        const isViewerStaff = isAdmin || isStaffMember(myUid, staffData, organizerIdRef.current, userRole);
+        const isViewerStaff = isStaffMember(myUid, staffData, organizerIdRef.current, userRole);
         const isTargetStaff = isStaffMember(targetUid, staffData, organizerIdRef.current, participant.status);
         const pProfile = participantsList.find(p => p.id === targetUid) || profileCache.current[targetUid];
 
@@ -779,8 +788,8 @@ const LiveLocationScreen = () => {
 
         try {
             const permRef = ref(database, `trips_active/${activeOrgId}/${tripId}/location_permissions/${targetUid}/${myUid}`);
-            const permSnap = await get(permRef);
-            return permSnap.exists() && permSnap.val() === true;
+            const permSnap = await getVisibleSnapshot(permRef, tripId);
+            return permSnap.exists() && isLocationGrantActive(permSnap.val());
         } catch (e) {
             return false;
         }
@@ -814,21 +823,9 @@ const LiveLocationScreen = () => {
             // Directly route to Google Maps
             handleLocationPress(participant, true);
         } else {
-            // Send request
-            const targetUid = participant.id;
+            // Request/acceptance is validated by the server; no client can mint a grant.
             try {
-                const senderName = userName || auth.currentUser?.displayName || 'Participant';
-                const notifKey = String(Date.now());
-                await set(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${targetUid}/${notifKey}`), {
-                    id: notifKey,
-                    fromUid: myUid,
-                    senderUid: myUid,
-                    name: senderName,
-                    title: 'Location Request',
-                    message: `${senderName} is asking for your live location.`,
-                    type: 'location_request',
-                    timestamp: serverTimestamp(),
-                });
+                await requestParticipantLocation(tripId, participant.id);
                 setRequestSentVisible(true);
             } catch (error) {
                 console.log("[LiveLocation] Error sending location request:", error);
@@ -851,29 +848,9 @@ const LiveLocationScreen = () => {
         if (!myUid || !activeOrgId || !tripId || !requesterUid) return;
 
         try {
-            // 1. Grant explicit permission in RTDB for the requester
-            await set(ref(database, `trips_active/${activeOrgId}/${tripId}/location_permissions/${myUid}/${requesterUid}`), true);
-
-            // 2. Ensure live location tracking is active for current user so requester receives coordinates
-            startLiveLocationTracking(activeOrgId, tripId);
-            syncCurrentUserLocationNow(activeOrgId, tripId);
-
-            // 3. Clean up notification from RTDB so it does not repeat
-            if (notifId) {
-                await remove(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${myUid}/${notifId}`)).catch(() => {});
-            }
-
-            // 4. Send confirmation notification back to requester
-            const senderName = userName || auth.currentUser?.displayName || 'Participant';
-            await set(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${requesterUid}/${Date.now()}`), {
-                fromUid: myUid,
-                senderUid: myUid,
-                name: senderName,
-                title: 'Location Request Accepted',
-                message: `${senderName} is now sharing their live location with you.`,
-                type: 'alert',
-                timestamp: serverTimestamp(),
-            });
+            await respondToLocationRequest(tripId, notifId, true);
+            await startLiveLocationTracking(activeOrgId, tripId);
+            await syncCurrentUserLocationNow();
         } catch (err) {
             console.log("[LiveLocation] Error accepting location request:", err);
         }
@@ -889,7 +866,7 @@ const LiveLocationScreen = () => {
             lastHandledNotifIdRef.current = notifId;
             if (myUid && activeOrgId && tripId) {
                 try {
-                    await remove(ref(database, `trips_active/${activeOrgId}/${tripId}/notifications/${myUid}/${notifId}`)).catch(() => {});
+                    await respondToLocationRequest(tripId, notifId, false);
                 } catch (e) {}
             }
         }
@@ -1137,7 +1114,7 @@ const LiveLocationScreen = () => {
 
                                 const p = participantsList.find(part => part.id === uid) || profileCache.current[uid];
                                 const isTargetStaff = isStaffMember(uid, staffData, organizerIdRef.current);
-                                const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
+                                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
                                 
                                 const canSee = checkPIIVisibility({
                                     field: 'location',
@@ -1313,14 +1290,19 @@ const LiveLocationScreen = () => {
                         onBackdropPress={() => setShowParticipantsList(false)}
                         onSwipeComplete={() => setShowParticipantsList(false)}
                         swipeDirection="down"
-                        style={{ margin: 0, justifyContent: 'flex-end' }}
+                        style={{ margin: 0, marginBottom: bottomNavigationHeight, justifyContent: 'flex-end' }}
                         useNativeDriver={true}
                         hideModalContentWhileAnimating={true}
-                        avoidKeyboard={true}
+                        avoidKeyboard={false}
                     >
                         <Animated.View
+                            {...participantsBodySwipe.panHandlers}
+                            onTouchStart={() => {
+                                participantsDragAllowed.current = participantsScrollOffset.current <= 0;
+                            }}
                             style={[
                                 styles.participantsModal,
+                                { height: participantsSheetHeight },
                                 { transform: [{ translateY: panYParticipants }] }
                             ]}
                         >
@@ -1341,7 +1323,14 @@ const LiveLocationScreen = () => {
                                 />
                             </View>
 
-                            <ScrollView style={styles.participantsList}>
+                            <ScrollView
+                                style={styles.participantsList}
+                                onScroll={(event) => {
+                                    participantsScrollOffset.current = Math.max(0, event.nativeEvent.contentOffset.y);
+                                }}
+                                scrollEventThrottle={16}
+                                bounces={false}
+                            >
                                 {activeParticipantUids
                                     .filter((uid) => {
                                         const isMe = uid === auth.currentUser?.uid;
@@ -1367,7 +1356,7 @@ const LiveLocationScreen = () => {
 
                                         const hasExplicitPermission = locationPermissions[uid] === true;
                                         const isTargetStaff = isStaffMember(uid, staffData, organizerIdRef.current);
-                                        const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
+                                        const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerIdRef.current, userRole);
                                         
                                         const canSee = checkPIIVisibility({
                                             field: 'location',
@@ -1474,7 +1463,7 @@ const LiveLocationScreen = () => {
                             <View style={styles.modalHandle} />
                             <Text style={styles.alertTitle}>Location Request</Text>
                             <Text style={{ color: '#A1A1AA', textAlign: 'center', marginBottom: 20 }}>
-                                {incomingRequest?.name || 'A participant'} is asking for your live location.
+                                {incomingRequest?.name || 'A participant'} is asking for your live location for 15 minutes.
                             </Text>
                             <TouchableOpacity
                                 style={styles.gradientButtonWrapper}
@@ -1488,7 +1477,7 @@ const LiveLocationScreen = () => {
                                     style={styles.gradientBorder}
                                 >
                                     <View style={styles.buttonInner}>
-                                        <Text style={styles.okButtonText}>Share Location</Text>
+                                        <Text style={styles.okButtonText}>Share for 15 minutes</Text>
                                     </View>
                                 </LinearGradient>
                             </TouchableOpacity>
@@ -1523,7 +1512,7 @@ const LiveLocationScreen = () => {
                             <View style={styles.modalHandle} />
                             <Text style={styles.alertTitle}>Request Sent</Text>
                             <Text style={{ color: '#A1A1AA', textAlign: 'center', marginBottom: 20 }}>
-                                A location request has been sent. Once accepted, you can locate them on the map.
+                                A location request has been sent. If accepted, their location is shared with you for 15 minutes.
                             </Text>
                             <TouchableOpacity
                                 style={styles.gradientButtonWrapper}
@@ -1770,8 +1759,7 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         paddingTop: 12,
-        paddingBottom: 80,
-        maxHeight: height * 0.6,
+        paddingBottom: 16,
     },
     modalHandle: {
         width: 40,
@@ -1813,7 +1801,7 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
     },
     participantsList: {
-
+        flex: 1,
         paddingHorizontal: 24,
     },
     participantItem: {

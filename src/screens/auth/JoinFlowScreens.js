@@ -1,5 +1,7 @@
+import { getVisibleSnapshot } from '../../services/visibilityData';
+import { ensureTeamAccount } from '../../utils/teamEnrollment';
 import { uploadJoinPhoto } from '../../utils/uploadJoinPhoto';
-import { beginEnrollment } from '../../utils/enrollmentSession';
+import { beginEnrollment, finishEnrollment } from '../../utils/enrollmentSession';
 import { completeTripJoin, prepareTripJoinSession } from '../../utils/completeTripJoin';
 import { invitationVerificationParams } from '../../utils/invitationOnboarding';
 import React, { useState, useEffect, useRef } from 'react';
@@ -250,6 +252,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
     
     // Track if we are in signup mode (User not found after check) (S3/S6)
     const [isSignupMode, setIsSignupMode] = useState(false);
+    const submittingRef = useRef(false);
 
     useEffect(() => {
         if (previousData.email) {
@@ -261,6 +264,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
     const showPasswordFields = email.length > 5 && email.includes('@') && (isSignupMode || !previousData.invitationCode);
 
     const handleContinue = async () => {
+        if (submittingRef.current) return;
         let hasError = false;
         if (!email || !email.trim()) {
             setEmailError('Email address is required.');
@@ -292,8 +296,15 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 
         if (hasError) return;
 
+        submittingRef.current = true;
         setIsLoading(true);
         try {
+            if (previousData.isTeamInvite) {
+                const metadata = await httpsCallable(functions, 'getTeamInviteMetadata')({ token: previousData.teamInviteToken });
+                if (metadata.data.email?.trim().toLowerCase() !== email.trim().toLowerCase()) {
+                    throw new Error('Use the email address this invitation was sent to.');
+                }
+            }
             if (!previousData.isTeamInvite) {
                 // S22: Check capacity BEFORE login/signup to avoid App.js session conflicts
                 const getMetadata = httpsCallable(functions, 'getInviteMetadata');
@@ -327,7 +338,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                 const userExists = result.data?.exists;
 
                 if (userExists) {
-                    if (result.data?.isStaff === true) {
+                    if (!previousData.isTeamInvite && result.data?.isStaff === true) {
                         setEmailError('This business account cannot be used to join as a participant.');
                         setIsLoading(false);
                         return;
@@ -354,13 +365,13 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 
                         // RBAC Check: Admins cannot login as participants
                         // S6: Role-Based Access Control
-                        const userSnap = await get(dbRef(database, `users/${currentUserId}`));
+                        const userSnap = await getVisibleSnapshot(dbRef(database, `users/${currentUserId}`), null);
                         const userData = userSnap.val() || {};
                         const idTokenResult = await userCredential.user.getIdTokenResult(true);
                         const role = idTokenResult.claims.role;
                         const isStaff = !!userData.staff_org_id || ['admin', 'co-host', 'manager'].includes(role);
 
-                        if (isStaff) {
+                        if (!previousData.isTeamInvite && isStaff) {
                             await signOut(auth);
                             setEmailError('This business account cannot be used to join as a participant.');
                             setIsLoading(false);
@@ -427,7 +438,14 @@ export const JoinEmailScreen = ({ navigation, route }) => {
 
                 try {
                     beginEnrollment();
-                    userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+                    userCredential = previousData.isTeamInvite
+                        ? { user: await ensureTeamAccount({
+                            auth, email, password,
+                            checkUser: email => httpsCallable(functions, 'checkUserExistence')({ email }),
+                            createUser: createUserWithEmailAndPassword,
+                            signIn: signInWithEmailAndPassword,
+                        }) }
+                        : await createUserWithEmailAndPassword(auth, email.trim(), password);
                     currentUserId = userCredential.user.uid;
 
                     const verificationParams = invitationVerificationParams(previousData, {
@@ -459,7 +477,9 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                 }
             }
         } catch (error) {
-            if (error.code === 'auth/email-already-in-use') {
+            if (previousData.isTeamInvite && ['auth/invalid-credential', 'auth/wrong-password', 'auth/invalid-login-credentials'].includes(error.code)) {
+                setPasswordError('This email has an account. Enter its existing password to accept the invitation.');
+            } else if (error.code === 'auth/email-already-in-use') {
                 // If we attempted signup but user exists (fallback)
                 setIsSignupMode(false);
                 setEmailError('This email is already registered. Please enter your password to log in.');
@@ -467,6 +487,7 @@ export const JoinEmailScreen = ({ navigation, route }) => {
                 setEmailError(error.message || 'An error occurred. Please try again.');
             }
         } finally {
+            submittingRef.current = false;
             setIsLoading(false);
         }
     };
@@ -1348,11 +1369,13 @@ export const JoinTermsScreen = ({ navigation, route }) => {
                 });
 
                 if (auth.currentUser) {
+                    await auth.currentUser.getIdToken(true);
                     await remove(dbRef(database, `users/${auth.currentUser.uid}/join_flow_status`));
                 }
 
                 const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                 await AsyncStorage.removeItem('mfa_lock');
+                finishEnrollment();
 
                 navigation.reset({
                     index: 0,

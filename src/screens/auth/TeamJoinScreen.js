@@ -1,3 +1,4 @@
+import { beginEnrollment, finishEnrollment } from '../../utils/enrollmentSession';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -59,8 +60,14 @@ const TeamJoinScreen = ({ navigation, route }) => {
                     const invitedEmail = data.email?.toLowerCase();
 
                     if (loggedInEmail === invitedEmail) {
-                        // Emails match -> Auto Redeem
-                        await redeemTeamInvite(data);
+                        await auth.currentUser.reload();
+                        if (auth.currentUser.emailVerified) {
+                            await redeemTeamInvite(data);
+                        } else {
+                            // Resume account verification instead of treating a pending
+                            // account from a previous attempt as an existing team member.
+                            setIsLoading(false);
+                        }
                     } else {
                         // Email mismatch -> User must confirm sign out
                         setIsLoading(false);
@@ -83,14 +90,17 @@ const TeamJoinScreen = ({ navigation, route }) => {
         setIsLoading(true);
         setStatusText('Accepting invitation and setting up workspace...');
         try {
+            beginEnrollment();
             const redeem = httpsCallable(functions, 'redeemTeamInvitation');
             await redeem({ token });
+            await auth.currentUser.getIdToken(true);
 
             // Clear the Join Flow flag in database if set
             if (auth.currentUser) {
                 await remove(ref(database, `users/${auth.currentUser.uid}/join_flow_status`));
             }
             await AsyncStorage.removeItem('mfa_lock');
+            finishEnrollment();
 
             Alert.alert(
                 "Invitation Accepted",

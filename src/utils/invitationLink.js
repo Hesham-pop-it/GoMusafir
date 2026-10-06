@@ -2,10 +2,17 @@ export function parseInvitationCode(input) {
     const value = String(input || '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
     if (/^[A-Za-z0-9_-]{1,256}$/.test(value)) return value;
     try {
-        const url = new URL(/^app\.gomusafir\.app\//i.test(value) ? `https://${value}` : value);
-        const web = ['https:', 'http:'].includes(url.protocol) && url.hostname === 'app.gomusafir.app';
-        const app = url.protocol === 'gomusafir:' && url.hostname === 'link';
+        const url = new URL(/^(?:www\.)?(?:app|join)\.gomusafir\.app\//i.test(value) ? `https://${value}` : value);
+        const web = ['https:', 'http:'].includes(url.protocol) &&
+            ['app.gomusafir.app', 'www.app.gomusafir.app', 'join.gomusafir.app', 'www.join.gomusafir.app'].includes(url.hostname);
+        const app = url.protocol === 'gomusafir:' && ['link', 'join'].includes(url.hostname);
         if ((!web && !app) || url.username || url.password || url.port) return null;
+        if ((web && /^\/join\/?$/.test(url.pathname)) ||
+            (app && url.hostname === 'join' && /^\/?$/.test(url.pathname))) {
+            const codes = url.searchParams.getAll('code');
+            return codes.length === 1 && /^[A-Za-z0-9_-]{1,256}$/.test(codes[0]) ? codes[0] : null;
+        }
+        if (app && url.hostname !== 'link') return null;
         const match = url.pathname.match(app ? /^\/([A-Za-z0-9_-]{1,256})\/?$/ : /^\/link\/([A-Za-z0-9_-]{1,256})\/?$/);
         return match?.[1] || null;
     } catch (_) { return null; }
