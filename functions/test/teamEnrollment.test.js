@@ -14,6 +14,7 @@ function fixture({ failWrite = false, failClaims = false, failAudit = false, ema
   class HttpsError extends Error { constructor(code,message){super(message);this.code=code;} }
   const deps={
     '../services/participantAccessService':{}, '../services/participantJoinSeat':{},
+    '../services/tripCapacity':require('../services/tripCapacity'),
     'firebase-functions/v2/https':{HttpsError}, '../middleware/participantAccessMiddleware':{onCall:(_,fn)=>fn},
     '../admin':{db,admin:{database:{ServerValue:{TIMESTAMP:1}}},auth:{getUser:async()=>({email,emailVerified:true,customClaims:{preserved:true}}),updateUser:async()=>{},setCustomUserClaims:async(uid,value)=>{
       assert.equal(read(`orgs/org/staff/${uid}`),'manager');

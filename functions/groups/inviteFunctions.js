@@ -1,5 +1,6 @@
 const { tripExpiry, refreshAccess } = require('../services/participantAccessService');
-const { reserveParticipantJoinSeat } = require('../services/participantJoinSeat');
+const { commitParticipantJoin } = require('../services/participantJoinSeat');
+const { occupiedSeatUids, tripCapacity } = require('../services/tripCapacity');
 // ─── Invite Functions ─────────────────────────────────────────────────────────
 // Covers: S6 (auth required), S9 (trip isolation), S13 (App Check),
 //         S14 (rate limiting), S15 (expiry + single-use), S16 (no redirects),
@@ -64,8 +65,6 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
     throw new HttpsError('permission-denied', 'This trip has ended or is invalid.');
   }
 
-  // Check if already joined
-  const alreadyJoined = await db.ref(`trips_participants/${tripId}/${uid}`).get();
 
 
   // S16: No open redirects — all data comes from server-validated DB, not URL params
@@ -187,33 +186,14 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
     }
   }
 
-  // Final Merge and update
-  
-  if (alreadyJoined.exists()) {
-    // Repair a legacy/partially completed join before publishing access.
-    await db.ref().update({
-      ...Object.fromEntries(Object.entries(updates).filter(([path]) =>
-        path.startsWith(`users/${uid}/`) && path !== `users/${uid}/joined_trips/${tripId}`)),
-      [`users/${uid}/joined_trips/${tripId}/org_id`]: orgId,
-      [`users/${uid}/joined_trips/${tripId}/status`]: 'joined',
-      [`users/${uid}/current_trip`]: tripId,
-      [`users/${uid}/join_flow_status`]: null,
-      [`users/${uid}/mfa_pending`]: false,
-      [`users/${uid}/account_type`]: 'participant',
-    });
-    const access = await refreshAccess(uid);
-    return { success: true, tripId, orgId, access, message: "Already joined." };
-  }
-
-  await reserveParticipantJoinSeat(orgId, tripId, uid);
   let access;
   try {
-    // Publish account type and both membership indexes in the same write.
-    // Access refreshes must never see a new participant without their trip.
-    await db.ref().update(updates);
+    // Validate current membership and commit all join indexes in one transaction.
+    await commitParticipantJoin(orgId, tripId, uid, updates);
     access = await refreshAccess(uid);
   } catch (dbErr) {
-    throw new HttpsError("internal", "Failed to update participant status.");
+    if (dbErr instanceof HttpsError) throw dbErr;
+    throw new HttpsError("internal", "Failed to update participant status. Please retry joining.");
   }
 
   // S20: Audit log
@@ -452,8 +432,13 @@ exports.getInviteMetadata = onCall({ enrollment: true, region: "europe-west1" },
   if (!tripExpiry(trip)) throw new HttpsError("permission-denied", "This trip has ended or is invalid.");
   const orgSnap = await db.ref(`orgs/${invite.org_id}/metadata/name`).get();
 
-  const currentParticipants = trip.participants || 0;
-  const totalSeats = trip.total_seats || 15;
+  const [membersSnap, staffSnap] = await Promise.all([
+    db.ref(`trips_participants/${invite.trip_id}`).get(),
+    db.ref(`orgs/${invite.org_id}/staff`).get(),
+  ]);
+  const members = membersSnap.val() || {};
+  const currentParticipants = occupiedSeatUids(members, staffSnap.val()).length;
+  const totalSeats = tripCapacity(trip);
 
   let alreadyJoined = false;
   
