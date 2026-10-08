@@ -25,7 +25,7 @@ function fixture(valid, initiallyAdmitted = false) {
     });
     const Screen = () => {}; const Wrapped = wrap(Screen);
     const props = { navigation: { reset: value => resets.push(value) }, route: { params: { tripId: 'a' } } };
-    return { auth, Screen, props, resets, checks: () => checks, render: () => Wrapped(props), mount: () => effect(), check: () => authCallback(), background: () => appCallback('background'), invalidate: () => invalidate() };
+    return { auth, Screen, props, resets, checks: () => checks, render: () => Wrapped(props), mount: () => effect(), check: () => authCallback(), background: () => appCallback('background'), invalidate: () => { admissionUser = null; return invalidate(); } };
 }
 test('protected child and its data effects cannot mount before validation', async () => {
     const f = fixture(true);
@@ -33,10 +33,10 @@ test('protected child and its data effects cannot mount before validation', asyn
     await f.check(); assert.equal(f.render().type, f.Screen);
     f.background(); assert.equal(f.render().type, 'View');
 });
-test('failed validation sends Login without ever mounting protected child', async () => {
+test('failed validation sends Welcome without ever mounting protected child', async () => {
     const f = fixture(false); f.render(); f.mount(); await f.check();
     assert.equal(f.render().type, 'View');
-    assert.equal(f.resets[0].routes[0].name, 'Login');
+    assert.equal(f.resets[0].routes[0].name, 'Welcome');
 });
 test('internal parameter changes reuse session admission but logout blocks rendering', async () => {
     const f = fixture(true); f.render(); f.mount(); await f.check();
@@ -57,4 +57,21 @@ test('new screens in an admitted session render immediately with no loading or v
     f.mount(); await f.check();
     assert.equal(f.checks(), 0);
     assert.equal(f.render().type, f.Screen);
+});
+
+test('logout invalidation and the following auth callback both reset to Welcome', async () => {
+    const f = fixture(false, true);
+    assert.equal(f.render().type, f.Screen);
+    f.mount();
+    // safeSignOut invalidates admission before Firebase clears the current user.
+    await f.invalidate();
+    assert.equal(f.render().type, 'View');
+    f.auth.currentUser = null;
+    await f.check();
+    assert.equal(f.resets.length, 2);
+    for (const reset of f.resets) {
+        assert.equal(reset.index, 0);
+        assert.equal(reset.routes.length, 1);
+        assert.equal(reset.routes[0].name, 'Welcome');
+    }
 });

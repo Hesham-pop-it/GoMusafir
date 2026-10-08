@@ -25,7 +25,8 @@ export function withProtectedSession(Screen) {
                 const valid = await protectedSession.validate();
                 if (disposed || attempt !== revision) return;
                 if (valid && auth.currentUser === user) setAdmitted(true);
-                else props.navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+                // Match App.js on logout; the legacy Login route is a placeholder.
+                else props.navigation.reset({ index: 0, routes: [{ name: 'Welcome' }] });
             };
             const unsubscribe = onAuthStateChanged(auth, check);
             const unsubscribeInvalidation = protectedSession.subscribe(check);
