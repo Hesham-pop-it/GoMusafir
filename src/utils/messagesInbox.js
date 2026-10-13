@@ -6,6 +6,17 @@ export function peerShown(row, people) {
     return { name: (person && person.name) || row?.peer_name || '', image: (person && person.image) || '' };
 }
 
+// Same test the chat screen uses for its system lines (voice chat started, joined, ...).
+export const isSystemLine = (m) => m?.type === 'system' && m?.sender_id === 'system';
+
+// The last n real messages for a group row preview; only when there are none, the latest system line.
+export function previewMessages(messages, n = 2) {
+    const list = messages || [];
+    const real = list.filter((m) => !isSystemLine(m));
+    if (real.length) return real.slice(-n);
+    return list.slice(-1);
+}
+
 export function initialsOf(name) {
     return String(name || '?').split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 }

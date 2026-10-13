@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../src/utils/messagesInbox.js'), 'utf8');
 const context = {};
-vm.runInNewContext(source.replace(/export function/g, 'function') + '\nthis.api = { initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, splitInbox, fill };', context);
+vm.runInNewContext(source.replace(/export function/g, 'function').replace(/export const/g, 'const') + '\nthis.api = { initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, splitInbox, fill, previewMessages };', context);
 const api = context.api;
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
@@ -61,4 +61,14 @@ test('splitInbox groups rows by kind and keeps thread ids', () => {
 
 test('fill replaces known placeholders only', () => {
     assert.equal(api.fill('Hi {name}, {n} left {x}', { name: 'A', n: 2 }), 'Hi A, 2 left {x}');
+});
+
+test('previewMessages skips system lines and falls back to one only when nothing else exists', () => {
+    const sys = { id: 's', type: 'system', sender_id: 'system', text: 'Voice chat started by A' };
+    const a = { id: 'a', sender_id: 'u1', text: 'hi' };
+    const b = { id: 'b', sender_id: 'u2', text: 'salam' };
+    assert.deepEqual(plain(api.previewMessages([a, b, sys], 2)), [a, b]);
+    assert.deepEqual(plain(api.previewMessages([a, sys, b, sys], 1)), [b]);
+    assert.deepEqual(plain(api.previewMessages([sys], 2)), [sys]);
+    assert.deepEqual(plain(api.previewMessages([], 2)), []);
 });

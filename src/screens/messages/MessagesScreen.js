@@ -11,7 +11,7 @@ import useTripPeople from '../../hooks/useTripPeople';
 import useVoiceLive from '../../hooks/useVoiceLive';
 import { paths, subscribeLastMessages, subscribeTeamMeta, subscribePresence, subscribeReports } from '../../services/messaging';
 import { inboxSort } from '../../utils/messagingRules';
-import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill, peerShown } from '../../utils/messagesInbox';
+import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill, peerShown, previewMessages } from '../../utils/messagesInbox';
 import { teamConversation } from '../../utils/openConversation';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { Avatar, ShieldAvatar, CountBadge, Pill, THEME } from './parts';
@@ -50,7 +50,7 @@ const MessagesScreen = () => {
     useEffect(() => {
         if (!orgId || !tripId) return;
         const p = paths(orgId, tripId);
-        const unsubs = [subscribeLastMessages(p.chat, 2, setGroupLast), subscribePresence(orgId, tripId, setPresence)];
+        const unsubs = [subscribeLastMessages(p.chat, 12, (list) => setGroupLast(previewMessages(list, 2))), subscribePresence(orgId, tripId, setPresence)];
         return () => unsubs.forEach((u) => u());
     }, [orgId, tripId]);
 
