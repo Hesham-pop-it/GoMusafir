@@ -35,7 +35,12 @@ export const translations = {
     no_trips_title: "No trips planned yet.",
     no_trips_subtitle: "Tap the plus button below to create your first trip.",
     no_participants_title: "No participants yet.",
-    no_participants_subtitle: "There are currently no participants to display."
+    no_participants_subtitle: "There are currently no participants to display.",
+    msg_locked_composer: "You can send more once your request is accepted",
+    msg_request_pending: "Request pending",
+    msg_staff_only: "staff only",
+    msg_placeholder_team: "Ask a personal question",
+    msg_placeholder_staff: "Message the staff"
   },
   nl: {
     participants: "Deelnemers",
@@ -73,7 +78,12 @@ export const translations = {
     no_trips_title: "Nog geen reizen gepland.",
     no_trips_subtitle: "Tik op de plusknop hieronder om je eerste reis te maken.",
     no_participants_title: "Nog geen deelnemers.",
-    no_participants_subtitle: "Er zijn momenteel geen deelnemers om weer te geven."
+    no_participants_subtitle: "Er zijn momenteel geen deelnemers om weer te geven.",
+    msg_locked_composer: "Je kunt meer sturen zodra je verzoek is geaccepteerd",
+    msg_request_pending: "Verzoek in behandeling",
+    msg_staff_only: "alleen medewerkers",
+    msg_placeholder_team: "Stel een persoonlijke vraag",
+    msg_placeholder_staff: "Bericht aan de medewerkers"
   },
   ar: {
     participants: "المشاركون",
@@ -111,6 +121,11 @@ export const translations = {
     no_trips_title: "لا توجد رحلات مخططة بعد.",
     no_trips_subtitle: "انقر على زر زائد أدناه لإنشاء رحلتك الأولى.",
     no_participants_title: "لا يوجد مشاركون بعد.",
-    no_participants_subtitle: "لا يوجد مشاركون لعرضهم حالياً."
+    no_participants_subtitle: "لا يوجد مشاركون لعرضهم حالياً.",
+    msg_locked_composer: "يمكنك إرسال المزيد بعد قبول طلبك",
+    msg_request_pending: "الطلب قيد الانتظار",
+    msg_staff_only: "للمشرفين فقط",
+    msg_placeholder_team: "اطرح سؤالاً شخصياً",
+    msg_placeholder_staff: "راسل المشرفين"
   }
 };

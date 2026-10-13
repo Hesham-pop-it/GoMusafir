@@ -39,6 +39,8 @@ import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { conversationPaths, markInboxRead, markTeamRead, subscribeThread } from '../../services/messaging';
+import { useLanguage } from '../../context/LanguageContext';
 
 const { width, height } = Dimensions.get('window');
 const SCREEN_WIDTH = width;
@@ -143,7 +145,7 @@ const getParticipantColor = (senderId) => {
 
 const thumbnailCache = new Map();
 
-const ChatMessage = React.memo(({ item, staffRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
+const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
@@ -216,6 +218,11 @@ const ChatMessage = React.memo(({ item, staffRole, isMe, isMedia, isShortText, s
                                 <Ionicons name="shield-checkmark-outline" size={11} color={isMe ? '#30250C' : '#E5C875'} />
                                 <Text style={[styles.staffBadgeText, isMe && { color: '#30250C' }]}>Journey team</Text>
                             </View>
+                            {showRole && !isMe && (
+                                <View style={styles.staffBadge}>
+                                    <Text style={styles.staffBadgeText}>{staffRole.toUpperCase()}</Text>
+                                </View>
+                            )}
                         </View>
                     ) : !isMe && (
                         <Text style={[
@@ -495,13 +502,21 @@ const TripChatScreen = () => {
     const tripId = trip?.id || trip?.tripId;
     const orgId = trip?.org_id || trip?.orgId;
     const [resolvedOrgId, setResolvedOrgId] = useState(orgId);
+    const { t } = useLanguage();
+    const conversation = route.params?.conversation;
+    const kind = conversation?.kind || 'group';
+    const isGroup = kind === 'group';
+    const convId = conversation?.id;
+    // Non-group conversations keep their own local cache rows; the group chat stays keyed by the trip.
+    const cacheKey = isGroup ? tripId : `${tripId}:${kind}:${convId}`;
+    const messagesPath = () => conversationPaths(orgId, tripId, conversation, auth.currentUser?.uid).messages;
     const invitationCode = directCode || trip?.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
 
     const [inputText, setInputText] = useState('');
     const [showAttachments, setShowAttachments] = useState(false);
     const [options, setOptions] = useState(
-        isAdmin
+        isAdmin && isGroup
             ? QUICK_OPTIONS
             : QUICK_OPTIONS.filter(opt => ['photo', 'location', 'camera'].includes(opt.id))
     );
@@ -526,6 +541,9 @@ const TripChatScreen = () => {
     const [staffData, setStaffData] = useState({});
     const [organizerId, setOrganizerId] = useState(null);
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
+    const [threadStatus, setThreadStatus] = useState(null);
+    const isPending = kind === 'dm' && (threadStatus ? threadStatus === 'pending' : !!conversation?.pending);
+    const markReadTimer = useRef(null);
 
 
     const inputRef = useRef(null);
@@ -577,7 +595,7 @@ const TripChatScreen = () => {
 
             // 1. Initialize DB and Load offline messages first
             await ChatDatabase.init();
-            const localMsgs = await ChatDatabase.getMessages(tripId);
+            const localMsgs = await ChatDatabase.getMessages(cacheKey);
 
             if (localMsgs.length > 0) {
                 setMessages(localMsgs.map(m => ({
@@ -631,10 +649,21 @@ const TripChatScreen = () => {
         const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
         const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
 
+        // dm: clear my inbox unread; team: staff read pointer (the pilgrim's own thread has no pointer)
+        const scheduleMarkRead = () => {
+            const myUid = auth.currentUser?.uid;
+            if (!myUid || !convId) return;
+            clearTimeout(markReadTimer.current);
+            markReadTimer.current = setTimeout(() => {
+                if (kind === 'dm') markInboxRead(orgId, tripId, myUid, convId).catch(() => {});
+                else if (kind === 'team' && convId !== myUid) markTeamRead(orgId, tripId, myUid, convId).catch(() => {});
+            }, 300);
+        };
+
         let chatRef;
         if (orgId && tripId) {
             chatRef = query(
-                ref(database, `trips_active/${orgId}/${tripId}/chat`),
+                ref(database, messagesPath()),
                 orderByChild('timestamp'),
                 limitToLast(50)
             );
@@ -668,7 +697,7 @@ const TripChatScreen = () => {
                     });
 
                     // S24: Save to local encrypted database for offline access
-                    ChatDatabase.saveMessage(tripId, {
+                    ChatDatabase.saveMessage(cacheKey, {
                         id: snapshot.key,
                         ...data,
                         timestamp: rawTs,
@@ -677,8 +706,12 @@ const TripChatScreen = () => {
                     });
 
                     // Update our read pointer since we just "saw" a new message
-                    if (auth.currentUser?.uid) {
-                        set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
+                    if (isGroup) {
+                        if (auth.currentUser?.uid) {
+                            set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
+                        }
+                    } else {
+                        scheduleMarkRead();
                     }
                 }
             });
@@ -727,15 +760,14 @@ const TripChatScreen = () => {
             });
 
             // Listen to read pointers
-            const pointersRef = ref(database, `trips_active/${orgId}/${tripId}/read_pointers`);
-            const unsubPointers = onValue(pointersRef, (snap) => {
+            const unsubPointers = isGroup ? onValue(ref(database, `trips_active/${orgId}/${tripId}/read_pointers`), (snap) => {
                 setReadPointers(snap.val() ?? {});
-            });
+            }) : () => {};
 
             // S18: Listen to shared templates
             const templatesRef = ref(database, `trips_active/${orgId}/${tripId}/templates`);
             const unsubTemplates = onValue(templatesRef, (snap) => {
-                if (!isAdmin) return; // S18: Participants should not see/use templates
+                if (!isAdmin || !isGroup) return; // S18: Participants should not see/use templates
                 const val = snap.val() ?? {};
                 
                 // Deduplicate by normalized name and message
@@ -770,11 +802,14 @@ const TripChatScreen = () => {
             });
 
             // Initial read pointer update
-            if (auth.currentUser?.uid) {
+            if (!isGroup) {
+                scheduleMarkRead();
+            } else if (auth.currentUser?.uid) {
                 set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
             }
 
             return () => {
+                clearTimeout(markReadTimer.current);
                 off(chatRef);
                 unsubTrip();
                 unsubP();
@@ -785,7 +820,13 @@ const TripChatScreen = () => {
                 keyboardDidHideListener.remove();
             };
         }
-    }, [orgId, tripId, isAdmin]);
+    }, [orgId, tripId, isAdmin, kind, convId]);
+
+    // A message request flips to accepted live; unlock the composer when it does.
+    useEffect(() => {
+        if (kind !== 'dm' || !orgId || !tripId || !convId) return;
+        return subscribeThread(orgId, tripId, convId, (thread) => setThreadStatus(thread?.status || null));
+    }, [orgId, tripId, kind, convId]);
 
     // Fetch Names and Profiles for Header and Avatars
     useEffect(() => {
@@ -914,7 +955,7 @@ const TripChatScreen = () => {
     const handleSendMessage = () => {
         if (inputText.trim().length === 0 || !orgId || !tripId) return;
 
-        const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+        const chatListRef = ref(database, messagesPath());
         const messageData = {
             text: inputText.trim(),
             sender_id: auth.currentUser?.uid,
@@ -1099,7 +1140,7 @@ const TripChatScreen = () => {
                 }
             }
 
-            const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+            const chatListRef = ref(database, messagesPath());
             const messageData = {
                 type: type,
                 sender_id: senderUid,
@@ -1156,7 +1197,7 @@ const TripChatScreen = () => {
             const location = await Location.getCurrentPositionAsync({});
             const { latitude, longitude } = location.coords;
 
-            const chatListRef = ref(database, `trips_active/${orgId}/${tripId}/chat`);
+            const chatListRef = ref(database, messagesPath());
             await push(chatListRef, {
                 type: 'location',
                 latitude,
@@ -1296,6 +1337,17 @@ const TripChatScreen = () => {
         participantsList: 'No participant info'
     };
 
+    const staffNames = Object.keys(staffData || {})
+        .filter(uid => getChatStaffRole(staffData, uid))
+        .map(uid => participantProfiles[uid]?.name)
+        .filter(Boolean)
+        .join(', ');
+    const headerSubtitle = isGroup ? participantNames.join(', ')
+        : kind === 'dm' ? (isPending ? t('msg_request_pending') : '')
+        : kind === 'staff' ? [staffNames, t('msg_staff_only')].filter(Boolean).join(' · ')
+        : staffNames;
+    const inputPlaceholder = kind === 'team' ? t('msg_placeholder_team') : kind === 'staff' ? t('msg_placeholder_staff') : '';
+
     const renderMessage = React.useCallback(({ item }) => {
         const isMe = item.sender === 'me';
         const isMedia = item.type === 'image' || item.type === 'video';
@@ -1305,19 +1357,20 @@ const TripChatScreen = () => {
             <ChatMessage
                 item={item}
                 staffRole={getChatStaffRole(staffData, item.sender_id)}
+                showRole={!isGroup}
                 isMe={isMe}
                 isMedia={isMedia}
                 isShortText={isShortText}
                 setReplyingTo={setReplyingTo}
                 inputRef={inputRef}
-                currentParticipants={currentParticipants}
+                currentParticipants={isGroup ? currentParticipants : []}
                 readPointers={readPointers}
                 participantProfiles={participantProfiles}
                 onImagePress={setViewerImage}
                 onVideoPress={setViewerVideo}
             />
         );
-    }, [currentParticipants, readPointers, participantProfiles, staffData]);
+    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
@@ -1364,18 +1417,32 @@ const TripChatScreen = () => {
                                     <Ionicons name="arrow-back" size={24} color="#FFF" />
                                 </TouchableOpacity>
 
-                                {tripData.image && (
+                                {isGroup ? (tripData.image && (
                                     <Image
                                         source={typeof tripData.image === 'string' ? { uri: tripData.image } : tripData.image}
                                         style={styles.headerAvatar}
                                     />
+                                )) : (kind === 'team' || kind === 'staff') ? (
+                                    <View style={[styles.headerAvatar, styles.headerAvatarFallback, styles.headerAvatarShield]}>
+                                        <Ionicons name="shield-outline" size={22} color="#FFF" />
+                                    </View>
+                                ) : conversation?.avatar ? (
+                                    <Image source={{ uri: conversation.avatar }} style={styles.headerAvatar} />
+                                ) : (
+                                    <View style={[styles.headerAvatar, styles.headerAvatarFallback]}>
+                                        <Text style={styles.headerAvatarInitials}>
+                                            {(conversation?.title || '?').split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()}
+                                        </Text>
+                                    </View>
                                 )}
 
                                 <View style={styles.headerInfo}>
-                                    <Text style={styles.headerTitle} numberOfLines={1}>{tripData.title}</Text>
-                                    <Text style={styles.headerSubtitle} numberOfLines={1}>
-                                        {participantNames.join(', ')}
-                                    </Text>
+                                    <Text style={styles.headerTitle} numberOfLines={1}>{isGroup ? tripData.title : conversation?.title}</Text>
+                                    {(isGroup || !!headerSubtitle) && (
+                                        <Text style={styles.headerSubtitle} numberOfLines={1}>
+                                            {headerSubtitle}
+                                        </Text>
+                                    )}
                                 </View>
                             </View>
                         </SafeAreaView>
@@ -1436,7 +1503,7 @@ const TripChatScreen = () => {
                     {/* Input Bar - wrapped in SafeAreaView */}
                     <SafeAreaView edges={isKeyboardVisible || showAttachments ? [] : ['bottom']} style={styles.inputContainer}>
                         {/* Reply Preview */}
-                        {replyingTo && (
+                        {replyingTo && !isPending && (
                             <View style={styles.replyPreviewContainer}>
                                 <View style={[styles.replyLine, { backgroundColor: replyingTo.color || (replyingTo.sender === 'me' ? '#B99A4A' : '#8B77FF') }]} />
                                 <View style={styles.replyPreviewContent}>
@@ -1456,7 +1523,15 @@ const TripChatScreen = () => {
                             </View>
                         )}
 
+                        {isPending && (
+                            <View style={styles.lockedBar}>
+                                <Ionicons name="lock-closed-outline" size={18} color="#A1A1AA" />
+                                <Text style={styles.lockedBarText}>{t('msg_locked_composer')}</Text>
+                            </View>
+                        )}
+
                         {/* Input Bar */}
+                        {!isPending && (
                         <View style={[styles.inputBar, (showAttachments || replyingTo) && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: replyingTo ? 0 : 20, borderTopRightRadius: replyingTo ? 0 : 20 }]}>
                             <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
                                 {showAttachments ? (
@@ -1470,7 +1545,7 @@ const TripChatScreen = () => {
                             <TextInput
                                 ref={inputRef}
                                 style={styles.textInput}
-                                placeholder=""
+                                placeholder={inputPlaceholder}
                                 placeholderTextColor="#666"
                                 value={inputText}
                                 onChangeText={setInputText}
@@ -1487,19 +1562,18 @@ const TripChatScreen = () => {
                             <TouchableOpacity
                                 style={[
                                     styles.sendButton,
-                                    // isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
+                                    isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
                                 ]}
-                                onPress={handleSendMessage}
-                                // onPressIn={inputText.trim().length === 0 ? startRecording : null}
-                                // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
-                                disabled={isUploading || inputText.trim().length === 0}
+                                onPress={inputText.trim().length > 0 ? handleSendMessage : null}
+                                onPressIn={inputText.trim().length === 0 ? startRecording : null}
+                                onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                disabled={isUploading}
                             >
                                 {isUploading ? (
                                     <ActivityIndicator size="small" color="#FFF" />
                                 ) : (
                                     <Ionicons
-                                        name="send" // Forced to "send" for now
-                                        // name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
+                                        name={inputText.trim().length > 0 ? "send" : (isRecording ? "stop" : "mic")}
                                         size={20}
                                         color="#FFF"
                                     />
@@ -1507,6 +1581,7 @@ const TripChatScreen = () => {
                             </TouchableOpacity>
 
                         </View>
+                        )}
 
                         {/* Attachment Drawer */}
                         {showAttachments && (
@@ -1704,6 +1779,34 @@ const styles = StyleSheet.create({
         height: 40,
         borderRadius: 20,
         marginHorizontal: 12,
+    },
+    headerAvatarFallback: {
+        backgroundColor: '#23272A',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    headerAvatarShield: {
+        backgroundColor: '#2B4B73',
+        borderWidth: 2,
+        borderColor: '#9DB7D9',
+    },
+    headerAvatarInitials: {
+        color: '#A1A1AA',
+        fontSize: 15,
+        fontFamily: Typography.sans.semiBold,
+    },
+    lockedBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingHorizontal: 20,
+        paddingVertical: 22,
+    },
+    lockedBarText: {
+        color: '#A1A1AA',
+        fontSize: 14,
+        flex: 1,
+        fontFamily: Typography.sans.regular,
     },
     headerInfo: {
         flex: 1,
