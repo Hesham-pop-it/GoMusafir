@@ -52,6 +52,12 @@ test('self deletion uses the fresh identity gate without requiring a current tri
   assert.equal(f.updates()['users/self'], null);
   assert.equal(f.updates()['app_access/self'], null);
   assert.equal(f.updates()['trips_active/org/trip/locations/self'], null);
+  for (const node of ['inbox', 'dm_private', 'blocks', 'message_settings', 'team_read']) {
+    assert.equal(f.updates()[`trips_active/org/trip/${node}/self`], null);
+  }
+  for (const node of ['inbox', 'dm_private', 'blocks', 'message_settings', 'team_read']) {
+    assert.equal(f.updates()[`trips_active/org/trip/${node}/self`], null);
+  }
 });
 test('RTDB cleanup failure stops Auth deletion and produces an actionable error', async () => {
   const f = fixture({ cleanupFails: true });

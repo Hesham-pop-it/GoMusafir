@@ -16,6 +16,9 @@ const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
 const { deleteStripeCustomer } = require("../services/stripeService");
 
+// Per-user direct messaging nodes under trips_active/{org}/{trip}/ cleared on account deletion.
+const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read"];
+
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
 // Role claim is set to "pending" until createOrganization confirms the org.
@@ -316,6 +319,7 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
     const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
     if (tripOrgId) {
       updates[`trips_active/${tripOrgId}/${tid}/locations/${targetUid}`] = null;
+      for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${targetUid}`] = null;
     }
   }
 
@@ -406,6 +410,7 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
         const tripOrgId = joinedTrips[tid]?.org_id || joinedTrips[tid]?.orgId;
         if (tripOrgId) {
           updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
+          for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${uid}`] = null;
         }
       });
     }
