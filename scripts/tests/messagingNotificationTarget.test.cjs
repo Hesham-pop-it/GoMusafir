@@ -41,3 +41,28 @@ test('staff_chat, message_report and unknown types', () => {
     assert.equal(messagingNotificationTarget('message_report', {}, 'me').params.filter, 'reports');
     assert.equal(messagingNotificationTarget('chat', {}, 'me'), null);
 });
+
+const ctx2 = {};
+vm.runInNewContext(`${strip(read('messagingRules.js'))}\n${strip(read('messagingNotificationTarget.js'))}\nthis.api = { isViewingConversation, isGroupChatRoute };`, ctx2);
+const { isViewingConversation, isGroupChatRoute } = ctx2.api;
+
+test('banner is suppressed only for the conversation that is open', () => {
+    const open = { name: 'TripChat', params: { conversation: { kind: 'dm', id: 'a_me' } } };
+    assert.equal(isViewingConversation('dm_message', { conversationId: 'a_me', senderUid: 'a' }, open, 'me'), true);
+    assert.equal(isViewingConversation('dm_message', { conversationId: 'b_me', senderUid: 'b' }, open, 'me'), false);
+    assert.equal(isViewingConversation('team_message', { conversationId: 'a_me' }, open, 'me'), false);
+    assert.equal(isViewingConversation('dm_message', { conversationId: 'a_me' }, { name: 'Messages' }, 'me'), false);
+});
+
+test('team thread matches by pilgrim id, and a pilgrim falls back to their own', () => {
+    const open = { name: 'TripChat', params: { conversation: { kind: 'team', id: 'me' } } };
+    assert.equal(isViewingConversation('team_message', { conversationId: 'me' }, open, 'me'), true);
+    assert.equal(isViewingConversation('team_message', {}, open, 'me'), true);
+    assert.equal(isViewingConversation('staff_chat', {}, open, 'me'), false);
+});
+
+test('the group chat route is TripChat without another conversation open', () => {
+    assert.equal(isGroupChatRoute({ name: 'TripChat', params: { trip: {} } }), true);
+    assert.equal(isGroupChatRoute({ name: 'TripChat', params: { conversation: { kind: 'dm', id: 'x' } } }), false);
+    assert.equal(isGroupChatRoute({ name: 'Messages' }), false);
+});

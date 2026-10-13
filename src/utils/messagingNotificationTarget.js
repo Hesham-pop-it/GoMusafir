@@ -32,3 +32,16 @@ export function messagingNotificationTarget(type, item, viewerUid) {
             return null;
     }
 }
+
+// Pure: whether the TripChat route is already showing the conversation this messaging notification belongs to (kind and id).
+export function isViewingConversation(type, item, route, viewerUid) {
+    const open = route?.name === 'TripChat' ? route.params?.conversation : null;
+    const shown = messagingNotificationTarget(type, item, viewerUid)?.params?.conversation;
+    return !!open && !!shown && open.kind === shown.kind && String(open.id) === String(shown.id);
+}
+
+// Pure: whether the route is the trip group chat (TripChat with no other conversation open).
+export function isGroupChatRoute(route) {
+    const open = route?.params?.conversation;
+    return route?.name === 'TripChat' && (!open || open.kind === 'group');
+}

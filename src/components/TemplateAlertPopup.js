@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, query, limitToLast } from 'firebase/database';
 import { auth, database } from '../config/firebase';
+import { isViewingConversation, isGroupChatRoute } from '../utils/messagingNotificationTarget';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Colors } from '../constants/Colors';
 import { Typography } from '../constants/Typography';
@@ -139,8 +140,10 @@ export default function TemplateAlertPopup() {
         playSoundUnlessInVoice(notif);
         if (notif.type === 'voice_inactivity') return;
         const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-        if (['chat', 'chat_message'].includes(notif.type) && route?.name === 'TripChat' &&
+        if (['chat', 'chat_message'].includes(notif.type) && isGroupChatRoute(route) &&
             (route.params?.tripId || route.params?.trip?.id) === notif.tripId) return;
+        if (route?.name === 'TripChat' && (route.params?.tripId || route.params?.trip?.id) === notif.tripId &&
+            isViewingConversation(notif.type, notif, route, auth.currentUser?.uid)) return;
 
         // Haptic / vibration feedback
         try {
@@ -481,7 +484,7 @@ export default function TemplateAlertPopup() {
                         // If this is a chat message, check if user is already actively viewing that TripChat screen
                         if (formattedNotif.type === 'chat_message') {
                             const currentRoute = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-                            if (currentRoute?.name === 'TripChat' && currentRoute?.params?.tripId === tripId) {
+                            if (isGroupChatRoute(currentRoute) && currentRoute?.params?.tripId === tripId) {
                                 continue;
                             }
                         }
@@ -535,7 +538,7 @@ export default function TemplateAlertPopup() {
                         if (!isRealTime) continue;
 
                         const currentRoute = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-                        if (currentRoute?.name === 'TripChat' && currentRoute?.params?.tripId === tripId) {
+                        if (isGroupChatRoute(currentRoute) && currentRoute?.params?.tripId === tripId) {
                             // Suppress popup if user is actively in the chat screen
                             continue;
                         }
