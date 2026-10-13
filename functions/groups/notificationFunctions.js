@@ -4,6 +4,7 @@
 const { onValueCreated, onValueWritten } = require("firebase-functions/v2/database");
 const { sendPushNotification } = require("../services/notificationService");
 const { db } = require("../admin");
+const { isInVoice } = require("../services/voicePresenceService");
 
 /**
  * Triggered when a new chat message is created.
@@ -16,6 +17,8 @@ exports.onChatCreated = onValueCreated({
     const data = event.data.val();
     const { orgId, tripId } = event.params;
     if (!data || !data.sender_id) return;
+    // System lines (voice started/ended) are shown in the chat but never pushed.
+    if (data.type === 'system') return;
 
     try {
         // Fetch both participants and organization staff to notify everyone in the trip
@@ -70,9 +73,11 @@ exports.onChatCreated = onValueCreated({
         };
 
         // 1. Dispatch push notification to all recipients directly
-        const pushPromises = allRecipientUids.map(recipientUid =>
-            sendPushNotification(recipientUid, title, body, payload, options)
-        );
+        const pushPromises = allRecipientUids.map(async recipientUid => {
+            // Quiet (no sound) while the recipient is in the voice channel.
+            const quiet = await isInVoice(orgId, tripId, recipientUid);
+            return sendPushNotification(recipientUid, title, body, payload, quiet ? { ...options, quiet: true } : options);
+        });
 
         // 2. Also log in trip-level notifications for in-trip history
         const tripNotifPromises = allRecipientUids.map(pUid =>
@@ -119,6 +124,9 @@ exports.onNotificationCreated = onValueCreated({
 
     // Chat messages are dispatched directly by onChatCreated for real-time delivery
     if (data.type === 'chat_message') return;
+
+    // Messaging types are pushed directly by the messaging functions; these items only feed the in-app list
+    if (['dm_request', 'dm_message', 'team_message', 'staff_chat', 'message_report'].includes(data.type)) return;
 
     // S22: Logic to determine push notification content
     let title = data.title || (data.name ? `${data.name} (GoMusafir)` : "GoMusafir Update");
