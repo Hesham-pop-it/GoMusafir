@@ -17,7 +17,7 @@ const { sendPushNotification } = require("../services/notificationService");
 const { deleteStripeCustomer } = require("../services/stripeService");
 
 // Per-user direct messaging nodes under trips_active/{org}/{trip}/ cleared on account deletion.
-const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read"];
+const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read", "team", "team_meta"];
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
