@@ -70,6 +70,16 @@ function nameVisibleToParticipants(trip, user, tripId) {
   return visible('name', (trip && trip.visibility_config) || {}, (user.participant_visibility || {})[tripId] || {}, false, false, false);
 }
 
+// What another pilgrim may see of this person: names and photo follow the trip's visibility settings.
+function maskedFor(person, trip, tripId) {
+  const config = (trip && trip.visibility_config) || {};
+  const personal = (person.user.participant_visibility || {})[tripId] || {};
+  const canSee = field => visible(field, config, personal, false, false, false);
+  const first = canSee('name') ? person.firstName : '';
+  const name = first ? (canSee('lastname') && person.lastName ? `${first} ${person.lastName}` : first) : '';
+  return { firstVisible: Boolean(first), name, image: canSee('photo') ? person.image : '' };
+}
+
 function pushPayload({ type, orgId, tripId, kind, conversationId, name, senderUid, senderImage, message, timestamp }) {
   return { type, tripId, orgId, conversationKind: kind, conversationId: String(conversationId),
     name: String(name || ''), senderUid: String(senderUid || ''), senderImage: String(senderImage || ''),
@@ -116,13 +126,17 @@ exports.sendMessageRequest = onCall({ region }, async request => {
     db.ref(`${b}/dm_threads/${threadId}`).get(),
     loadPerson(targetUid),
   ]);
-  if (member.val() !== true || targetRole || blockedByMe.exists() || blockedMe.exists()) throw notEligible();
+  // An existing thread answers first, so a block looks the same as a decline.
   if (thread.exists()) throw new HttpsError('already-exists', 'A conversation already exists.', { threadId });
+  if (member.val() !== true || targetRole || blockedByMe.exists() || blockedMe.exists()) throw notEligible();
   if (settings.val() === 'nobody' || !nameVisibleToParticipants(trip, target.user, tripId)) throw notEligible();
 
   const sender = await loadPerson(me);
-  const senderVisible = nameVisibleToParticipants(trip, sender.user, tripId);
-  const senderName = senderVisible && sender.firstName ? sender.firstName : 'a participant';
+  const senderMask = maskedFor(sender, trip, tripId);
+  const senderVisible = senderMask.firstVisible && Boolean(sender.firstName);
+  const senderName = senderVisible ? sender.firstName : 'a participant';
+  const senderShown = senderVisible ? senderMask.name : senderName;
+  const targetShown = maskedFor(target, trip, tripId).name || target.firstName;
   const messageId = db.ref(`${b}/dm_messages/${threadId}`).push().key;
   const now = admin.database.ServerValue.TIMESTAMP;
   const nowMs = Date.now();
@@ -134,9 +148,9 @@ exports.sendMessageRequest = onCall({ region }, async request => {
     await db.ref().update({
       [`${b}/dm_threads/${threadId}/created_at`]: now,
       [`${b}/dm_messages/${threadId}/${messageId}`]: {
-        text, sender_id: me, sender_name: senderVisible ? (sender.fullName || senderName) : senderName, avatar: senderVisible ? (sender.image || '') : '', timestamp: now, type: 'text' },
-      [`${b}/inbox/${me}/${threadId}`]: { kind: 'request_out', peer: targetUid, peer_name: target.fullName || target.firstName, last_at: now, last_text: text, unread: 0 },
-      [`${b}/inbox/${targetUid}/${threadId}`]: { kind: 'request_in', peer: me, peer_name: senderVisible ? sender.fullName : '', last_at: now, last_text: text, unread: 1 },
+        text, sender_id: me, sender_name: senderShown, avatar: senderMask.image, timestamp: now, type: 'text' },
+      [`${b}/inbox/${me}/${threadId}`]: { kind: 'request_out', peer: targetUid, peer_name: targetShown, last_at: now, last_text: text, unread: 0 },
+      [`${b}/inbox/${targetUid}/${threadId}`]: { kind: 'request_in', peer: me, peer_name: senderVisible ? senderMask.name : '', last_at: now, last_text: text, unread: 1 },
     });
   } catch (error) {
     await db.ref(`${b}/dm_threads/${threadId}`).remove().catch(() => {});
@@ -146,7 +160,7 @@ exports.sendMessageRequest = onCall({ region }, async request => {
   // Never put the message text in the push or the notification item.
   const body = `Message request from ${senderName}`;
   const payload = pushPayload({ type: 'dm_request', orgId, tripId, kind: 'dm', conversationId: threadId,
-    name: senderName, senderUid: me, senderImage: senderVisible ? sender.image : '', message: body, timestamp: nowMs });
+    name: senderName, senderUid: me, senderImage: senderMask.image, message: body, timestamp: nowMs });
   await Promise.all([
     pushTo(targetUid, 'Message request', body, payload, { orgId, tripId }),
     tripNotification(orgId, tripId, targetUid, { type: 'dm_request', title: 'Message request', message: body,
@@ -163,7 +177,7 @@ exports.respondToMessageRequest = onCall({ region }, async request => {
     throw new HttpsError('invalid-argument', 'Invalid response.');
   }
   const me = request.auth.uid;
-  const { orgId } = await requireTripAccess(request, tripId);
+  const { orgId, trip } = await requireTripAccess(request, tripId);
   const b = base(orgId, tripId);
   const thread = (await db.ref(`${b}/dm_threads/${threadId}`).get()).val();
   if (!thread || !thread.members || thread.members[me] !== true || thread.requester === me) throw notEligible();
@@ -172,13 +186,28 @@ exports.respondToMessageRequest = onCall({ region }, async request => {
 
   if (action === 'accept') {
     if (thread.status === 'accepted') return { ok: true };
-    await db.ref().update({
+    const [mineSnap, theirsSnap, messagesSnap] = await Promise.all([
+      db.ref(`${b}/inbox/${me}/${threadId}`).get(), db.ref(`${b}/inbox/${other}/${threadId}`).get(),
+      db.ref(`${b}/dm_messages/${threadId}`).get()]);
+    const updates = {
       [`${b}/dm_threads/${threadId}/status`]: 'accepted',
       [`${b}/dm_threads/${threadId}/accepted_at`]: now,
-      [`${b}/inbox/${me}/${threadId}/kind`]: 'dm',
-      [`${b}/inbox/${other}/${threadId}/kind`]: 'dm',
       [`${b}/dm_private/${me}/${threadId}`]: null,
-    });
+    };
+    // A blocked-then-unblocked request can lack a row: write it whole, with names masked for that viewer.
+    const missing = [[me, other, mineSnap], [other, me, theirsSnap]].filter(([, , snap]) => !snap.exists());
+    if (missing.length) {
+      const last = Object.values(messagesSnap.val() || {}).sort((x, y) => (Number(x.timestamp) || 0) - (Number(y.timestamp) || 0)).pop() || {};
+      const peers = await Promise.all(missing.map(([, peerUid]) => loadPerson(peerUid)));
+      missing.forEach(([viewer, peerUid], i) => {
+        updates[`${b}/inbox/${viewer}/${threadId}`] = { kind: 'dm', peer: peerUid, peer_name: maskedFor(peers[i], trip, tripId).name,
+          last_at: last.timestamp || thread.created_at || now, last_text: last.text ? last.text : messageTextFor(last), unread: 0 };
+      });
+    }
+    for (const [viewer, , snap] of [[me, other, mineSnap], [other, me, theirsSnap]]) {
+      if (snap.exists()) updates[`${b}/inbox/${viewer}/${threadId}/kind`] = 'dm';
+    }
+    await db.ref().update(updates);
     return { ok: true };
   }
   if (thread.status !== 'pending') throw new HttpsError('failed-precondition', 'invalid-state');
@@ -244,9 +273,12 @@ exports.onDirectMessageCreated = onValueCreated({
     db.ref(`${b}/inbox/${peer}/${threadId}`).update({ last_at: at, last_text: text }),
     db.ref(`${b}/inbox/${peer}/${threadId}/unread`).transaction(n => (n || 0) + 1),
   ]);
-  const name = data.sender_name || 'Someone';
+  // Title and photo come from the masked profile, not from the client-written message.
+  const [tripSnap, sender] = await Promise.all([db.ref(`orgs/${orgId}/trips/${tripId}`).get(), loadPerson(data.sender_id)]);
+  const shown = maskedFor(sender, tripSnap.val(), tripId);
+  const name = shown.name || 'Someone';
   await pushTo(peer, name, text, pushPayload({ type: 'dm_message', orgId, tripId, kind: 'dm', conversationId: threadId,
-    name, senderUid: data.sender_id, senderImage: data.avatar, message: text, timestamp: Date.now() }), { orgId, tripId });
+    name, senderUid: data.sender_id, senderImage: shown.image, message: text, timestamp: Date.now() }), { orgId, tripId });
 });
 
 exports.onTeamMessageCreated = onValueCreated({

@@ -211,8 +211,37 @@ test('block writes the block and a report, removes my row, and alerts all staff'
   assert.equal(f.pushes.map(p => p.uid).sort().join(), ['staff1', 'staff2'].join());
   assert.ok(f.pushes.every(p => p.payload.type === 'message_report' && p.body === 'Bob B blocked and reported someone'));
   assert.equal(Object.keys(f.db.read(`${B}/notifications`)).sort().join(), 'bob,staff1,staff2');
-  // The block now makes a new request from the sender look like any other ineligibility.
-  await assert.rejects(send(f), e => e.message === 'not-eligible');
+  // Block and decline look the same to the sender: the existing thread answers first.
+  await assert.rejects(send(f), e => e.code === 'already-exists' && e.details.threadId === 'alice_bob');
+});
+
+test('block then unblock then accept writes complete inbox rows for both sides', async () => {
+  const f = await pendingThread();
+  await respond(f, 'bob', 'block');
+  await call(f.fns.unblockParticipant, 'bob', { tripId: 'trip', uid: 'alice' });
+  f.db.ref(`${B}/inbox/alice/alice_bob`).remove();
+  await respond(f, 'bob', 'accept');
+  const mine = f.db.read(`${B}/inbox/bob/alice_bob`);
+  assert.equal(mine.kind, 'dm'); assert.equal(mine.peer, 'alice'); assert.equal(mine.unread, 0);
+  assert.equal(mine.peer_name, 'Alice'); assert.equal(mine.last_text, 'Hello Bob'); assert.ok(mine.last_at);
+  const theirs = f.db.read(`${B}/inbox/alice/alice_bob`);
+  assert.equal(theirs.kind, 'dm'); assert.equal(theirs.peer, 'bob'); assert.equal(theirs.peer_name, 'Bob');
+});
+
+test('last name and photo are masked unless visible to everyone', async () => {
+  const photos = { 'users/alice/profile/photoURL': 'a.jpg', 'users/bob/profile/photoURL': 'b.jpg' };
+  const hidden = load_({ data: world(photos) });
+  await send(hidden);
+  assert.equal(hidden.db.read(`${B}/inbox/alice/alice_bob`).peer_name, 'Bob');
+  assert.equal(hidden.db.read(`${B}/inbox/bob/alice_bob`).peer_name, 'Alice');
+  const [hiddenMessage] = Object.values(hidden.db.read(`${B}/dm_messages/alice_bob`));
+  assert.equal(hiddenMessage.sender_name, 'Alice'); assert.equal(hiddenMessage.avatar, '');
+  assert.equal(hidden.pushes[0].payload.senderImage, '');
+  const open = load_({ data: world(photos), trip: { visibility_config: { name: 'Show to everyone', lastname: 'Show to everyone', photo: 'Show to everyone' } } });
+  await send(open);
+  assert.equal(open.db.read(`${B}/inbox/alice/alice_bob`).peer_name, 'Bob B');
+  const [openMessage] = Object.values(open.db.read(`${B}/dm_messages/alice_bob`));
+  assert.equal(openMessage.sender_name, 'Alice A'); assert.equal(openMessage.avatar, 'a.jpg');
 });
 
 test('unblock removes the block', async () => {
@@ -241,6 +270,19 @@ test('dm trigger updates both rows, increments peer unread and pushes the text',
   assert.equal(f.pushes.length, 1);
   assert.equal(f.pushes[0].uid, 'bob'); assert.equal(f.pushes[0].body, 'hi bob'); assert.equal(f.pushes[0].payload.type, 'dm_message');
   assert.equal(f.pushes[0].options.quiet, undefined);
+});
+
+test('dm push title is built server-side from the masked name, not the message sender_name', async () => {
+  const hidden = load_({ data: world(acceptedThread) });
+  await hidden.fns.onDirectMessageCreated(event({ threadId: 'alice_bob', messageId: 'm1' }, { sender_id: 'alice', sender_name: 'Alice A', avatar: 'a.jpg', text: 'hi' }));
+  assert.equal(hidden.pushes[0].title, 'Someone'); assert.equal(hidden.pushes[0].payload.senderImage, '');
+  const firstOnly = load_({ data: world({ ...acceptedThread, 'orgs/org/trips/trip/visibility_config/name': 'Show to everyone' }) });
+  await firstOnly.fns.onDirectMessageCreated(event({ threadId: 'alice_bob', messageId: 'm1' }, { sender_id: 'alice', sender_name: 'Alice A', text: 'hi' }));
+  assert.equal(firstOnly.pushes[0].title, 'Alice');
+  const full = load_({ data: world({ ...acceptedThread, 'orgs/org/trips/trip/visibility_config/name': 'Show to everyone',
+    'orgs/org/trips/trip/visibility_config/lastname': 'Show to everyone' }) });
+  await full.fns.onDirectMessageCreated(event({ threadId: 'alice_bob', messageId: 'm1' }, { sender_id: 'alice', text: 'hi' }));
+  assert.equal(full.pushes[0].title, 'Alice A');
 });
 
 test('quiet when the recipient is in the voice channel', async () => {
