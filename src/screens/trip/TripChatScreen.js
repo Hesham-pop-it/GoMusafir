@@ -899,6 +899,10 @@ const TripChatScreen = () => {
                     const targetRole = staffData?.[uid];
                     const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
                     const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdmin;
+                    // In the Journey team thread staff always show by name and photo, whatever the participant visibility says.
+                    const showStaffInTeam = kind === 'team' && isTargetStaff;
+                    const globalConfig = showStaffInTeam ? {} : globalVisibilityConfig;
+                    const personalVisibility = showStaffInTeam ? {} : visibility;
 
                     const displayName = getParticipantDisplayName({
                         profile,
@@ -907,8 +911,8 @@ const TripChatScreen = () => {
                         viewerUid: auth.currentUser?.uid,
                         isViewerStaff,
                         isTargetStaff,
-                        globalConfig: globalVisibilityConfig,
-                        personalVisibility: visibility
+                        globalConfig,
+                        personalVisibility
                     });
 
                     const displayImage = getParticipantDisplayPhoto({
@@ -918,8 +922,8 @@ const TripChatScreen = () => {
                         viewerUid: auth.currentUser?.uid,
                         isViewerStaff,
                         isTargetStaff,
-                        globalConfig: globalVisibilityConfig,
-                        personalVisibility: visibility
+                        globalConfig,
+                        personalVisibility
                     });
 
                     return {
@@ -951,7 +955,7 @@ const TripChatScreen = () => {
         };
 
         fetchProfiles();
-    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId]);
+    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId, kind]);
 
     // Handle results if the activity was killed in the background (Android crash fix)
     useEffect(() => {
