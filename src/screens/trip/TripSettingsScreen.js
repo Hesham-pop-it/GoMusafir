@@ -22,6 +22,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import TripDateSettings from '../../components/TripDateSettings';
+import MessageSettingsCard from '../../components/trip/MessageSettingsCard';
 import { seatUsage } from '../../utils/tripSeatMath';
 import { Typography } from '../../constants/Typography';
 import { Colors } from '../../constants/Colors';
@@ -906,6 +907,10 @@ const TripSettingsScreen = () => {
                             <VisibilityItem label="Profile photo" field="photo" />
                             <VisibilityItem label="Location" field="location" />
                         </View>
+
+                        {!['admin', 'co-host', 'manager'].includes(userRole) && (
+                            <MessageSettingsCard orgId={resolvedOrgId} tripId={resolvedTripId} />
+                        )}
 
                         {userRole === 'admin' ? null : (
                             <TouchableOpacity
