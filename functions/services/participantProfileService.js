@@ -67,4 +67,4 @@ async function getParticipantProfile(request) {
   return { uid: targetUid, email: resolved.email, phone: resolved.phone,
     fullName: `${resolved.firstName} ${resolved.lastName}`.trim(), profile: resolved, visibility };
 }
-module.exports = { getParticipantProfile };
+module.exports = { getParticipantProfile, visible };
