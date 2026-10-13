@@ -4,6 +4,7 @@ import { getFunctions, connectFunctionsEmulator } from "firebase/functions";
 import { getDatabase, connectDatabaseEmulator } from "firebase/database";
 import { getStorage, connectStorageEmulator } from "firebase/storage";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -50,7 +51,7 @@ try {
   // Emulators run on localhost, but Android emulator requires 10.0.2.2 to access host localhost.
   if (process.env.EXPO_PUBLIC_USE_EMULATOR === "true") {
     // Note: If running on a real device, change 'localhost' to your computer's local IP address
-    const host = "10.0.2.2"; // Default for Android Emulator. Use "localhost" for iOS Simulator.
+    const host = process.env.EXPO_PUBLIC_EMULATOR_HOST || (Platform.OS === "android" ? "10.0.2.2" : "localhost");
 
     try {
       connectAuthEmulator(auth, `http://${host}:9099`);
