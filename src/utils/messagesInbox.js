@@ -1,5 +1,11 @@
 // Pure helpers for the Messages inbox screens.
 
+// Name and photo of an inbox row's peer: the masked people list when loaded, else the server-masked peer_name.
+export function peerShown(row, people) {
+    const person = (people || []).find((p) => p.id === row?.peer);
+    return { name: (person && person.name) || row?.peer_name || '', image: (person && person.image) || '' };
+}
+
 export function initialsOf(name) {
     return String(name || '?').split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 }

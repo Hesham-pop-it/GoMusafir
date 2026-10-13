@@ -3,12 +3,14 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } fr
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import { auth } from '../../config/firebase';
+import { ref, onValue } from 'firebase/database';
+import { auth, database } from '../../config/firebase';
 import { Typography } from '../../constants/Typography';
 import { useLanguage } from '../../context/LanguageContext';
+import useTripPeople from '../../hooks/useTripPeople';
 import { subscribeInbox, respondToRequest } from '../../services/messaging';
 import { teamConversation } from '../../utils/openConversation';
-import { fill } from '../../utils/messagesInbox';
+import { fill, peerShown } from '../../utils/messagesInbox';
 import { Avatar, THEME } from './parts';
 
 const RequestReviewScreen = () => {
@@ -21,13 +23,22 @@ const RequestReviewScreen = () => {
     const uid = auth.currentUser?.uid;
     const [row, setRow] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [staff, setStaff] = useState({});
+    const { people } = useTripPeople(orgId, tripId, staff);
+
+    useEffect(() => {
+        if (!orgId) return;
+        return onValue(ref(database, `orgs/${orgId}/staff`), (snap) => setStaff(snap.val() || {}), () => {});
+    }, [orgId]);
 
     useEffect(() => {
         if (!orgId || !tripId || !uid) return;
         return subscribeInbox(orgId, tripId, uid, (inbox) => setRow(inbox[threadId] || null));
     }, [orgId, tripId, uid, threadId]);
 
-    const name = row?.peer_name || paramName || '';
+    const shown = peerShown({ peer: peerUid, peer_name: row?.peer_name || paramName }, people);
+    const name = shown.name;
+    const photo = shown.image || avatar;
     const first = name.split(' ')[0];
     const declined = row?.kind === 'declined';
 
@@ -42,7 +53,7 @@ const RequestReviewScreen = () => {
         }
     };
 
-    const accept = () => run('accept', () => navigation.replace('TripChat', { trip, conversation: { kind: 'dm', id: threadId, title: name, avatar, peerUid } }));
+    const accept = () => run('accept', () => navigation.replace('TripChat', { trip, conversation: { kind: 'dm', id: threadId, title: name, avatar: photo, peerUid } }));
     const decline = () => run('decline', () => navigation.goBack());
     const block = () => Alert.alert(fill(t('msg_block_title'), { name }), t('msg_block_body'), [
         { text: t('msg_cancel'), style: 'cancel' },
@@ -60,7 +71,7 @@ const RequestReviewScreen = () => {
                 </View>
                 <View style={styles.body}>
                     <View style={styles.card}>
-                        <Avatar name={name} uri={avatar} size={92} />
+                        <Avatar name={name} uri={photo} size={92} />
                         <Text style={styles.name}>{name}</Text>
                         <Text style={styles.trip}>{trip?.title}</Text>
                         <Text style={styles.wants}>{t('msg_review_wants')}</Text>

@@ -170,6 +170,9 @@ const SystemLine = React.memo(({ item, t, onJoin }) => {
     );
 });
 
+// Only the server writes system lines: both markers must match.
+const isSystemLine = (m) => m.type === 'system' && m.sender_id === 'system';
+
 const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
@@ -531,6 +534,8 @@ const TripChatScreen = () => {
     const conversation = route.params?.conversation;
     const kind = conversation?.kind || 'group';
     const isGroup = kind === 'group';
+    // Direct messages carry no name or photo: the other pilgrim sees only what the visibility settings allow.
+    const isDirect = kind === 'dm';
     const voiceLive = useVoiceLive(isGroup ? orgId : null, tripId);
     const convId = conversation?.id;
     // Non-group conversations keep their own local cache rows; the group chat stays keyed by the trip.
@@ -1000,8 +1005,8 @@ const TripChatScreen = () => {
         const messageData = {
             text: inputText.trim(),
             sender_id: auth.currentUser?.uid,
-            sender_name: currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
-            avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
+            sender_name: isDirect ? '' : currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
+            avatar: isDirect ? '' : currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
             timestamp: serverTimestamp(),
             type: 'text'
         };
@@ -1185,8 +1190,8 @@ const TripChatScreen = () => {
             const messageData = {
                 type: type,
                 sender_id: senderUid,
-                sender_name: currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
-                avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
+                sender_name: isDirect ? '' : currentUserFullName || auth.currentUser?.email?.split('@')[0] || 'User',
+                avatar: isDirect ? '' : currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
                 timestamp: serverTimestamp(),
             };
 
@@ -1244,8 +1249,8 @@ const TripChatScreen = () => {
                 latitude,
                 longitude,
                 sender_id: senderUid,
-                sender_name: currentUserFullName || 'User',
-                avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
+                sender_name: isDirect ? '' : currentUserFullName || 'User',
+                avatar: isDirect ? '' : currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserFullName || 'User')}&background=B99A4A&color=fff`,
                 timestamp: serverTimestamp(),
             });
         } catch (error) {
@@ -1394,12 +1399,12 @@ const TripChatScreen = () => {
 
     // The newest "started" line carries the Join link while voice is live.
     const joinLineId = voiceLive && isGroup
-        ? messages.find((m) => m.type === 'system' && parseVoiceLine(m.text)?.kind === 'started')?.id
+        ? messages.find((m) => isSystemLine(m) && parseVoiceLine(m.text)?.kind === 'started')?.id
         : null;
     const joinVoice = () => navigation.navigate('VoiceChat', { trip });
 
     const renderMessage = React.useCallback(({ item }) => {
-        if (item.type === 'system') {
+        if (isSystemLine(item)) {
             return <SystemLine item={item} t={t} onJoin={item.id === joinLineId ? joinVoice : null} />;
         }
         const isMe = item.sender === 'me';

@@ -909,7 +909,7 @@ const TripSettingsScreen = () => {
                         </View>
 
                         {!['admin', 'co-host', 'manager'].includes(userRole) && (
-                            <MessageSettingsCard orgId={resolvedOrgId} tripId={resolvedTripId} />
+                            <MessageSettingsCard orgId={resolvedOrgId} tripId={resolvedTripId} staff={staffData} />
                         )}
 
                         {userRole === 'admin' ? null : (

@@ -11,7 +11,7 @@ import useTripPeople from '../../hooks/useTripPeople';
 import useVoiceLive from '../../hooks/useVoiceLive';
 import { paths, subscribeLastMessages, subscribeTeamMeta, subscribePresence, subscribeReports } from '../../services/messaging';
 import { inboxSort } from '../../utils/messagingRules';
-import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill } from '../../utils/messagesInbox';
+import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill, peerShown } from '../../utils/messagesInbox';
 import { teamConversation } from '../../utils/openConversation';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { Avatar, ShieldAvatar, CountBadge, Pill, THEME } from './parts';
@@ -37,6 +37,7 @@ const MessagesScreen = () => {
     const voiceLive = useVoiceLive(orgId, tripId);
     const { uid, isStaff, staff, split, inbox } = data;
     const { people } = useTripPeople(orgId, tripId, staff);
+    const peerName = (row) => peerShown(row, people).name;
     const nameOf = (id) => people.find((p) => p.id === id)?.name || t('msg_reporter_unknown');
 
     const [groupLast, setGroupLast] = useState([]);
@@ -71,7 +72,7 @@ const MessagesScreen = () => {
     const openStaffChat = () => navigation.navigate('TripChat', { trip, conversation: { kind: 'staff', id: 'staff', title: t('msg_staff_chat') } });
     const openDm = (row) => navigation.navigate('TripChat', {
         trip,
-        conversation: { kind: 'dm', id: row.threadId, title: row.peer_name, peerUid: row.peer, ...(row.kind === 'request_out' ? { pending: true } : {}) },
+        conversation: { kind: 'dm', id: row.threadId, title: peerName(row), avatar: peerShown(row, people).image, peerUid: row.peer, ...(row.kind === 'request_out' ? { pending: true } : {}) },
     });
     const openStaffRow = (r) => navigation.navigate('TripChat', { trip, conversation: { kind: 'team', id: r.pilgrimUid, title: r.meta.pilgrim_name || nameOf(r.pilgrimUid) } });
 
@@ -152,10 +153,10 @@ const MessagesScreen = () => {
 
     const requests = split.requests;
     const requestsText = requests.length === 0 ? '' : requests.length === 1
-        ? fill(t('msg_req_one'), { name: requests[0].peer_name })
+        ? fill(t('msg_req_one'), { name: peerName(requests[0]) })
         : requests.length === 2
-            ? fill(t('msg_req_two'), { name: requests[0].peer_name })
-            : fill(t('msg_req_many'), { name: requests[0].peer_name, n: requests.length - 1 });
+            ? fill(t('msg_req_two'), { name: peerName(requests[0]) })
+            : fill(t('msg_req_many'), { name: peerName(requests[0]), n: requests.length - 1 });
 
     return (
         <View style={styles.container}>
@@ -282,8 +283,8 @@ const MessagesScreen = () => {
                             ) : (
                                 <Row
                                     key={r.threadId}
-                                    avatar={<Avatar name={r.peer_name} online={r.kind === 'dm' && presence[r.peer] === true} />}
-                                    title={r.peer_name}
+                                    avatar={<Avatar name={peerName(r)} uri={peerShown(r, people).image} online={r.kind === 'dm' && presence[r.peer] === true} />}
+                                    title={peerName(r)}
                                     time={formatInboxTime(r.last_at, Date.now(), yesterday)}
                                     preview={r.kind === 'request_out' ? undefined : r.last_text}
                                     previewBold={r.unread > 0}
@@ -291,7 +292,7 @@ const MessagesScreen = () => {
                                     sub={r.kind === 'request_out' ? (
                                         <View style={styles.stateRow}>
                                             <Ionicons name="time-outline" size={16} color={THEME.muted} />
-                                            <Text style={styles.preview}>{fill(t('msg_waiting_for'), { name: firstName(r.peer_name) })}</Text>
+                                            <Text style={styles.preview}>{fill(t('msg_waiting_for'), { name: firstName(peerName(r)) })}</Text>
                                         </View>
                                     ) : null}
                                     onPress={() => openDm(r)}

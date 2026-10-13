@@ -1,20 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { ref, get } from 'firebase/database';
-import { database, auth } from '../../config/firebase';
+import { auth } from '../../config/firebase';
+import useTripPeople from '../../hooks/useTripPeople';
 import { Typography } from '../../constants/Typography';
 import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
 import { getMessageSettings, setMessageSettings, subscribeBlocks, unblock } from '../../services/messaging';
 
 // Messages group of Settings (pilgrims): who can send me requests, and the people I blocked.
-const MessageSettingsCard = ({ orgId, tripId }) => {
+const MessageSettingsCard = ({ orgId, tripId, staff }) => {
     const { t } = useLanguage();
     const uid = auth.currentUser?.uid;
     const [requests, setRequests] = useState('members');
     const [blocks, setBlocks] = useState({});
-    const [names, setNames] = useState({});
+    const { people } = useTripPeople(orgId, tripId, staff);
     const [open, setOpen] = useState(null);
     const [busy, setBusy] = useState(null);
 
@@ -28,18 +28,8 @@ const MessageSettingsCard = ({ orgId, tripId }) => {
 
     const blockedIds = Object.keys(blocks).filter((id) => blocks[id]);
 
-    useEffect(() => {
-        blockedIds.filter((id) => !names[id]).forEach(async (id) => {
-            try {
-                const [p, n] = await Promise.all([get(ref(database, `users/${id}/profile`)), get(ref(database, `users/${id}/full_name`))]);
-                const profile = p.val() || {};
-                const full = [profile.firstName || profile.first_name, profile.lastName || profile.last_name].filter(Boolean).join(' ') || n.val();
-                setNames((prev) => ({ ...prev, [id]: full || t('msg_pilgrim') }));
-            } catch (e) {
-                setNames((prev) => ({ ...prev, [id]: t('msg_pilgrim') }));
-            }
-        });
-    }, [blockedIds.join(',')]);
+    // Same masked names as the Overview list; unknown or hidden people stay generic.
+    const nameOf = (id) => people.find((p) => p.id === id)?.name || t('msg_pilgrim');
 
     const chooseRequests = async (value) => {
         const previous = requests;
@@ -90,7 +80,7 @@ const MessageSettingsCard = ({ orgId, tripId }) => {
                 </TouchableOpacity>
                 {open === 'blocked' && blockedIds.map((id) => (
                     <View key={id} style={styles.option}>
-                        <Text style={[styles.optionText, { flex: 1 }]} numberOfLines={1}>{names[id] || ''}</Text>
+                        <Text style={[styles.optionText, { flex: 1 }]} numberOfLines={1}>{nameOf(id)}</Text>
                         <TouchableOpacity onPress={() => doUnblock(id)} disabled={busy === id}>
                             <Text style={[styles.valueText, busy === id && { opacity: 0.5 }]}>{t('msg_settings_unblock')}</Text>
                         </TouchableOpacity>

@@ -6,8 +6,9 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { Typography } from '../../constants/Typography';
 import { useLanguage } from '../../context/LanguageContext';
 import useMessagesData from '../../hooks/useMessagesData';
+import useTripPeople from '../../hooks/useTripPeople';
 import { respondToRequest } from '../../services/messaging';
-import { formatInboxTime, fill } from '../../utils/messagesInbox';
+import { formatInboxTime, fill, peerShown } from '../../utils/messagesInbox';
 import { Avatar, CountBadge, THEME } from './parts';
 
 const MessageRequestsScreen = () => {
@@ -17,16 +18,18 @@ const MessageRequestsScreen = () => {
     const trip = route.params?.trip;
     const tripId = trip?.id || trip?.tripId;
     const orgId = trip?.org_id || trip?.orgId;
-    const { split } = useMessagesData(orgId, tripId);
+    const { split, staff } = useMessagesData(orgId, tripId);
+    const { people } = useTripPeople(orgId, tripId, staff);
+    const nameOf = (row) => peerShown(row, people).name;
     const [busy, setBusy] = useState(null);
 
-    const review = (row) => navigation.navigate('RequestReview', { trip, threadId: row.threadId, peerUid: row.peer, name: row.peer_name });
+    const review = (row) => navigation.navigate('RequestReview', { trip, threadId: row.threadId, peerUid: row.peer, name: nameOf(row), avatar: peerShown(row, people).image });
 
     const acceptDeclined = async (row) => {
         setBusy(row.threadId);
         try {
             await respondToRequest({ tripId, threadId: row.threadId, action: 'accept' });
-            navigation.replace('TripChat', { trip, conversation: { kind: 'dm', id: row.threadId, title: row.peer_name, peerUid: row.peer } });
+            navigation.replace('TripChat', { trip, conversation: { kind: 'dm', id: row.threadId, title: nameOf(row), avatar: peerShown(row, people).image, peerUid: row.peer } });
         } catch (e) {
             Alert.alert(t('msg_error_generic'));
         } finally {
@@ -47,10 +50,10 @@ const MessageRequestsScreen = () => {
                     <Text style={styles.intro}>{t('msg_requests_intro')}</Text>
                     {split.requests.map((row) => (
                         <TouchableOpacity key={row.threadId} style={styles.requestRow} onPress={() => review(row)} activeOpacity={0.7}>
-                            <Avatar name={row.peer_name} size={52} />
+                            <Avatar name={nameOf(row)} uri={peerShown(row, people).image} size={52} />
                             <View style={{ flex: 1, marginLeft: 14 }}>
                                 <View style={styles.line}>
-                                    <Text style={styles.name} numberOfLines={1}>{row.peer_name}</Text>
+                                    <Text style={styles.name} numberOfLines={1}>{nameOf(row)}</Text>
                                     <Text style={styles.time}>{formatInboxTime(row.last_at, Date.now(), t('msg_yesterday'))}</Text>
                                 </View>
                                 <View style={styles.line}>
@@ -69,9 +72,9 @@ const MessageRequestsScreen = () => {
                             <Text style={styles.declinedIntro}>{t('msg_declined_intro')}</Text>
                             {split.declined.map((row) => (
                                 <TouchableOpacity key={row.threadId} style={styles.declinedRow} onPress={() => review(row)} activeOpacity={0.7}>
-                                    <Avatar name={row.peer_name} size={52} />
+                                    <Avatar name={nameOf(row)} uri={peerShown(row, people).image} size={52} />
                                     <View style={{ flex: 1, marginLeft: 14 }}>
-                                        <Text style={styles.declinedName} numberOfLines={1}>{row.peer_name}</Text>
+                                        <Text style={styles.declinedName} numberOfLines={1}>{nameOf(row)}</Text>
                                         <Text style={styles.declinedSub}>{t('msg_you_declined')} · {formatInboxTime(row.last_at, Date.now(), t('msg_yesterday'))}</Text>
                                     </View>
                                     <TouchableOpacity style={styles.acceptBtn} disabled={busy === row.threadId} onPress={() => acceptDeclined(row)}>
