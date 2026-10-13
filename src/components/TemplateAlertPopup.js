@@ -25,10 +25,25 @@ import GradientBorderButton from './GradientBorderButton';
 import { navigationRef } from '../navigation/RootNavigator';
 import { navigateToNotificationTarget, extractNotificationTimestamp } from '../utils/notificationNavigation';
 
+import { notificationSound, SOS } from '../../functions/services/notificationSoundConfig';
 import { playNotificationSound, stopNotificationSound } from '../services/notificationAudio';
 import { subscribeForegroundNotifications, claimNotification, resetNotificationPresentation } from '../services/notificationPresentation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// The banner always shows, but a chat sound would talk over the user's live voice channel.
+// SOS keeps its sound.
+function playSoundUnlessInVoice(notif) {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !notif.tripId || !notif.orgId || notificationSound(notif).sound === SOS.sound) {
+        playNotificationSound(notif);
+        return;
+    }
+    get(ref(database, `trips_active/${notif.orgId}/${notif.tripId}/voice_channel/presence/${uid}`))
+        .then((snap) => snap.val() === true)
+        .catch(() => false)
+        .then((inVoice) => { if (!inVoice) playNotificationSound(notif); });
+}
 
 export default function TemplateAlertPopup() {
     const insets = useSafeAreaInsets();
@@ -121,7 +136,7 @@ export default function TemplateAlertPopup() {
 
         if (!claimNotification(notif, notif._source || 'database')) return;
         if (AppState.currentState !== 'active') return;
-        playNotificationSound(notif);
+        playSoundUnlessInVoice(notif);
         if (notif.type === 'voice_inactivity') return;
         const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
         if (['chat', 'chat_message'].includes(notif.type) && route?.name === 'TripChat' &&
@@ -507,12 +522,13 @@ export default function TemplateAlertPopup() {
 
                     for (const [msgId, msg] of Object.entries(chatData)) {
                         if (!msg || typeof msg !== 'object') continue;
+                        const isSystem = msg.type === 'system';
                         const uniqueKey = `chat_${msgId}`;
                         const isAlreadySeen = seenIdsRef.current.has(uniqueKey);
                         seenIdsRef.current.add(uniqueKey);
 
                         const isFromMe = (msg.sender_id && msg.sender_id === uid) || (msg.senderUid && msg.senderUid === uid);
-                        if (isAlreadySeen || isFromMe) continue;
+                        if (isAlreadySeen || isFromMe || isSystem) continue;
 
                         const msgTimestamp = extractNotificationTimestamp(msg, msgId);
                         const isRealTime = msgTimestamp >= mountTimeRef.current - 1000;
