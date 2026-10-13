@@ -43,6 +43,8 @@ import { conversationPaths, markInboxRead, markTeamRead, subscribeThread, subscr
 import { teamConversation } from '../../utils/openConversation';
 import { fill } from '../../utils/messagesInbox';
 import { useLanguage } from '../../context/LanguageContext';
+import useVoiceLive from '../../hooks/useVoiceLive';
+import { parseVoiceLine } from '../../utils/voiceSystemLine';
 
 const { width, height } = Dimensions.get('window');
 const SCREEN_WIDTH = width;
@@ -146,6 +148,27 @@ const getParticipantColor = (senderId) => {
 };
 
 const thumbnailCache = new Map();
+
+// Centred grey line for server notes (voice started / ended); no bubble, reply or actions.
+const SystemLine = React.memo(({ item, t, onJoin }) => {
+    const parsed = parseVoiceLine(item.text);
+    const text = parsed?.kind === 'started' ? fill(t('msg_voice_started'), { name: parsed.name })
+        : parsed?.kind === 'ended' ? fill(t('msg_voice_ended'), { n: parsed.minutes })
+        : (item.text || '');
+    return (
+        <View style={styles.systemRow}>
+            <View style={styles.systemPill}>
+                {!!parsed && <Ionicons name="mic-outline" size={14} color="#34C759" style={{ marginRight: 6 }} />}
+                <Text style={styles.systemText}>{text} · {item.time}</Text>
+                {!!onJoin && (
+                    <TouchableOpacity onPress={onJoin} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={styles.systemJoin}>{t('msg_voice_join')}</Text>
+                    </TouchableOpacity>
+                )}
+            </View>
+        </View>
+    );
+});
 
 const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
@@ -508,6 +531,7 @@ const TripChatScreen = () => {
     const conversation = route.params?.conversation;
     const kind = conversation?.kind || 'group';
     const isGroup = kind === 'group';
+    const voiceLive = useVoiceLive(isGroup ? orgId : null, tripId);
     const convId = conversation?.id;
     // Non-group conversations keep their own local cache rows; the group chat stays keyed by the trip.
     const cacheKey = isGroup ? tripId : `${tripId}:${kind}:${convId}`;
@@ -1368,7 +1392,16 @@ const TripChatScreen = () => {
     const isOwnTeamThread = kind === 'team' && convId === auth.currentUser?.uid;
     const openOwnTeamThread = () => navigation.replace('TripChat', { trip, conversation: teamConversation(auth.currentUser?.uid, t('msg_journey_team')) });
 
+    // The newest "started" line carries the Join link while voice is live.
+    const joinLineId = voiceLive && isGroup
+        ? messages.find((m) => m.type === 'system' && parseVoiceLine(m.text)?.kind === 'started')?.id
+        : null;
+    const joinVoice = () => navigation.navigate('VoiceChat', { trip });
+
     const renderMessage = React.useCallback(({ item }) => {
+        if (item.type === 'system') {
+            return <SystemLine item={item} t={t} onJoin={item.id === joinLineId ? joinVoice : null} />;
+        }
         const isMe = item.sender === 'me';
         const isMedia = item.type === 'image' || item.type === 'video';
         const isShortText = (item.type === 'text' || !item.type) && (item.text || '').length < 16 && !item.replyTo;
@@ -1390,7 +1423,7 @@ const TripChatScreen = () => {
                 onVideoPress={setViewerVideo}
             />
         );
-    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup]);
+    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup, joinLineId, t]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
@@ -1464,6 +1497,11 @@ const TripChatScreen = () => {
                                         </Text>
                                     )}
                                 </View>
+                                {isGroup && voiceLive && (
+                                    <TouchableOpacity style={styles.headerVoice} onPress={joinVoice} accessibilityLabel={t('msg_voice_join')}>
+                                        <Ionicons name="mic-outline" size={26} color="#0E1A12" />
+                                    </TouchableOpacity>
+                                )}
                             </View>
                         </SafeAreaView>
                     </LinearGradient>
@@ -1865,6 +1903,38 @@ const styles = StyleSheet.create({
         fontSize: 14,
         flex: 1,
         fontFamily: Typography.sans.regular,
+    },
+    headerVoice: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: '#34C759',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 10,
+    },
+    systemRow: {
+        alignItems: 'center',
+        marginVertical: 8,
+    },
+    systemPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+    },
+    systemText: {
+        color: '#A1A1AA',
+        fontSize: 13,
+        fontFamily: Typography.sans.regular,
+    },
+    systemJoin: {
+        color: '#34C759',
+        fontSize: 14,
+        fontFamily: Typography.sans.bold,
+        marginLeft: 12,
     },
     headerInfo: {
         flex: 1,

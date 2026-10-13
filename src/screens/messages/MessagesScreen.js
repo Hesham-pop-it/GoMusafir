@@ -8,6 +8,7 @@ import { Typography } from '../../constants/Typography';
 import { useLanguage } from '../../context/LanguageContext';
 import useMessagesData from '../../hooks/useMessagesData';
 import useTripPeople from '../../hooks/useTripPeople';
+import useVoiceLive from '../../hooks/useVoiceLive';
 import { paths, subscribeLastMessages, subscribeTeamMeta, subscribePresence, subscribeReports } from '../../services/messaging';
 import { inboxSort } from '../../utils/messagingRules';
 import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill } from '../../utils/messagesInbox';
@@ -33,6 +34,7 @@ const MessagesScreen = () => {
     const orgId = trip?.org_id || trip?.orgId;
 
     const data = useMessagesData(orgId, tripId);
+    const voiceLive = useVoiceLive(orgId, tripId);
     const { uid, isStaff, staff, split, inbox } = data;
     const { people } = useTripPeople(orgId, tripId, staff);
     const nameOf = (id) => people.find((p) => p.id === id)?.name || t('msg_reporter_unknown');
@@ -63,6 +65,7 @@ const MessagesScreen = () => {
         return subscribeTeamMeta(orgId, tripId, uid, setOwnMeta);
     }, [orgId, tripId, uid, isStaff]);
 
+    const joinVoice = () => navigation.navigate('VoiceChat', { trip });
     const openGroup = () => navigation.navigate('TripChat', { trip });
     const openTeamThread = () => navigation.navigate('TripChat', { trip, conversation: teamConversation(uid, t('msg_journey_team')) });
     const openStaffChat = () => navigation.navigate('TripChat', { trip, conversation: { kind: 'staff', id: 'staff', title: t('msg_staff_chat') } });
@@ -87,6 +90,12 @@ const MessagesScreen = () => {
                     <Pill tone="gold" label={`${t('msg_group')} · ${memberCount}`} />
                     <Text style={styles.time}>{formatInboxTime(lastTs, Date.now(), yesterday)}</Text>
                 </View>
+                {voiceLive && (
+                    <View style={styles.liveLine}>
+                        <View style={[styles.liveDot, { marginRight: 6 }]} />
+                        <Text style={styles.liveLineText}>{t('msg_voice_live')}</Text>
+                    </View>
+                )}
                 <View style={styles.rowTop}>
                     <View style={{ flex: 1 }}>
                         {groupLast.length === 0 ? <Text style={styles.preview}> </Text> : groupLast.map((m, i) => (
@@ -167,6 +176,17 @@ const MessagesScreen = () => {
                             </TouchableOpacity>
                         )}
                     </View>
+
+                    {voiceLive && (
+                        <View style={styles.liveBar}>
+                            <View style={styles.liveDot} />
+                            <Text style={styles.liveTitle}>{t('msg_voice_live')}</Text>
+                            <TouchableOpacity style={styles.joinButton} onPress={joinVoice} activeOpacity={0.8}>
+                                <Ionicons name="mic-outline" size={18} color="#0E1A12" />
+                                <Text style={styles.joinText}>{t('msg_voice_join')}</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
 
                     {isStaff ? (
                         <>
@@ -303,6 +323,13 @@ const styles = StyleSheet.create({
     groupImage: { width: 52, height: 52, borderRadius: 26, marginRight: 14 },
     groupTitle: { color: '#FFF', fontSize: 16, fontFamily: Typography.sans.semiBold, flexShrink: 1, marginRight: 8 },
     groupLine: { color: '#FFF', fontSize: 14, fontFamily: Typography.sans.regular, marginTop: 2 },
+    liveBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 14, padding: 14, borderRadius: 16, backgroundColor: '#12281B', borderWidth: 1, borderColor: '#2E6B45' },
+    liveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#34C759', marginRight: 12 },
+    liveTitle: { flex: 1, color: '#FFF', fontSize: 16, fontFamily: Typography.sans.semiBold },
+    joinButton: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#34C759', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 10 },
+    joinText: { color: '#0E1A12', fontSize: 16, fontFamily: Typography.sans.bold },
+    liveLine: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
+    liveLineText: { color: '#34C759', fontSize: 14, fontFamily: Typography.sans.semiBold },
     requestsCard: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginBottom: 18, padding: 16, borderRadius: 16, backgroundColor: '#2E2920' },
     requestsIcon: { width: 44, height: 44, borderRadius: 22, backgroundColor: THEME.gold, alignItems: 'center', justifyContent: 'center' },
     sectionLabel: { color: THEME.muted, fontSize: 15, fontFamily: Typography.sans.semiBold, paddingHorizontal: 20, marginBottom: 6 },
