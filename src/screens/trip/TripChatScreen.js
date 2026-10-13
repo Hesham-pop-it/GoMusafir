@@ -39,7 +39,9 @@ import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
-import { conversationPaths, markInboxRead, markTeamRead, subscribeThread } from '../../services/messaging';
+import { conversationPaths, markInboxRead, markTeamRead, subscribeThread, subscribePresence } from '../../services/messaging';
+import { teamConversation } from '../../utils/openConversation';
+import { fill } from '../../utils/messagesInbox';
 import { useLanguage } from '../../context/LanguageContext';
 
 const { width, height } = Dimensions.get('window');
@@ -542,7 +544,10 @@ const TripChatScreen = () => {
     const [organizerId, setOrganizerId] = useState(null);
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
     const [threadStatus, setThreadStatus] = useState(null);
-    const isPending = kind === 'dm' && (threadStatus ? threadStatus === 'pending' : !!conversation?.pending);
+    const [threadLoaded, setThreadLoaded] = useState(false);
+    const [peerOnline, setPeerOnline] = useState(false);
+    // Once the thread has loaded it wins over the route's pending hint, so a stale param never locks the composer.
+    const isPending = kind === 'dm' && (threadLoaded ? threadStatus === 'pending' : !!conversation?.pending);
     const markReadTimer = useRef(null);
 
 
@@ -825,8 +830,20 @@ const TripChatScreen = () => {
     // A message request flips to accepted live; unlock the composer when it does.
     useEffect(() => {
         if (kind !== 'dm' || !orgId || !tripId || !convId) return;
-        return subscribeThread(orgId, tripId, convId, (thread) => setThreadStatus(thread?.status || null));
+        return subscribeThread(orgId, tripId, convId, (thread) => {
+            setThreadStatus(thread?.status || null);
+            setThreadLoaded(true);
+            // The recipient of a pending request reviews it; the chat stays locked for the sender only.
+            if (thread?.status === 'pending' && thread.requester !== auth.currentUser?.uid) {
+                navigation.replace('RequestReview', { trip, threadId: convId, peerUid: conversation?.peerUid, name: conversation?.title, avatar: conversation?.avatar });
+            }
+        });
     }, [orgId, tripId, kind, convId]);
+
+    useEffect(() => {
+        if (kind !== 'dm' || !orgId || !tripId || !conversation?.peerUid) return;
+        return subscribePresence(orgId, tripId, (map) => setPeerOnline(map[conversation.peerUid] === true));
+    }, [orgId, tripId, kind, conversation?.peerUid]);
 
     // Fetch Names and Profiles for Header and Avatars
     useEffect(() => {
@@ -1343,10 +1360,13 @@ const TripChatScreen = () => {
         .filter(Boolean)
         .join(', ');
     const headerSubtitle = isGroup ? participantNames.join(', ')
-        : kind === 'dm' ? (isPending ? t('msg_request_pending') : '')
+        : kind === 'dm' ? (isPending ? t('msg_request_pending') : peerOnline ? t('msg_online') : '')
         : kind === 'staff' ? [staffNames, t('msg_staff_only')].filter(Boolean).join(' · ')
         : staffNames;
-    const inputPlaceholder = kind === 'team' ? t('msg_placeholder_team') : kind === 'staff' ? t('msg_placeholder_staff') : '';
+    const peerFirstName = (conversation?.title || '').split(' ')[0];
+    const inputPlaceholder = kind === 'team' ? t('msg_placeholder_team') : kind === 'staff' ? t('msg_placeholder_staff') : kind === 'dm' ? fill(t('msg_placeholder_dm'), { name: peerFirstName }) : '';
+    const isOwnTeamThread = kind === 'team' && convId === auth.currentUser?.uid;
+    const openOwnTeamThread = () => navigation.replace('TripChat', { trip, conversation: teamConversation(auth.currentUser?.uid, t('msg_journey_team')) });
 
     const renderMessage = React.useCallback(({ item }) => {
         const isMe = item.sender === 'me';
@@ -1483,10 +1503,30 @@ const TripChatScreen = () => {
                     style={{ flex: 1 }}
                     keyboardVerticalOffset={0}
                 >
+                    {isPending && (
+                        <View style={styles.infoBanner}>
+                            <Ionicons name="time-outline" size={22} color="#F0D080" style={{ marginRight: 14, marginTop: 2 }} />
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.infoBannerTitle}>{fill(t('msg_request_sent_title'), { name: peerFirstName })}</Text>
+                                <Text style={styles.infoBannerText}>{fill(t('msg_request_sent_body'), { name: peerFirstName })}</Text>
+                            </View>
+                        </View>
+                    )}
+                    {isOwnTeamThread && (
+                        <View style={[styles.infoBanner, styles.teamBanner]}>
+                            <Ionicons name="shield-outline" size={22} color="#8DA9D6" style={{ marginRight: 14, marginTop: 2 }} />
+                            <Text style={[styles.infoBannerText, { flex: 1, color: '#FFF', marginTop: 0 }]}>
+                                {t('msg_team_banner_1')}
+                                <Text style={styles.bannerLink} onPress={() => navigation.replace('TripChat', { trip })}>{t('msg_team_banner_link')}</Text>
+                                {t('msg_team_banner_2')}
+                            </Text>
+                        </View>
+                    )}
                     <FlatList
                         ref={flatListRef}
                         data={messages}
-                        extraData={staffData}
+                        extraData={[staffData, isPending]}
+                        ListHeaderComponent={isPending && messages.length > 0 ? <Text style={styles.requestSentCaption}>{t('msg_request_sent_caption')}</Text> : null}
                         renderItem={renderMessage}
                         keyExtractor={item => item.id}
                         inverted={true}
@@ -1529,6 +1569,9 @@ const TripChatScreen = () => {
                                 <Text style={styles.lockedBarText}>{t('msg_locked_composer')}</Text>
                             </View>
                         )}
+                        {isPending && (
+                            <Text style={styles.lockedLink} onPress={openOwnTeamThread}>{t('msg_message_team_instead')}</Text>
+                        )}
 
                         {/* Input Bar */}
                         {!isPending && (
@@ -1551,6 +1594,7 @@ const TripChatScreen = () => {
                                 onChangeText={setInputText}
                                 onFocus={handleInputFocus}
                                 multiline={true}
+                                maxLength={isGroup ? undefined : 2000}
                                 blurOnSubmit={false}
                             />
 
@@ -1802,6 +1846,20 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingVertical: 22,
     },
+    infoBanner: {
+        flexDirection: 'row',
+        marginHorizontal: 16,
+        marginTop: 12,
+        padding: 16,
+        borderRadius: 14,
+        backgroundColor: '#2E2920',
+    },
+    teamBanner: { backgroundColor: '#1E2A3A' },
+    infoBannerTitle: { color: '#FFF', fontSize: 16, fontFamily: Typography.sans.semiBold },
+    infoBannerText: { color: '#A1A1AA', fontSize: 15, lineHeight: 22, marginTop: 2, fontFamily: Typography.sans.regular },
+    bannerLink: { color: '#F0D080', textDecorationLine: 'underline', fontFamily: Typography.sans.semiBold },
+    requestSentCaption: { color: '#A1A1AA', fontSize: 13, textAlign: 'right', marginTop: 6, fontFamily: Typography.sans.regular },
+    lockedLink: { color: '#F0D080', fontSize: 15, textDecorationLine: 'underline', textAlign: 'center', paddingBottom: 18, fontFamily: Typography.sans.regular },
     lockedBarText: {
         color: '#A1A1AA',
         fontSize: 14,

@@ -17,6 +17,11 @@ import AudioKitsScreen from '../screens/settings/AudioKitsScreen';
 import TripOverviewScreen from '../screens/trip/TripOverviewScreen';
 import VoiceChatScreen from '../screens/trip/VoiceChatScreen';
 import TripChatScreen from '../screens/trip/TripChatScreen';
+import MessagesScreen from '../screens/messages/MessagesScreen';
+import NewMessageScreen from '../screens/messages/NewMessageScreen';
+import MessageRequestsScreen from '../screens/messages/MessageRequestsScreen';
+import RequestReviewScreen from '../screens/messages/RequestReviewScreen';
+import ComposeRequestScreen from '../screens/messages/ComposeRequestScreen';
 import TripSettingsScreen from '../screens/trip/TripSettingsScreen';
 import LiveLocationScreen from '../screens/trip/LiveLocationScreen';
 import BusinessLoginScreen from '../screens/auth/BusinessLoginScreen';
@@ -333,10 +338,22 @@ export default function RootNavigator({ initialRouteName = "Welcome" }) {
                     <Stack.Screen 
                         name="TripChat" 
                         component={TripChatScreen} 
+                        getId={({ params }) => params?.conversation ? `${params.conversation.kind}:${params.conversation.id}` : 'group'}
                         options={({ route }) => ({
                             animation: route.params?.animation
                         })}
                     />
+                    <Stack.Screen 
+                        name="Messages" 
+                        component={MessagesScreen} 
+                        options={({ route }) => ({
+                            animation: route.params?.animation
+                        })}
+                    />
+                    <Stack.Screen name="NewMessage" component={NewMessageScreen} />
+                    <Stack.Screen name="MessageRequests" component={MessageRequestsScreen} />
+                    <Stack.Screen name="RequestReview" component={RequestReviewScreen} />
+                    <Stack.Screen name="ComposeRequest" component={ComposeRequestScreen} />
                     <Stack.Screen 
                         name="TripSettings" 
                         component={TripSettingsScreen} 
