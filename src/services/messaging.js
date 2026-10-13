@@ -1,5 +1,5 @@
 import { database, functions } from '../config/firebase';
-import { ref, onValue, set, get, serverTimestamp } from 'firebase/database';
+import { ref, onValue, set, get, serverTimestamp, query, orderByChild, startAt, limitToLast } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { threadIdFor } from '../utils/messagingRules';
 
@@ -19,6 +19,7 @@ export function paths(orgId, tripId) {
         staffChat: `${base}/staff_chat`,
         inbox: `${base}/inbox`,
         blocks: `${base}/blocks`,
+        reports: `${base}/reports`,
         settings: `${base}/message_settings`,
         chat: `${base}/chat`,
         readPointers: `${base}/read_pointers`,
@@ -42,6 +43,38 @@ export const subscribeThread = (orgId, tripId, threadId, cb) => watch(`${paths(o
 export const subscribeBlocks = (orgId, tripId, uid, cb) => watch(`${paths(orgId, tripId).blocks}/${uid}`, (v) => cb(v || {}));
 // A staff member's team read pointers, { pilgrimUid: timestamp }.
 export const subscribeTeamRead = (orgId, tripId, staffUid, cb) => watch(`${paths(orgId, tripId).teamRead}/${staffUid}`, (v) => cb(v || {}));
+
+// Report alerts, { reportId: { reporter, reported, threadId, at } } (staff only).
+export const subscribeReports = (orgId, tripId, cb) => watch(paths(orgId, tripId).reports, (v) => cb(v || {}));
+// App presence map { uid: true } for the trip.
+export const subscribePresence = (orgId, tripId, cb) => watch(`${paths(orgId, tripId).base}/voice_channel/app_presence`, (v) => cb(v || {}));
+// Newest n messages of a path as an array, oldest first.
+export function subscribeLastMessages(path, n, cb) {
+    return onValue(query(ref(database, path), limitToLast(n)), (snap) => {
+        const v = snap.val() || {};
+        cb(Object.keys(v).map((id) => ({ id, ...v[id] })));
+    }, () => cb([]));
+}
+// One-off read of a thread document.
+export async function getThread(orgId, tripId, threadId) {
+    const snap = await get(ref(database, `${paths(orgId, tripId).threads}/${threadId}`));
+    return snap.val();
+}
+// Group chat messages from others since my read pointer; same logic the Overview chat tile uses.
+export function subscribeGroupUnread(orgId, tripId, uid, cb) {
+    const p = paths(orgId, tripId);
+    let unsubUnread = null;
+    const unsubPointer = onValue(ref(database, `${p.readPointers}/${uid}`), (pointerSnap) => {
+        const lastRead = pointerSnap.val() || 0;
+        if (unsubUnread) unsubUnread();
+        const q = query(ref(database, p.chat), orderByChild('timestamp'), startAt(lastRead + 1));
+        unsubUnread = onValue(q, (chatSnap) => {
+            const list = chatSnap.exists() ? Object.values(chatSnap.val()) : [];
+            cb(list.filter((m) => m.sender_id !== uid).length);
+        }, () => cb(0));
+    }, () => cb(0));
+    return () => { unsubPointer(); if (unsubUnread) unsubUnread(); };
+}
 
 // Callables (europe-west1 via the shared functions instance).
 export async function sendRequest({ tripId, targetUid, text }) {
