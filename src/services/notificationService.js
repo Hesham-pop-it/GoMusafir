@@ -6,7 +6,7 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { database, auth } from '../config/firebase';
 import { ref, set } from 'firebase/database';
 
-import { STANDARD, SOS, notificationSound } from '../../functions/services/notificationSoundConfig';
+import { STANDARD, SOS, QUIET, notificationSound } from '../../functions/services/notificationSoundConfig';
 
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
@@ -44,16 +44,17 @@ export async function presentRemoteNotification(remoteMessage, fromBackgroundHan
     const item = normalizeNotification(remoteMessage);
     const soundProfile = notificationSound(item);
     const channelId = soundProfile.channelId;
-    if (Platform.OS === 'android') await notifee.createChannel({
+    if (Platform.OS === 'android') await notifee.createChannel(soundProfile.sound ? {
         id: channelId, name: soundProfile.name, sound: soundProfile.sound,
         importance: AndroidImportance.HIGH, vibration: true,
-    });
+    } : { id: channelId, name: soundProfile.name, importance: AndroidImportance.LOW, vibration: false });
     await notifee.displayNotification({
         ...(item.id ? { id: item.id } : {}), title: item.title, body: item.message,
         data: { ...(remoteMessage.data || {}), title: item.title, message: item.message,
             ...(item.id ? { id: item.id } : {}) },
-        android: { channelId, sound: soundProfile.sound, importance: AndroidImportance.HIGH, pressAction: { id: 'default' } },
-        ios: { sound: soundProfile.file, foregroundPresentationOptions: { badge: false, sound: false, banner: false, list: false } },
+        android: { channelId, ...(soundProfile.sound ? { sound: soundProfile.sound } : {}),
+            importance: soundProfile.sound ? AndroidImportance.HIGH : AndroidImportance.LOW, pressAction: { id: 'default' } },
+        ios: { ...(soundProfile.file ? { sound: soundProfile.file } : {}), foregroundPresentationOptions: { badge: false, sound: false, banner: false, list: false } },
     });
 }
 
@@ -88,6 +89,8 @@ export async function registerForPushNotificationsAsync(user = null) {
                 id: profile.channelId, name: profile.name, sound: profile.sound,
                 importance: AndroidImportance.HIGH, vibration: true,
             })));
+            // Low importance is how Android shows a notification without sound.
+            await notifee.createChannel({ id: QUIET.channelId, name: QUIET.name, importance: AndroidImportance.LOW, vibration: false });
         }
 
         // 3. Register for remote messages (Critical for iOS)
