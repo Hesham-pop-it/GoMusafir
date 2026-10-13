@@ -41,6 +41,7 @@ import { responsiveFontSize } from '../../utils/responsive';
 import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
 import { subscribeInbox } from '../../services/messaging';
 import { openConversation } from '../../utils/openConversation';
+import { detailButtonFor, threadIdFor } from '../../utils/messagingRules';
 import { updatePrayerWidget } from '../../utils/widgetHelper';
 import { useVoice } from '../../context/VoiceContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -1322,18 +1323,34 @@ const TripOverviewScreen = () => {
         }
     };
 
-    const handleParticipantMessage = (p) => {
+    const messageTargetFor = (p) => ({
+        id: p.id,
+        name: p.name,
+        image: p.image,
+        isStaff: Boolean(isStaffMember(p.id, staffData, organizerId, p.status)),
+        nameVisible: Boolean(p.canSeeFirstName),
+    });
+    const viewerIsStaffForMessages = () => Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+
+    // Same rule as the detail modal: no button for staff to staff or a hidden name.
+    const hasMessageButton = (p) => {
         const myUid = auth.currentUser?.uid;
+        if (!myUid) return false;
+        const target = messageTargetFor(p);
+        return detailButtonFor({
+            viewerIsStaff: viewerIsStaffForMessages(),
+            targetIsStaff: target.isStaff,
+            isSelf: p.id === myUid,
+            inboxRow: (messageInbox || {})[threadIdFor(myUid, p.id)],
+            nameVisible: target.nameVisible,
+        }) !== null;
+    };
+
+    const handleParticipantMessage = (p) => {
         openConversation(navigation, tripData, {
-            viewerUid: myUid,
-            viewerIsStaff: Boolean(isAdmin || isStaffMember(myUid, staffData, organizerId, userRole)),
-            target: {
-                id: p.id,
-                name: p.name,
-                image: p.image,
-                isStaff: Boolean(isStaffMember(p.id, staffData, organizerId, p.status)),
-                nameVisible: Boolean(p.canSeeFirstName),
-            },
+            viewerUid: auth.currentUser?.uid,
+            viewerIsStaff: viewerIsStaffForMessages(),
+            target: messageTargetFor(p),
             inbox: messageInbox,
         });
     };
@@ -2503,7 +2520,7 @@ const TripOverviewScreen = () => {
                                                         {p.voiceStatus ? p.voiceStatus : p.status}
                                                     </Text>
                                                 </View>
-                                                {p.id !== auth.currentUser?.uid && (
+                                                {hasMessageButton(p) && (
                                                     <TouchableOpacity
                                                         style={styles.participantMessageButton}
                                                         onPress={() => handleParticipantMessage(p)}
