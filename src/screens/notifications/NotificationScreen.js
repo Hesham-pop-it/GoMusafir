@@ -15,9 +15,11 @@ import { Typography } from '../../constants/Typography';
 import { ref, onValue, get } from 'firebase/database';
 import { database, auth } from '../../config/firebase';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { useLanguage } from '../../context/LanguageContext';
 import { navigateToNotificationTarget, extractNotificationTimestamp, formatNotificationTime } from '../../utils/notificationNavigation';
 
 const NotificationScreen = ({ navigation, route }) => {
+    const { t } = useLanguage();
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -241,6 +243,8 @@ const NotificationScreen = ({ navigation, route }) => {
     }, [route?.params?.tripId, route?.params?.orgId]);
 
     const getTitle = (item) => {
+        if (item.type === 'dm_request' && item.name) return t('msg_notif_request_title').replace('{name}', item.name);
+        if (item.type === 'team_message') return t('msg_notif_team_title');
         if (item.title) return item.title;
         switch (item.type) {
             case 'location_request': return 'Location Request';
@@ -269,6 +273,12 @@ const NotificationScreen = ({ navigation, route }) => {
     };
 
     const getDescription = (item) => {
+        if (item.type === 'dm_request') return t('msg_notif_request_body');
+        if (item.type === 'team_message' && item.message) {
+            // The stored title reads "Name (Role) · Journey team"; the list shows who wrote it, then the text.
+            const who = String(item.title || '').replace(/\s*·\s*Journey team$/, '');
+            return who ? `${who} · ${item.message}` : item.message;
+        }
         if (item.message) {
             if (item.type === 'emergency') {
                 return `${item.name || 'Someone'} ${item.message}`;
@@ -324,6 +334,8 @@ const NotificationScreen = ({ navigation, route }) => {
         else if (item.type === 'voice_unmute_all' || item.type === 'voice_unmuted') { iconName = 'volume-high'; iconColor = '#34C759'; }
         else if (item.type === 'voice_recording_started' || item.type === 'voice_recording_stopped') { iconName = 'record-circle-outline'; iconColor = '#FF3B30'; }
         else if (item.type === 'alert' || item.type === 'broadcast') { iconName = 'bullhorn-outline'; iconColor = '#D4AF37'; }
+        else if (item.type === 'dm_request' || item.type === 'team_message' || item.type === 'dm_message') { iconName = 'message-text-outline'; iconColor = '#B99A4A'; }
+        else if (item.type === 'message_report') { iconName = 'shield-alert-outline'; iconColor = '#FF9500'; }
         else if (item.type === 'seat_update') { iconName = 'car-seat'; iconColor = '#B99A4A'; }
         else if (item.type === 'NEW_SIGN_IN' || item.type === 'new_sign_in' || item.type === 'sign_in' || item.type === 'new_signin') { iconName = 'shield-alert-outline'; iconColor = '#FF9500'; }
 

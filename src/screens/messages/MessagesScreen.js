@@ -44,7 +44,7 @@ const MessagesScreen = () => {
     const [ownMeta, setOwnMeta] = useState(null);
     const [presence, setPresence] = useState({});
     const [reports, setReports] = useState({});
-    const [filter, setFilter] = useState('all');
+    const [filter, setFilter] = useState(route.params?.filter || 'all');
 
     useEffect(() => {
         if (!orgId || !tripId) return;
