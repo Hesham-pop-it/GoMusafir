@@ -3,7 +3,8 @@
 
 const { onValueCreated, onValueWritten } = require("firebase-functions/v2/database");
 const { sendPushNotification } = require("../services/notificationService");
-const { db } = require("../admin");
+const { admin, db } = require("../admin");
+const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
 
 /**
@@ -203,6 +204,41 @@ exports.onNotificationCreated = onValueCreated({
     }
 });
 
+// First name of whoever started voice, same field fallbacks as the messaging functions.
+async function voiceStarterName(uid) {
+    if (!uid || uid === 'system') return '';
+    const user = (await db.ref(`users/${uid}`).once("value")).val() || {};
+    let encrypted = {};
+    if (user.p_profile) {
+        try { encrypted = JSON.parse(decrypt(user.p_profile)) || {}; } catch (_) { /* fall back to plain fields */ }
+    }
+    const profile = user.profile || {};
+    const pick = (...values) => values.find(v => typeof v === 'string' && v.trim() && v.trim() !== '***') || '';
+    const first = pick(encrypted.firstName, profile.firstName, profile.first_name, user.first_name);
+    const last = pick(encrypted.lastName, profile.lastName, profile.last_name, user.last_name);
+    return `${first} ${last}`.trim();
+}
+
+// Writes the group chat line for a real voice start/end. The key is deterministic per
+// session, so a repeated delivery finds the line and writes nothing.
+async function writeVoiceChatLine({ orgId, tripId, eventId, started, before, after }) {
+    const source = started ? after : before;
+    const sessionKey = String(source.sessionRequestedAt || source.sessionId || eventId).replace(/[.$#\[\]\/]/g, '_');
+    const line = db.ref(`trips_active/${orgId}/${tripId}/chat/voice_${started ? 'start' : 'end'}_${sessionKey}`);
+    if ((await line.once("value")).exists()) return;
+    let text;
+    if (started) {
+        const name = await voiceStarterName(after.lastUpdatedBy || after.updatedBy);
+        text = name ? `Voice chat started by ${name}` : 'Voice chat started';
+    } else {
+        const startedAt = Number(before.sessionRequestedAt);
+        const minutes = startedAt > 0 ? Math.max(1, Math.round((Date.now() - startedAt) / 60000)) : 0;
+        text = minutes ? `Voice chat ended \u00b7 ${minutes} min` : 'Voice chat ended';
+    }
+    await line.set({ type: 'system', sender_id: 'system', sender_name: 'GoMusafir', text,
+        timestamp: admin.database.ServerValue.TIMESTAMP });
+}
+
 /**
  * Triggered when voice channel state changes.
  */
@@ -213,6 +249,14 @@ exports.onVoiceChannelUpdated = onValueWritten({
     const before = event.data.before.val() || {};
     const after = event.data.after.val() || {};
     const { orgId, tripId } = event.params;
+
+    // Group chat system line on a real start/end, independent of who gets notified below.
+    const wasStarted = before.isChannelStarted === true || before.isChannelActive === true;
+    const isStarted = after.isChannelStarted === true || after.isChannelActive === true;
+    if (wasStarted !== isStarted) {
+        try { await writeVoiceChatLine({ orgId, tripId, eventId: event.id, started: isStarted, before, after }); }
+        catch (e) { console.error("Voice chat line failed:", e); }
+    }
 
     // Fetch both participants and staff members to ensure all relevant users are notified
     const [participantsSnap, staffSnap] = await Promise.all([

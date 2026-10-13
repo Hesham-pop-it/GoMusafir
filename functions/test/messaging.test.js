@@ -304,19 +304,24 @@ test('staff chat pushes the other staff but not the sender, quiet in voice', asy
 });
 
 function notifications({ inVoice = [] } = {}) {
-  const pushes = [];
-  const db = fakeDb({ 'trips_participants/trip/alice': true, 'trips_participants/trip/bob': true, 'orgs/org/staff/staff1': 'admin' });
+  const pushes = [], written = {};
+  const db = fakeDb({ 'trips_participants/trip/alice': true, 'trips_participants/trip/bob': true, 'orgs/org/staff/staff1': 'admin',
+    'users/staff1': { profile: { firstName: 'Sam', lastName: 'Host' } } });
   const dependencies = {
     'firebase-functions/v2/database': { onValueCreated: (o, h) => h, onValueWritten: (o, h) => h },
     '../services/notificationService': { sendPushNotification: async (uid, t, b, p, o) => pushes.push({ uid, o }) },
-    '../admin': { db: { ref: p => ({ once: async () => ({ val: () => db.read(p) }), push: () => ({ set: async () => {} }) }) } },
+    '../admin': { admin: { database: { ServerValue: { TIMESTAMP: 'TS' } } }, db: { ref: p => ({
+      once: async () => { const v = db.read(p) ?? written[p] ?? null; return { val: () => v, exists: () => v != null }; },
+      push: () => ({ set: async () => {} }),
+      set: async v => { written[p] = v; } }) } },
+    '../services/kmsService': { decrypt: v => v },
     '../services/voicePresenceService': { isInVoice: async (o, t, uid) => inVoice.includes(uid) },
   };
   const module = { exports: {} };
   const src = fs.readFileSync(path.join(__dirname, '../groups/notificationFunctions.js'), 'utf8');
-  vm.runInNewContext(src, { module, exports: module.exports, console, Date, Object, Array, Set, String, Promise,
-    require: key => { if (!(key in dependencies)) throw Error(`Unexpected dependency ${key}`); return dependencies[key]; } });
-  return { fn: module.exports.onChatCreated, pushes };
+  vm.runInNewContext(src, { module, exports: module.exports, console, Date, Object, Array, Set, String, Promise, Number,
+    Math, JSON, require: key => { if (!(key in dependencies)) throw Error(`Unexpected dependency ${key}`); return dependencies[key]; } });
+  return { fn: module.exports.onChatCreated, voice: module.exports.onVoiceChannelUpdated, pushes, written };
 }
 
 test('onChatCreated skips system lines and is quiet for recipients in voice', async () => {
@@ -327,4 +332,47 @@ test('onChatCreated skips system lines and is quiet for recipients in voice', as
   const byUid = Object.fromEntries(n.pushes.map(p => [p.uid, p.o]));
   assert.equal(Object.keys(byUid).sort().join(), 'bob,staff1');
   assert.equal(byUid.bob.quiet, true); assert.equal(byUid.staff1.quiet, undefined);
+});
+
+const CHAT = 'trips_active/org/trip/chat/';
+const voiceEvent = (before, after) => ({ id: 'ev1', params: { orgId: 'org', tripId: 'trip' },
+  data: { before: { val: () => before }, after: { val: () => after } } });
+
+test('voice start writes one system chat line keyed by the session, naming the starter', async () => {
+  const n = notifications();
+  const started = { isChannelStarted: true, lastUpdatedBy: 'staff1', sessionRequestedAt: 1000 };
+  await n.voice(voiceEvent({ isChannelStarted: false }, started));
+  assert.deepEqual(JSON.parse(JSON.stringify(n.written[CHAT + 'voice_start_1000'])),
+    { type: 'system', sender_id: 'system', sender_name: 'GoMusafir', text: 'Voice chat started by Sam Host', timestamp: 'TS' });
+  await n.voice(voiceEvent({ isChannelStarted: false }, started));
+  assert.equal(Object.keys(n.written).length, 1);
+});
+
+test('voice start without a known starter falls back to the plain line', async () => {
+  const n = notifications();
+  await n.voice(voiceEvent({}, { isChannelStarted: true, lastUpdatedBy: 'system', sessionRequestedAt: 5 }));
+  assert.equal(n.written[CHAT + 'voice_start_5'].text, 'Voice chat started');
+});
+
+test('voice end writes the duration in whole minutes, at least one', async () => {
+  const n = notifications();
+  const realNow = Date.now;
+  try {
+    Date.now = () => 1000 + 42 * 60000 + 20000;
+    await n.voice(voiceEvent({ isChannelStarted: true, sessionRequestedAt: 1000 }, { isChannelStarted: false, sessionRequestedAt: 1000 }));
+    assert.equal(n.written[CHAT + 'voice_end_1000'].text, 'Voice chat ended \u00b7 42 min');
+    Date.now = () => 1000 + 5000;
+    await n.voice(voiceEvent({ isChannelStarted: true, sessionRequestedAt: 1000 }, { isChannelStarted: false, sessionRequestedAt: 2000 }));
+    assert.equal(n.written[CHAT + 'voice_end_1000'].text, 'Voice chat ended \u00b7 42 min');
+    const other = notifications();
+    await other.voice(voiceEvent({ isChannelStarted: true, sessionRequestedAt: 1000 }, { isChannelStarted: false }));
+    assert.equal(other.written[CHAT + 'voice_end_1000'].text, 'Voice chat ended \u00b7 1 min');
+  } finally { Date.now = realNow; }
+});
+
+test('other voice channel updates write no chat line', async () => {
+  const n = notifications();
+  await n.voice(voiceEvent({ isChannelStarted: true, isAllMuted: false }, { isChannelStarted: true, isAllMuted: true }));
+  await n.voice(voiceEvent({ isChannelStarted: false }, { isChannelStarted: false, endReason: 'x' }));
+  assert.equal(Object.keys(n.written).length, 0);
 });
