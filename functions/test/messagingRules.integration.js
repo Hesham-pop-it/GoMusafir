@@ -123,6 +123,10 @@ async function main() {
   await deny(a, `${T}/chat/existing`, 'PUT', msg(a, 'overwritten'));
   await deny(a, `${T}/chat/existing`, 'PUT', null);
   await allow(a, `${T}/chat/new1`, 'PUT', msg(a));
+  // System lines are written by the server only.
+  await deny(a, `${T}/chat/sys1`, 'PUT', { ...msg(a), type: 'system' });
+  await deny(a, `${T}/chat/sys2`, 'PUT', { ...msg(a), sender_id: 'system' });
+  await deny(staff, `${T}/chat/sys3`, 'PUT', { ...msg(staff), type: 'system', sender_id: 'system' });
   await allow(a, `${T}/chat`);
   await allow(staff, `${T}/chat/existing`, 'PUT', msg(staff, 'moderated'));
   await allow(staff, `${T}/chat/new1`, 'PUT', null);
