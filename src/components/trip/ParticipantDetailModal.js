@@ -9,6 +9,8 @@ import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
 import { useNavigation } from '@react-navigation/native';
 import { auth } from '../../config/firebase';
+import { detailButtonFor, threadIdFor } from '../../utils/messagingRules';
+import { openConversation } from '../../utils/openConversation';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width } = Dimensions.get('window');
@@ -26,7 +28,9 @@ const ParticipantDetailModal = ({
     globalVisibilityConfig = {},
     staffData = {},
     organizerId = null,
-    userRole = null
+    userRole = null,
+    trip = null,
+    inbox = {}
 }) => {
     const navigation = useNavigation();
     const [scrollOffset, setScrollOffset] = useState(0);
@@ -268,6 +272,31 @@ const ParticipantDetailModal = ({
     const displayEmail = canSeeEmail ? (rawEmail || 'N/A') : '***';
     const displayPhone = canSeePhone ? (rawPhone || 'N/A') : '***';
 
+    const viewerUid = auth.currentUser?.uid;
+    const messageButton = participant && viewerUid ? detailButtonFor({
+        viewerIsStaff: isViewerStaff,
+        targetIsStaff: isTargetStaff,
+        isSelf: isCurrentUser,
+        inboxRow: (inbox || {})[threadIdFor(viewerUid, participant.id)],
+        nameVisible: canSeeFirstName,
+    }) : null;
+    const messageLabels = {
+        request: t('msg_send_request'),
+        accept: t('msg_accept_request'),
+        open_chat: t('msg_message'),
+        team: t('msg_message_team'),
+        message_staff: t('msg_message_name').replace('{name}', extractedFirst || participant?.name || ''),
+    };
+    const handleMessage = () => {
+        onClose();
+        openConversation(navigation, trip, {
+            viewerUid,
+            viewerIsStaff: isViewerStaff,
+            target: { id: participant.id, name: participant.name, image: participant.image, isStaff: isTargetStaff, nameVisible: canSeeFirstName },
+            inbox,
+        });
+    };
+
     if (!participant) return null;
 
     return (
@@ -389,6 +418,18 @@ const ParticipantDetailModal = ({
                             <Text style={styles.inputText}>{displayPhone}</Text>
                         )}
                     </View>
+
+                    {messageButton && messageLabels[messageButton] && (
+                        <>
+                            <TouchableOpacity style={styles.messageButtonPill} onPress={handleMessage} activeOpacity={0.85}>
+                                <Ionicons name={messageButton === 'request' ? 'paper-plane-outline' : 'chatbubble-ellipses-outline'} size={20} color="#1E2124" style={{ marginRight: 8 }} />
+                                <Text style={styles.messageButtonText}>{messageLabels[messageButton]}</Text>
+                            </TouchableOpacity>
+                            {messageButton === 'request' && (
+                                <Text style={styles.messageNote}>{t('msg_detail_note').replace('{name}', extractedFirst || participant.name || '')}</Text>
+                            )}
+                        </>
+                    )}
 
                     {isAdmin && (
                         <>
@@ -551,6 +592,29 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
+        marginBottom: 16,
+    },
+    messageButtonPill: {
+        width: '100%',
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#B99A4A',
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    messageButtonText: {
+        color: '#1E2124',
+        fontSize: 16,
+        fontFamily: Typography.sans.bold,
+    },
+    messageNote: {
+        color: '#9BA1A6',
+        fontSize: 14,
+        lineHeight: 21,
+        textAlign: 'center',
+        fontFamily: Typography.sans.regular,
         marginBottom: 16,
     },
     editButtonPill: {
