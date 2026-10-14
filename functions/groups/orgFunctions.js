@@ -14,7 +14,7 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
-const { createStripeCustomer, deleteStripeCustomer } = require("../services/stripeService");
+const { createStripeCustomer } = require("../services/stripeService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -208,13 +208,6 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
       "Please re-authenticate before deleting your organization."
     );
   }
-
-  // Delete associated Stripe customer
-  const orgSnap = await db.ref(`orgs/${callerOrgId}`).get();
-  const orgData = orgSnap.val() || {};
-  const stripeCustomerId = orgData.stripe_customer_id;
-  const adminEmail = orgData.email || request.auth.token.email;
-  await deleteStripeCustomer(stripeCustomerId, adminEmail, callerOrgId);
 
   // Soft-delete: mark org as deleted, clean-up scheduled by dataCleanupCron
   await db.ref(`orgs/${callerOrgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);

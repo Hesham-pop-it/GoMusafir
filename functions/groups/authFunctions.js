@@ -14,7 +14,6 @@ const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddlewar
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
-const { deleteStripeCustomer } = require("../services/stripeService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -319,30 +318,11 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
     }
   }
 
-  // 2. Delete Stripe Customer (if any)
-  let targetEmail = null;
-  try {
-    const targetUser = await auth.getUser(targetUid);
-    targetEmail = targetUser.email;
-  } catch (e) {}
-
-  let stripeCustomerId = null;
-  const userStripeSnap = await db.ref(`users/${targetUid}/stripe_customer_id`).get();
-  if (userStripeSnap.exists()) {
-    stripeCustomerId = userStripeSnap.val();
-  } else if (orgId) {
-    const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
-    if (orgStripeSnap.exists()) {
-      stripeCustomerId = orgStripeSnap.val();
-    }
-  }
-  await deleteStripeCustomer(stripeCustomerId, targetEmail, orgId);
-
-  // 3. Delete from Auth (Admin SDK)
+  // 2. Delete from Auth (Admin SDK)
   await db.ref(`app_access/${targetUid}`).remove();
   await auth.deleteUser(targetUid);
 
-  // 4. Delete from DB
+  // 3. Delete from DB
   await db.ref().update(updates);
 
   await writeAuditLog(orgId, {
@@ -377,22 +357,8 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
       });
     }
 
-    stage = "billing";
-    // 2. Cleanup Stripe Customer
-    let stripeCustomerId = null;
-    const userStripeSnap = await db.ref(`users/${uid}/stripe_customer_id`).get();
-    if (userStripeSnap.exists()) {
-      stripeCustomerId = userStripeSnap.val();
-    } else if (orgId) {
-      const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
-      if (orgStripeSnap.exists()) {
-        stripeCustomerId = orgStripeSnap.val();
-      }
-    }
-    await deleteStripeCustomer(stripeCustomerId, userEmail, orgId);
-
     stage = "profile-read";
-    // 3. Cleanup user data
+    // 2. Cleanup user data (Stripe customers and payment records are retained)
     const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
     const updates = {
       [`users/${uid}`]: null,

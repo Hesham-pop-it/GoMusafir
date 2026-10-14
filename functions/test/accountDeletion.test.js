@@ -32,7 +32,7 @@ function fixture({ cleanupFails = false } = {}) {
       if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in');
     } },
     '../services/emailService': {}, '../services/notificationService': {},
-    '../services/stripeService': { deleteStripeCustomer: noop },
+    '../services/stripeService': { deleteStripeCustomer: async () => calls.push('stripe-delete') },
     crypto: require('node:crypto'),
   };
   const module = { exports: {} };
@@ -52,6 +52,14 @@ test('self deletion uses the fresh identity gate without requiring a current tri
   assert.equal(f.updates()['users/self'], null);
   assert.equal(f.updates()['app_access/self'], null);
   assert.equal(f.updates()['trips_active/org/trip/locations/self'], null);
+  assert.ok(!f.calls.includes('stripe-delete'));
+  assert.deepEqual(Object.keys(f.updates()).filter(key => /stripe|payment|invoice/i.test(key)), []);
+});
+test('no deletion path references the Stripe delete helper', () => {
+  for (const file of ['authFunctions.js', 'orgFunctions.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '../groups', file), 'utf8');
+    assert.ok(!/deleteStripeCustomer/.test(source), `${file} still deletes Stripe customers`);
+  }
 });
 test('RTDB cleanup failure stops Auth deletion and produces an actionable error', async () => {
   const f = fixture({ cleanupFails: true });
