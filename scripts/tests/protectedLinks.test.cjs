@@ -7,7 +7,7 @@ const code = source.slice(source.indexOf('const authenticatedLink ='), source.in
 function fixture(valid) {
     let listener; let checks = 0;
     const links = vm.runInNewContext(code + '\nlinking', {
-        Linking: { createURL: () => 'gomusafir://', parse: url => { const parsed = new URL(url); return { path: parsed.pathname.slice(1), hostname: parsed.hostname }; },
+        Linking: { createURL: () => 'gomusafir://', parse: url => { const parsed = new URL(url); return { scheme: parsed.protocol.slice(0, -1), path: parsed.pathname.slice(1), hostname: parsed.hostname }; },
             getInitialURL: async () => 'gomusafir://voicechat?tripId=stale&autoStart=true',
             addEventListener: (_, callback) => { listener = callback; return { remove() {} }; } },
         protectedSession: { validate: async () => { checks++; return valid; } },
@@ -39,4 +39,12 @@ test('public enrollment links stay accessible without authentication', async () 
         await f.send(url); assert.equal(received.at(-1), url);
     }
     assert.equal(f.checks(), 0);
+});
+
+test('custom-scheme protected routes with a trailing slash still require validation', async () => {
+    const f = fixture(false); const received = []; f.links.subscribe(url => received.push(url));
+    for (const url of ['gomusafir://voicechat/', 'gomusafir://team/member', 'https://app.gomusafir.app/settings']) {
+        await f.send(url); assert.equal(received.at(-1), 'gomusafir://login');
+    }
+    assert.equal(f.checks(), 3);
 });

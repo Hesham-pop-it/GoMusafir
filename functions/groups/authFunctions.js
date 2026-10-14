@@ -1,4 +1,4 @@
-const { calculateAccess, refreshAccess } = require('../services/participantAccessService');
+const { calculateAccess, refreshAccess, revokeUserSessions } = require('../services/participantAccessService');
 // ─── Auth Functions ───────────────────────────────────────────────────────────
 // Covers: S1 (email verify), S2 (MFA), S4 (password policy), S5 (session revoke),
 //         S6 (RBAC custom claims), S12 (KMS PII), S20/S21 (audit/login logging)
@@ -118,8 +118,8 @@ exports.revokeSession = onCall({ region: "europe-west1" }, async (request) => {
     throw new HttpsError("permission-denied", "Target user does not belong to your organization.");
   }
 
-  // Revoke Firebase refresh tokens
-  await auth.revokeRefreshTokens(targetUid);
+  // Reject existing ID tokens in RTDB rules as well as future token refreshes.
+  await revokeUserSessions(targetUid);
 
   // Mark all sessions as revoked in RTDB
   const sessionsSnap = await db.ref(`users/${targetUid}/active_sessions`).get();

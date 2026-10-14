@@ -25,7 +25,7 @@ function fixture(valid, initiallyAdmitted = false) {
     });
     const Screen = () => {}; const Wrapped = wrap(Screen);
     const props = { navigation: { reset: value => resets.push(value) }, route: { params: { tripId: 'a' } } };
-    return { auth, Screen, props, resets, checks: () => checks, render: () => Wrapped(props), mount: () => effect(), check: () => authCallback(), background: () => appCallback('background'), invalidate: () => { admissionUser = null; return invalidate(); } };
+    return { auth, Screen, props, resets, checks: () => checks, render: () => Wrapped(props), mount: () => effect(), check: () => authCallback(), background: () => appCallback('background'), invalidate: () => { admissionUser = null; return invalidate(); }, validationStarted: () => { admissionUser = null; invalidate('validating'); }, validationFinished: () => { admissionUser = auth.currentUser; return invalidate('validated'); } };
 }
 test('protected child and its data effects cannot mount before validation', async () => {
     const f = fixture(true);
@@ -33,10 +33,10 @@ test('protected child and its data effects cannot mount before validation', asyn
     await f.check(); assert.equal(f.render().type, f.Screen);
     f.background(); assert.equal(f.render().type, 'View');
 });
-test('failed validation sends Welcome without ever mounting protected child', async () => {
+test('failed validation sends Login without ever mounting protected child', async () => {
     const f = fixture(false); f.render(); f.mount(); await f.check();
     assert.equal(f.render().type, 'View');
-    assert.equal(f.resets[0].routes[0].name, 'Welcome');
+    assert.equal(f.resets[0].routes[0].name, 'Login');
 });
 test('internal parameter changes reuse session admission but logout blocks rendering', async () => {
     const f = fixture(true); f.render(); f.mount(); await f.check();
@@ -59,7 +59,7 @@ test('new screens in an admitted session render immediately with no loading or v
     assert.equal(f.render().type, f.Screen);
 });
 
-test('logout invalidation and the following auth callback both reset to Welcome', async () => {
+test('logout invalidation and the following auth callback both reset to Login', async () => {
     const f = fixture(false, true);
     assert.equal(f.render().type, f.Screen);
     f.mount();
@@ -72,6 +72,15 @@ test('logout invalidation and the following auth callback both reset to Welcome'
     for (const reset of f.resets) {
         assert.equal(reset.index, 0);
         assert.equal(reset.routes.length, 1);
-        assert.equal(reset.routes[0].name, 'Welcome');
+        assert.equal(reset.routes[0].name, 'Login');
     }
+});
+
+test('warm Widget validation hides an already mounted screen until fresh admission', async () => {
+    const f = fixture(true, true); f.render(); f.mount();
+    f.validationStarted();
+    assert.equal(f.render().type, 'View');
+    assert.equal(f.checks(), 0);
+    await f.validationFinished();
+    assert.equal(f.render().type, f.Screen);
 });

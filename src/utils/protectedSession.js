@@ -28,6 +28,8 @@ export function createProtectedSessionValidator({ auth, fetchAccess, readMfaLock
             for (const listener of listeners) listener();
         },
         async validate() {
+            admission = null;
+            for (const listener of listeners) listener('validating');
             try { await auth.authStateReady(); } catch (_) { return false; }
             const user = auth.currentUser;
             const startedAt = revision;
@@ -36,23 +38,22 @@ export function createProtectedSessionValidator({ auth, fetchAccess, readMfaLock
             try {
                 const token = await user.getIdTokenResult(true);
                 if (!isCurrent()) return false;
+                const tokenExpiry = Date.parse(token.expirationTime);
+                if (!Number.isFinite(tokenExpiry) || tokenExpiry <= Date.now()) return false;
                 if (!(user.emailVerified || token.claims.email_verified || token.claims.handoff)) { admission = null; return false; }
                 if (await readMfaLock()) { admission = null; return false; }
                 // This callable checks Auth revocation/disabled status and canonical
                 // staff membership or active trip entitlement on the server.
                 const access = await fetchAccess();
-                const valid = isCurrent() && (access?.staff === true ||
+                const valid = isCurrent() && tokenExpiry > Date.now() && (access?.staff === true ||
                     (Number.isFinite(access?.server_now) && access.expires_at > access.server_now));
                 if (!valid && isCurrent()) admission = null;
                 if (valid) {
-                    const tokenExpiry = Date.parse(token.expirationTime);
                     const accessExpiry = access.staff === true ? Infinity :
                         Date.now() + (access.expires_at - access.server_now);
-                    // Missing expiry metadata must never produce reusable admission.
-                    if (Number.isFinite(tokenExpiry)) {
-                        admission = { user, expiresAt: Math.min(tokenExpiry, accessExpiry) };
-                    }
+                    admission = { user, expiresAt: Math.min(tokenExpiry, accessExpiry) };
                 }
+                if (valid) for (const listener of listeners) listener('validated');
                 return valid;
             } catch (error) {
                 if (isCurrent()) admission = null;

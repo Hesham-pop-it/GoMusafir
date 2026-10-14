@@ -103,7 +103,7 @@ test('backgrounding while validation is pending cannot create a reusable admissi
 test('expired tokens never create reusable admission', async () => {
     const f = fixture();
     f.user.getIdTokenResult = async () => ({ claims: {}, expirationTime: new Date(Date.now() - 1).toISOString() });
-    const session = f.build(); await session.validate();
+    const session = f.build(); assert.equal(await session.validate(), false);
     assert.equal(session.hasAdmission(), false);
 });
 test('failed fresh Widget validation discards an existing screen admission', async () => {
@@ -111,4 +111,24 @@ test('failed fresh Widget validation discards an existing screen admission', asy
     f.deps.fetchAccess = async () => { if (revoked) throw { code: 'functions/unauthenticated' }; return { staff: true }; };
     const session = f.build(); await session.validate(); assert.equal(session.hasAdmission(), true);
     revoked = true; assert.equal(await session.validate(), false); assert.equal(session.hasAdmission(), false);
+});
+
+test('missing token expiry fails closed before requesting app access', async () => {
+    const f = fixture(); f.user.getIdTokenResult = async () => ({ claims: {} });
+    assert.equal(await f.build().validate(), false);
+    assert.deepEqual(f.calls, []);
+});
+test('warm entry removes cached admission while the server check is pending', async () => {
+    const f = fixture(); let finish; let pendingCheck = false;
+    f.deps.fetchAccess = () => pendingCheck ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ staff: true });
+    const session = f.build(); await session.validate();
+    const events = []; session.subscribe(event => events.push(event));
+    pendingCheck = true;
+    const pending = session.validate();
+    assert.equal(session.hasAdmission(), false);
+    assert.equal(events[0], 'validating');
+    while (!finish) await Promise.resolve();
+    finish({ staff: true });
+    assert.equal(await pending, true);
+    assert.equal(events.at(-1), 'validated');
 });

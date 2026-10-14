@@ -25,11 +25,15 @@ export function withProtectedSession(Screen) {
                 const valid = await protectedSession.validate();
                 if (disposed || attempt !== revision) return;
                 if (valid && auth.currentUser === user) setAdmitted(true);
-                // Match App.js on logout; the legacy Login route is a placeholder.
-                else props.navigation.reset({ index: 0, routes: [{ name: 'Welcome' }] });
+                else props.navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
             };
             const unsubscribe = onAuthStateChanged(auth, check);
-            const unsubscribeInvalidation = protectedSession.subscribe(check);
+            const unsubscribeInvalidation = protectedSession.subscribe(event => {
+                // A warm Widget link must hide the currently mounted child while
+                // fresh server validation runs, even when the route stays the same.
+                if (event === 'validating') setAdmitted(false);
+                else return check();
+            });
             const subscription = AppState.addEventListener('change', state => {
                 if (state === 'active' && previousAppState === 'background') check();
                 if (state === 'background') {

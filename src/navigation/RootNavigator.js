@@ -159,7 +159,9 @@ const checkAndOpenWebUrl = async (url) => {
 const authenticatedLink = async url => {
     if (!url) return url;
     const parsed = Linking.parse(url);
-    const path = (parsed.path || parsed.hostname || '').replace(/^\//, '');
+    const path = (parsed.scheme === 'gomusafir'
+        ? [parsed.hostname, parsed.path].filter(Boolean).join('/')
+        : parsed.path || parsed.hostname || '').replace(/^\//, '');
     if (['home', 'notifications', 'trips', 'voicechat', 'tripchat', 'livelocation',
         'alerts', 'trip-settings', 'participants', 'trip-participants', 'team', 'settings'].includes(path.split('/')[0])) {
         if (!await protectedSession.validate()) return 'gomusafir://login';
