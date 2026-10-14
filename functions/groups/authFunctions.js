@@ -343,7 +343,6 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
   const uid = request.auth.uid;
   const role = request.auth.token.role;
   const orgId = request.auth.token.orgId;
-  const userEmail = request.auth.token.email;
 
   let stage = "organization";
   try {
