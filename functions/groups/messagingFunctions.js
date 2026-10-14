@@ -181,6 +181,8 @@ exports.respondToMessageRequest = onCall({ region }, async request => {
   const b = base(orgId, tripId);
   const thread = (await db.ref(`${b}/dm_threads/${threadId}`).get()).val();
   if (!thread || !thread.members || thread.members[me] !== true || thread.requester === me) throw notEligible();
+  // Nobody blocks a staff member, same as the Journey team.
+  if (action === 'block' && thread.staff) throw notEligible();
   const other = Object.keys(thread.members).find(uid => uid !== me);
   const now = admin.database.ServerValue.TIMESTAMP;
 
@@ -241,6 +243,82 @@ exports.respondToMessageRequest = onCall({ region }, async request => {
   return { ok: true };
 });
 
+exports.openStaffChat = onCall({ region }, async request => {
+  verifyAppCheck(request);
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { tripId, targetUid } = request.data || {};
+  if (!validKey(tripId) || !validKey(targetUid)) throw new HttpsError('invalid-argument', 'Invalid request.');
+  const me = request.auth.uid;
+  const { orgId, staff } = await requireTripAccess(request, tripId);
+  if (targetUid === me) throw notEligible();
+
+  // One side is a trip participant, the other holds an org staff role.
+  const [member, targetRole] = await Promise.all([
+    db.ref(`trips_participants/${tripId}/${targetUid}`).get(), staffRoleOf(orgId, targetUid)]);
+  if (staff ? member.val() !== true || targetRole : !targetRole) throw notEligible();
+  const pilgrimUid = staff ? targetUid : me;
+  const staffUid = staff ? me : targetUid;
+
+  const threadId = threadIdFor(me, targetUid);
+  const b = base(orgId, tripId);
+  const now = admin.database.ServerValue.TIMESTAMP;
+  // Claim the thread first, so two simultaneous opens create it once.
+  const claim = await db.ref(`${b}/dm_threads/${threadId}`).transaction(current => (current ? undefined
+    : { members: { [me]: true, [targetUid]: true }, requester: me, status: 'accepted', staff: staffUid }));
+  if (!claim.committed) return { threadId };
+  const [pilgrim, staffPerson] = await Promise.all([loadPerson(pilgrimUid), loadPerson(staffUid)]);
+  const row = (peerUid, person) => ({ kind: 'dm', staff: true, peer: peerUid,
+    peer_name: person.fullName || person.firstName, last_at: now, last_text: '', unread: 0 });
+  try {
+    await db.ref().update({
+      [`${b}/dm_threads/${threadId}/created_at`]: now,
+      [`${b}/inbox/${pilgrimUid}/${threadId}`]: row(staffUid, staffPerson),
+      [`${b}/inbox/${staffUid}/${threadId}`]: row(pilgrimUid, pilgrim),
+    });
+  } catch (error) {
+    await db.ref(`${b}/dm_threads/${threadId}`).remove().catch(() => {});
+    throw error;
+  }
+  return { threadId };
+});
+
+exports.reportStaffChat = onCall({ region }, async request => {
+  verifyAppCheck(request);
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Authentication required.');
+  const { tripId, threadId } = request.data || {};
+  if (!validKey(tripId) || !validKey(threadId)) throw new HttpsError('invalid-argument', 'Invalid request.');
+  const me = request.auth.uid;
+  const { orgId } = await requireTripAccess(request, tripId);
+  const b = base(orgId, tripId);
+  const [threadSnap, accessSnap] = await Promise.all([
+    db.ref(`${b}/dm_threads/${threadId}`).get(), db.ref(`${b}/report_access/${threadId}`).get()]);
+  const thread = threadSnap.val();
+  // Only the pilgrim of a private staff chat can report it.
+  if (!thread || !thread.staff || !thread.members || thread.members[me] !== true || thread.staff === me) throw notEligible();
+  if (accessSnap.val() === true) return { ok: true };
+
+  const reportId = db.ref(`${b}/reports`).push().key;
+  await db.ref().update({
+    [`${b}/reports/${reportId}`]: { reporter: me, reported: thread.staff, threadId, at: admin.database.ServerValue.TIMESTAMP, staffThread: true },
+    [`${b}/report_access/${threadId}`]: true,
+  });
+  const [reporter, staffPerson, orgStaff] = await Promise.all([
+    loadPerson(me), loadPerson(thread.staff), db.ref(`orgs/${orgId}/staff`).get()]);
+  const name = reporter.fullName || reporter.firstName || 'A participant';
+  const staffName = staffPerson.fullName || staffPerson.firstName || 'a staff member';
+  const body = `${name} reported a private chat with ${staffName}`;
+  const nowMs = Date.now();
+  const payload = pushPayload({ type: 'message_report', orgId, tripId, kind: 'dm', conversationId: threadId,
+    name, senderUid: me, senderImage: reporter.image, message: body, timestamp: nowMs });
+  const admins = Object.entries(orgStaff.val() || {}).filter(([uid, role]) => role === 'admin' && uid !== thread.staff).map(([uid]) => uid);
+  await Promise.all(admins.flatMap(uid => [
+    pushTo(uid, 'Message report', body, payload, { orgId, tripId }),
+    tripNotification(orgId, tripId, uid, { type: 'message_report', title: 'Message report', message: body,
+      name, senderUid: me, timestamp: nowMs }),
+  ]));
+  return { ok: true };
+});
+
 exports.unblockParticipant = onCall({ region }, async request => {
   verifyAppCheck(request);
   if (!request.auth) throw new HttpsError('unauthenticated', 'Authentication required.');
@@ -275,9 +353,17 @@ exports.onDirectMessageCreated = onValueCreated({
   ]);
   // Title and photo come from the masked profile, not from the client-written message.
   const [tripSnap, sender] = await Promise.all([db.ref(`orgs/${orgId}/trips/${tripId}`).get(), loadPerson(data.sender_id)]);
-  const shown = maskedFor(sender, tripSnap.val(), tripId);
-  const name = shown.name || 'Someone';
-  await pushTo(peer, name, text, pushPayload({ type: 'dm_message', orgId, tripId, kind: 'dm', conversationId: threadId,
+  // A private staff chat never masks names or photos; a staff sender also shows their role.
+  let shown = maskedFor(sender, tripSnap.val(), tripId);
+  let name = shown.name || 'Someone';
+  let title = name;
+  if (thread.staff) {
+    shown = { image: sender.image };
+    name = title = sender.fullName || sender.firstName || 'Someone';
+    const role = data.sender_id === thread.staff ? await staffRoleOf(orgId, data.sender_id) : null;
+    if (role) title = `${name} (${ROLE_LABELS[role]})`;
+  }
+  await pushTo(peer, title, text, pushPayload({ type: 'dm_message', orgId, tripId, kind: 'dm', conversationId: threadId,
     name, senderUid: data.sender_id, senderImage: shown.image, message: text, timestamp: Date.now() }), { orgId, tripId });
 });
 
