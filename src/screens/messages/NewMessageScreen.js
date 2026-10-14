@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -8,7 +8,8 @@ import { useLanguage } from '../../context/LanguageContext';
 import useMessagesData from '../../hooks/useMessagesData';
 import useTripPeople from '../../hooks/useTripPeople';
 import { detailButtonFor, threadIdFor } from '../../utils/messagingRules';
-import { openConversation, teamConversation } from '../../utils/openConversation';
+import { openConversation, openStaffPrivate, teamConversation } from '../../utils/openConversation';
+import { openStaffChat } from '../../services/messaging';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { fill } from '../../utils/messagesInbox';
 import { Avatar, ShieldAvatar, THEME } from './parts';
@@ -38,7 +39,7 @@ const NewMessageScreen = () => {
             inboxRow: inbox[threadIdFor(uid, p.id)], nameVisible: p.nameVisible,
         });
         switch (button) {
-            case 'team': return t('msg_goes_to_team');
+            case 'team': return t('msg_staff_private_sub');
             case 'open_chat': return t('msg_already_chatting');
             case 'waiting': return t('msg_request_sent_sub');
             case 'accept': return t('msg_request_received_sub');
@@ -46,7 +47,16 @@ const NewMessageScreen = () => {
         }
     };
 
-    const open = (p) => {
+    const open = async (p) => {
+        // Staff rows open a private chat; the Journey team entry above stays the way to reach everyone.
+        if (p.isStaff && !isStaff) {
+            try {
+                await openStaffPrivate(navigation, trip, { viewerUid: uid, target: p, openChat: openStaffChat });
+            } catch (e) {
+                Alert.alert(t('msg_error_generic'));
+            }
+            return;
+        }
         openConversation(navigation, trip, { viewerUid: uid, viewerIsStaff: isStaff, target: p, inbox });
     };
 
