@@ -74,7 +74,7 @@ export function sortReports(reportsMap) {
 
 // Reports this staff member may open: a reported private staff chat is for Admins only, and never for the staff member it names.
 export function reportsFor(reports, myUid, myRole) {
-    return (reports || []).filter((r) => !r.staffThread || (myRole === 'admin' && r.reported !== myUid));
+    return (reports || []).filter((r) => !r.staffThread || (String(myRole).toLowerCase() === 'admin' && r.reported !== myUid));
 }
 
 // A staff member's own private chats from their inbox rows, by the same all and unread filters.

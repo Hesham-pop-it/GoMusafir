@@ -75,10 +75,11 @@ test('previewMessages skips system lines and falls back to one only when nothing
 
 test('reportsFor hides a reported private staff chat from non-Admins and from the staff member it names', () => {
     const reports = [{ id: 'a', reporter: 'p1', reported: 'p2' }, { id: 'b', reporter: 'p1', reported: 's1', staffThread: true }];
-    assert.deepEqual(api.reportsFor(reports, 'admin1', 'admin').map((r) => r.id), ['a', 'b']);
-    assert.deepEqual(api.reportsFor(reports, 's1', 'admin').map((r) => r.id), ['a']);
-    assert.deepEqual(api.reportsFor(reports, 'm1', 'manager').map((r) => r.id), ['a']);
-    assert.deepEqual(api.reportsFor(reports, 'c1', 'co-host').map((r) => r.id), ['a']);
+    // The role passed in is the label from getChatStaffRole ('Admin', 'Manager', 'Co-Host').
+    assert.deepEqual(api.reportsFor(reports, 'admin1', 'Admin').map((r) => r.id), ['a', 'b']);
+    assert.deepEqual(api.reportsFor(reports, 's1', 'Admin').map((r) => r.id), ['a']);
+    assert.deepEqual(api.reportsFor(reports, 'm1', 'Manager').map((r) => r.id), ['a']);
+    assert.deepEqual(api.reportsFor(reports, 'c1', 'Co-Host').map((r) => r.id), ['a']);
 });
 
 test('filterStaffChats lists a staff member private chats under all and unread only', () => {
