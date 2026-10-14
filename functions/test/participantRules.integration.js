@@ -33,6 +33,12 @@ async function main() {
   await allow('orgs/o/trips/t');
   await allow(`trips_active/o/t/locations/${uid}`, 'PUT', { lat: 1 });
   await allow(`trips_active/o/t/chat/one`, 'PUT', { sender_id: uid, timestamp: Date.now(), text: 'hello' });
+  // Pilgrims can add messages but never wipe or rewrite the group chat.
+  await owner('trips_active/o/t/chat/staff', { sender_id: 'staff', timestamp: Date.now(), text: 'welcome' });
+  await deny('trips_active/o/t/chat', 'DELETE');
+  await deny('trips_active/o/t/chat', 'PUT', {});
+  await deny('trips_active/o/t/chat/staff', 'DELETE');
+  await deny('trips_active/o/t/chat/one', 'PUT', { sender_id: uid, timestamp: Date.now(), text: 'edited' });
   await deny(`users/${uid}/staff_org_id`, 'PUT', 'o');
   await deny(`users/${uid}/joined_trips/fake`, 'PUT', { org_id: 'o' });
   await deny(`app_access/${uid}/expires_at`, 'PUT', Date.now() + 999999);
