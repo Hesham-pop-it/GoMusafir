@@ -130,6 +130,12 @@ for (const name of ['getAppAccess', 'onTripAccessChanged', 'onMembershipAccessCh
   exports[name] = participantAccessFunctions[name];
 }
 
+// Org membership index and trip display cards used by the database rules.
+const orgMembersFunctions = require('./groups/orgMembersFunctions');
+for (const name of ['onParticipantIndexChanged', 'onStaffIndexChanged', 'onUserProfileCardChanged', 'onUserNameCardChanged', 'onUserPhotoCardChanged']) {
+  exports[name] = orgMembersFunctions[name];
+}
+
 // Shared all-muted inactivity checks for iOS and Android.
 const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');
 exports.reportVoiceActivity = voiceInactivityFunctions.reportVoiceActivity;
