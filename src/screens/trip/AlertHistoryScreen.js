@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ref, get, onValue } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { database, auth } from '../../config/firebase';
 import {
     View,
@@ -111,10 +112,9 @@ const AlertHistoryScreen = () => {
         const fetchProfiles = async () => {
             const promises = uids.map(async (uid) => {
                 try {
-                    const snap = await get(ref(database, `users/${uid}/profile`));
-                    if (snap.exists()) {
-                        const profile = snap.val();
-                        return { uid, avatar: profile.photoURL };
+                    const display = await fetchParticipantDisplay(database, uid, tripId, auth.currentUser?.uid);
+                    if (display.profile) {
+                        return { uid, avatar: display.profile.photoURL };
                     }
                 } catch (e) {
                     console.log("Error fetching profile in AlertHistory:", e);

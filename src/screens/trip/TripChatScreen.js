@@ -28,6 +28,7 @@ import Logo from '../../components/Logo';
 import { Typography } from '../../constants/Typography';
 import { database, auth } from '../../config/firebase';
 import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { uploadTripMedia } from '../../utils/uploadTripMedia';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -753,16 +754,14 @@ const TripChatScreen = () => {
 
             try {
                 const profilePromises = currentParticipants.map(async (uid) => {
-                    const [fullNameSnap, profileSnap, visSnap, photoSnap] = await Promise.all([
-                        get(ref(database, `users/${uid}/full_name`)),
-                        get(ref(database, `users/${uid}/profile`)),
+                    const [display, visSnap] = await Promise.all([
+                        fetchParticipantDisplay(database, uid, tripId, auth.currentUser?.uid),
                         get(ref(database, `users/${uid}/participant_visibility/${tripId}`)),
-                        get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
                     ]);
 
-                    const fullName = fullNameSnap.val();
-                    const rawProfile = profileSnap.val() || {};
-                    const photoUrl = photoSnap?.val();
+                    const fullName = display.fullName;
+                    const rawProfile = display.profile || {};
+                    const photoUrl = display.photoUrl;
                     const profile = {
                         ...rawProfile,
                         photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image

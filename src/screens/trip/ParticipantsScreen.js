@@ -30,6 +30,7 @@ import { Track, RoomEvent } from 'livekit-client';
 import { useVoice } from '../../context/VoiceContext';
 import { database, auth, functions } from '../../config/firebase';
 import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
@@ -252,24 +253,20 @@ const ParticipantsScreen = () => {
         let isMounted = true;
 
         const promises = combinedUids.map((uid) => {
-            const profileRef = ref(database, `users/${uid}/profile`);
-            const nameRef = ref(database, `users/${uid}/full_name`);
             const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
             return Promise.all([
-                get(profileRef),
-                get(nameRef),
+                fetchParticipantDisplay(database, uid, tripId, auth.currentUser?.uid),
                 get(visibilityRef),
-                get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
-            ]).then(([userSnap, nameSnap, visSnap, photoSnap]) => {
+            ]).then(([display, visSnap]) => {
                 if (!isMounted) return null;
-                const rawProfile = userSnap.val() || {};
-                const photoUrl = photoSnap?.val();
+                const rawProfile = display.profile || {};
+                const photoUrl = display.photoUrl;
                 const profile = {
                     ...rawProfile,
                     photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                 };
-                const fullName = nameSnap.val();
+                const fullName = display.fullName;
                 const visibility = visSnap.val() || {};
                 const targetRole = staffData[uid];
                 const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);

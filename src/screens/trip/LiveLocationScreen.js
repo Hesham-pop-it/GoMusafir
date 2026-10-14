@@ -29,6 +29,7 @@ import TripBottomTabBar from '../../components/TripBottomTabBar';
 import { Typography } from '../../constants/Typography';
 import { database, auth } from '../../config/firebase';
 import { ref, onValue, set, off, serverTimestamp, get, remove } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { isStaffMember, checkPIIVisibility, normalizeVisibilityOption, getFieldSetting, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
 
@@ -540,24 +541,20 @@ const LiveLocationScreen = () => {
 
         uidsToFetch.forEach(async (uid) => {
             try {
-                const profileRef = ref(database, `users/${uid}/profile`);
-                const nameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
-                
-                const [userSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
-                    get(profileRef),
-                    get(nameRef),
+
+                const [display, visSnap] = await Promise.all([
+                    fetchParticipantDisplay(database, uid, tripId, auth.currentUser?.uid),
                     get(visibilityRef),
-                    get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
                 ]);
 
-                const rawProfile = userSnap.val() || {};
-                const photoUrl = photoSnap?.val();
+                const rawProfile = display.profile || {};
+                const photoUrl = display.photoUrl;
                 const profile = {
                     ...rawProfile,
                     photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                 };
-                const fullName = nameSnap.val();
+                const fullName = display.fullName;
                 const visibility = visSnap.val() || {};
                 const targetRole = staffListRef.current?.[uid];
                 const isTargetStaff = isStaffMember(uid, staffListRef.current, organizerIdRef.current, targetRole);

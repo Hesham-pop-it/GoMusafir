@@ -24,6 +24,7 @@ import Modal from '../../components/CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 
 import { database, auth, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
@@ -742,14 +743,12 @@ const TripOverviewScreen = () => {
                 } else {
                     // For other participants: fetch once via get() to eliminate 4x continuous WebSocket listeners per participant
                     Promise.all([
-                        get(ref(database, `users/${uid}/profile`)).catch(() => null),
-                        get(ref(database, `users/${uid}/full_name`)).catch(() => null),
-                        get(ref(database, `users/${uid}/photo_url`)).catch(() => null),
+                        fetchParticipantDisplay(database, uid, tripId, auth.currentUser?.uid),
                         get(ref(database, `users/${uid}/participant_visibility/${tripId}`)).catch(() => null),
-                    ]).then(([pSnap, nSnap, phSnap, vSnap]) => {
-                        const latestProfile = pSnap?.val() || {};
-                        const latestFullName = nSnap?.val() || null;
-                        const latestPhotoUrl = phSnap?.val() || null;
+                    ]).then(([display, vSnap]) => {
+                        const latestProfile = display.profile || {};
+                        const latestFullName = display.fullName || null;
+                        const latestPhotoUrl = display.photoUrl || null;
                         const latestVisibility = vSnap?.val() || {};
 
                         const resolvedPhoto = latestProfile?.photoURL || latestProfile?.photo_url || latestPhotoUrl || latestProfile?.photo || latestProfile?.profile_photo || latestProfile?.image;

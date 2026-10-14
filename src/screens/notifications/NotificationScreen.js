@@ -13,6 +13,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { ref, onValue, get } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { database, auth } from '../../config/firebase';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { navigateToNotificationTarget, extractNotificationTimestamp, formatNotificationTime } from '../../utils/notificationNavigation';
@@ -145,8 +146,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
                                     const isViewerStaff = Boolean(orgAdminMap[oId]);
 
-                                    const profSnap = await get(ref(database, `users/${targetUid}/profile`));
-                                    const prof = profSnap.val() || {};
+                                    const prof = (await fetchParticipantDisplay(database, targetUid, tId, uid)).profile || {};
 
                                     resolvedName = getParticipantDisplayName({
                                         profile: prof,

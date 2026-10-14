@@ -10,6 +10,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, onValue, update, get, onDisconnect, push } from 'firebase/database';
+import { fetchParticipantDisplay } from '../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import { setAudioModeAsync } from 'expo-audio';
 import { 
@@ -779,14 +780,10 @@ export const VoiceProvider = ({ children }) => {
             const uid = participant.identity;
             if (!uid || widgetProfiles.current[uid]) return;
             try {
-                const [profileSnap, photoSnap, nameSnap] = await Promise.all([
-                    get(ref(database, `users/${uid}/profile`)),
-                    get(ref(database, `users/${uid}/photo_url`)),
-                    get(ref(database, `users/${uid}/full_name`)),
-                ]);
-                const profile = profileSnap.val() || {};
-                const name = [profile.firstName || profile.first_name, profile.lastName || profile.last_name].filter(Boolean).join(' ') || nameSnap.val() || participant.name;
-                const photo = profile.photoURL || profile.photo_url || photoSnap.val() || profile.photo || profile.profile_photo || profile.image || profile.avatar;
+                const display = await fetchParticipantDisplay(database, uid, activeTripId, auth.currentUser?.uid);
+                const profile = display.profile || {};
+                const name = [profile.firstName || profile.first_name, profile.lastName || profile.last_name].filter(Boolean).join(' ') || display.fullName || participant.name;
+                const photo = profile.photoURL || profile.photo_url || display.photoUrl || profile.photo || profile.profile_photo || profile.image || profile.avatar;
                 const avatar = photo ? await downloadAvatarToWidgetsDir(uid, photo) : null;
                 if (cancelled) return;
                 widgetProfiles.current[uid] = { name };
