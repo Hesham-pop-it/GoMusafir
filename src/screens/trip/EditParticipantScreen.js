@@ -405,7 +405,7 @@ const EditParticipantScreen = () => {
                         <View style={{ width: 40 }} />
                     </View>
 
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
                         {/* Avatar Section */}
                         <View style={styles.avatarSection}>
                             <View style={styles.avatarWrapper}>

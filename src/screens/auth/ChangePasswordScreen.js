@@ -117,7 +117,7 @@ const ChangePasswordScreen = () => {
                     behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                     style={{ flex: 1 }}
                 >
-                    <ScrollView contentContainerStyle={styles.scrollContent}>
+                    <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
                         {/* Header */}
                         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
                             <Ionicons name="chevron-back" size={22} color="#FFF" />

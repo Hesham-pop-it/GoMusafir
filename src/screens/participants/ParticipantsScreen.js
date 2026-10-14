@@ -685,6 +685,7 @@ const ParticipantsScreen = ({ navigation }) => {
                         ]}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={renderEmptyComponent}
+                        keyboardShouldPersistTaps="handled"
                     />
                 </View>
 

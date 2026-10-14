@@ -668,6 +668,7 @@ const ParticipantsScreen = () => {
                 ]}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={renderEmptyComponent}
+                keyboardShouldPersistTaps="handled"
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}
