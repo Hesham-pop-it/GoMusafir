@@ -19,6 +19,12 @@ const { deleteStripeCustomer } = require("../services/stripeService");
 // Per-user direct messaging nodes under trips_active/{org}/{trip}/ cleared on account deletion.
 const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read", "team", "team_meta"];
 
+// A reported private staff chat stays readable to Admins only while both people exist.
+async function clearReportAccess(updates, orgId, tripId, uid) {
+  const inbox = (await db.ref(`trips_active/${orgId}/${tripId}/inbox/${uid}`).get()).val() || {};
+  for (const threadId of Object.keys(inbox)) updates[`trips_active/${orgId}/${tripId}/report_access/${threadId}`] = null;
+}
+
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
 // Role claim is set to "pending" until createOrganization confirms the org.
@@ -320,6 +326,7 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
     if (tripOrgId) {
       updates[`trips_active/${tripOrgId}/${tid}/locations/${targetUid}`] = null;
       for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${targetUid}`] = null;
+      await clearReportAccess(updates, tripOrgId, tid, targetUid);
     }
   }
 
@@ -405,14 +412,15 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
 
     if (joinedTripsSnap.exists()) {
       const joinedTrips = joinedTripsSnap.val();
-      Object.keys(joinedTrips).forEach(tid => {
+      for (const tid of Object.keys(joinedTrips)) {
         updates[`trips_participants/${tid}/${uid}`] = null;
         const tripOrgId = joinedTrips[tid]?.org_id || joinedTrips[tid]?.orgId;
         if (tripOrgId) {
           updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
           for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${uid}`] = null;
+          await clearReportAccess(updates, tripOrgId, tid, uid);
         }
-      });
+      }
     }
 
     stage = "profile-cleanup";
