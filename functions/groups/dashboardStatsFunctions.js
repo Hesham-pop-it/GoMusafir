@@ -509,11 +509,25 @@ exports.onPaymentWrite = onValueWritten({
   await calculateAndStoreStats(orgId);
 });
 
+// Trip fields the dashboard metrics read; writes to anything else (live_data, titles, etc.) are skipped.
+const TRIP_STAT_FIELDS = [
+  "status", "deleted", "deleted_at", "startDate", "start_date",
+  "endDate", "end_date", "participants", "total_seats", "seats",
+];
+
+function tripStatsChanged(before, after) {
+  if (!before || !after) return true;
+  return TRIP_STAT_FIELDS.some((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
+}
+
+exports.tripStatsChanged = tripStatsChanged;
+
 exports.onTripWrite = onValueWritten({
   ref: "orgs/{orgId}/trips/{tripId}",
   region: "europe-west1",
 }, async (event) => {
   const { orgId } = event.params;
+  if (!tripStatsChanged(event.data.before.val(), event.data.after.val())) return;
   console.log(`Trigger onTripWrite fired for Org ${orgId}`);
   await calculateAndStoreStats(orgId);
 });
