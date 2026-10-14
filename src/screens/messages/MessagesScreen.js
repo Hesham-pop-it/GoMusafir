@@ -11,7 +11,7 @@ import useTripPeople from '../../hooks/useTripPeople';
 import useVoiceLive from '../../hooks/useVoiceLive';
 import { paths, subscribeLastMessages, subscribeTeamMeta, subscribePresence, subscribeReports } from '../../services/messaging';
 import { inboxSort } from '../../utils/messagingRules';
-import { buildStaffRows, filterStaffRows, sortReports, formatInboxTime, fill, peerShown, previewMessages } from '../../utils/messagesInbox';
+import { buildStaffRows, filterStaffRows, filterStaffChats, sortReports, reportsFor, formatInboxTime, fill, peerShown, previewMessages } from '../../utils/messagesInbox';
 import { teamConversation } from '../../utils/openConversation';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { Avatar, ShieldAvatar, CountBadge, Pill, THEME } from './parts';
@@ -35,7 +35,7 @@ const MessagesScreen = () => {
 
     const data = useMessagesData(orgId, tripId);
     const voiceLive = useVoiceLive(orgId, tripId);
-    const { uid, isStaff, staff, split, inbox } = data;
+    const { uid, role, isStaff, staff, split, inbox } = data;
     const { people } = useTripPeople(orgId, tripId, staff);
     const peerName = (row) => peerShown(row, people).name;
     const nameOf = (id) => people.find((p) => p.id === id)?.name || t('msg_reporter_unknown');
@@ -72,7 +72,7 @@ const MessagesScreen = () => {
     const openStaffChat = () => navigation.navigate('TripChat', { trip, conversation: { kind: 'staff', id: 'staff', title: t('msg_staff_chat') } });
     const openDm = (row) => navigation.navigate('TripChat', {
         trip,
-        conversation: { kind: 'dm', id: row.threadId, title: peerName(row), avatar: peerShown(row, people).image, peerUid: row.peer, ...(row.kind === 'request_out' ? { pending: true } : {}) },
+        conversation: { kind: 'dm', id: row.threadId, title: peerName(row), avatar: peerShown(row, people).image, peerUid: row.peer, ...(row.kind === 'request_out' ? { pending: true } : {}), ...(row.staff ? { staff: true } : {}) },
     });
     const openStaffRow = (r) => navigation.navigate('TripChat', { trip, conversation: { kind: 'team', id: r.pilgrimUid, title: r.meta.pilgrim_name || nameOf(r.pilgrimUid) } });
 
@@ -148,7 +148,13 @@ const MessagesScreen = () => {
 
     const staffRows = useMemo(() => buildStaffRows(data.teamMeta, data.teamRead, uid), [data.teamMeta, data.teamRead, uid]);
     const shownStaffRows = filterStaffRows(staffRows, filter);
-    const reportList = sortReports(reports);
+    const reportList = reportsFor(sortReports(reports), uid, role);
+    // A staff member's private chats sit with the team threads, newest first.
+    const staffChats = filterStaffChats(split.chats, filter);
+    const staffInboxRows = inboxSort([
+        ...shownStaffRows.map((r) => ({ _type: 'team', last_at: r.meta.last_at, r })),
+        ...staffChats.map((r) => ({ _type: 'private', ...r })),
+    ]);
     const staffNames = Object.keys(staff).filter((id) => getChatStaffRole(staff, id)).map((id) => (id === uid ? t('msg_you_lower') : firstName(nameOf(id))));
 
     const requests = split.requests;
@@ -203,11 +209,13 @@ const MessagesScreen = () => {
                                     key={r.id}
                                     style={styles.alertCard}
                                     activeOpacity={0.8}
-                                    onPress={() => navigation.navigate('TripChat', { trip, conversation: { kind: 'team', id: r.reporter, title: nameOf(r.reporter) } })}
+                                    onPress={() => navigation.navigate('TripChat', { trip, conversation: r.staffThread
+                                        ? { kind: 'dm', id: r.threadId, title: `${nameOf(r.reporter)} · ${nameOf(r.reported)}`, staff: true }
+                                        : { kind: 'team', id: r.reporter, title: nameOf(r.reporter) } })}
                                 >
                                     <Ionicons name="ban-outline" size={20} color={THEME.red} style={{ marginRight: 14 }} />
                                     <View style={{ flex: 1 }}>
-                                        <Text style={styles.alertTitle}>{fill(t('msg_report_alert'), { name: nameOf(r.reporter) })}</Text>
+                                        <Text style={styles.alertTitle}>{fill(t(r.staffThread ? 'msg_report_staff_alert' : 'msg_report_alert'), { name: nameOf(r.reporter) })}</Text>
                                         <Text style={styles.preview}>{t('msg_report_follow')} · {formatInboxTime(r.at, Date.now(), yesterday)}</Text>
                                     </View>
                                 </TouchableOpacity>
@@ -223,7 +231,22 @@ const MessagesScreen = () => {
                                     onPress={openStaffChat}
                                 />
                             )}
-                            {shownStaffRows.map((r) => {
+                            {staffInboxRows.map((item) => {
+                                if (item._type === 'private') {
+                                    return (
+                                        <Row
+                                            key={item.threadId}
+                                            avatar={<Avatar name={peerName(item)} uri={peerShown(item, people).image} online={presence[item.peer] === true} />}
+                                            title={peerName(item)}
+                                            time={formatInboxTime(item.last_at, Date.now(), yesterday)}
+                                            preview={item.last_text}
+                                            previewBold={item.unread > 0}
+                                            badge={item.unread || 0}
+                                            onPress={() => openDm(item)}
+                                        />
+                                    );
+                                }
+                                const r = item.r;
                                 const m = r.meta;
                                 const byMe = m.last_sender_id === uid;
                                 const fromStaff = m.last_sender_id !== r.pilgrimUid;
@@ -285,6 +308,7 @@ const MessagesScreen = () => {
                                     key={r.threadId}
                                     avatar={<Avatar name={peerName(r)} uri={peerShown(r, people).image} online={r.kind === 'dm' && presence[r.peer] === true} />}
                                     title={peerName(r)}
+                                    pill={r.staff && getChatStaffRole(staff, r.peer) ? <View style={{ marginLeft: 8 }}><Pill label={getChatStaffRole(staff, r.peer).toUpperCase()} /></View> : null}
                                     time={formatInboxTime(r.last_at, Date.now(), yesterday)}
                                     preview={r.kind === 'request_out' ? undefined : r.last_text}
                                     previewBold={r.unread > 0}
