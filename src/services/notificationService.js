@@ -83,6 +83,14 @@ export async function registerForPushNotificationsAsync(user = null) {
     }
 
     try {
+        // 1. Create Android Notification Channels first (Android 13+ only shows the permission prompt once a channel exists)
+        if (Platform.OS === 'android') {
+            await Promise.all([STANDARD, SOS].map(profile => notifee.createChannel({
+                id: profile.channelId, name: profile.name, sound: profile.sound,
+                importance: AndroidImportance.HIGH, vibration: true,
+            })));
+        }
+
         // 2. Request Permission (iOS, and POST_NOTIFICATIONS on Android 13+)
         const authStatus = await messaging().requestPermission();
         const enabled =
@@ -92,14 +100,6 @@ export async function registerForPushNotificationsAsync(user = null) {
         if (!enabled) {
             console.log("[PushNotification] Push permission denied. Auth status:", authStatus);
             return null;
-        }
-
-        // 1. Create Android Notification Channels first (Android 13+ only shows the permission prompt once a channel exists)
-        if (Platform.OS === 'android') {
-            await Promise.all([STANDARD, SOS].map(profile => notifee.createChannel({
-                id: profile.channelId, name: profile.name, sound: profile.sound,
-                importance: AndroidImportance.HIGH, vibration: true,
-            })));
         }
 
         // 3. Register for remote messages (Critical for iOS)
