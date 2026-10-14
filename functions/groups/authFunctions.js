@@ -16,6 +16,7 @@ const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
 const { createEmailOtpService, generateCode } = require("../services/emailOtpService");
 const emailOtp = createEmailOtpService(db);
+const { getAccountCleanup } = require("../services/accountCleanupService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -276,68 +277,58 @@ exports.checkUserExistence = onCall({ enrollment: true, region: "europe-west1" }
   }
 });
 
-// ── Delete User Globally (Admin only) ─────────────────────────────────────────
+// ── Delete User (Admin only) ──────────────────────────────────────────────────
+// An admin may only remove a user from their own organisation's data. The account is
+// deleted platform-wide only when the user has no memberships (trips or staff roles)
+// in any other organisation. Stripe and payment records are never touched.
 exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin"]);
 
-  const { targetUid } = request.data;
+  const { targetUid } = request.data || {};
   const orgId = request.auth.token.orgId;
 
-  if (!targetUid) throw new HttpsError("invalid-argument", "targetUid is required.");
+  if (!targetUid || typeof targetUid !== "string") throw new HttpsError("invalid-argument", "targetUid is required.");
+  if (targetUid === request.auth.uid) {
+    throw new HttpsError("failed-precondition", "Use account deletion to delete your own account.");
+  }
+
+  const cleanup = getAccountCleanup();
 
   // Verify target user belongs to caller's org for data isolation
-  const joinedTripsSnap = await db.ref(`users/${targetUid}/joined_trips`).get();
-  let belongsToOrg = false;
-  if (joinedTripsSnap.exists()) {
-    for (const tid of Object.keys(joinedTripsSnap.val())) {
-      const tOrgSnap = await db.ref(`trips_orgs/${tid}`).get();
-      if (tOrgSnap.exists() && tOrgSnap.val() === orgId) {
-        belongsToOrg = true;
-        break;
-      }
-    }
-  }
-
-  // Also check if they are staff of this org
-  const staffOrgSnap = await db.ref(`users/${targetUid}/staff_org_id`).get();
-  if (staffOrgSnap.exists() && staffOrgSnap.val() === orgId) {
-    belongsToOrg = true;
-  }
-
-  if (!belongsToOrg) {
+  if (!(await cleanup.userBelongsToOrg(targetUid, orgId))) {
     throw new HttpsError("permission-denied", "You can only delete users who belong to your organization.");
   }
+  // The owner of the organisation is removed by deleting the organisation, not here.
+  const targetStaffRole = (await db.ref(`orgs/${orgId}/staff/${targetUid}`).get()).val();
+  if (targetStaffRole === "admin") {
+    throw new HttpsError("failed-precondition", "The organization owner cannot be removed. Delete the organization instead.");
+  }
 
-  // 1. Find all trips the user joined to clean up trips_participants
-  const joinedTrips = joinedTripsSnap.val() || {};
-  const updates = {
-    [`users/${targetUid}`]: null,
-    [`otp_codes/${targetUid}`]: null,
-  };
-
-  for (const tid of Object.keys(joinedTrips)) {
-    updates[`trips_participants/${tid}/${targetUid}`] = null;
-    const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
-    if (tripOrgId) {
-      updates[`trips_active/${tripOrgId}/${tid}/locations/${targetUid}`] = null;
+  const otherMemberships = await cleanup.hasMembershipsOutsideOrg(targetUid, orgId);
+  let scope;
+  if (otherMemberships) {
+    // Shared user: only this organisation's data goes; the account and other orgs stay.
+    scope = "org_only";
+    await cleanup.removeUserFromOrg(targetUid, orgId);
+  } else {
+    scope = "account";
+    await cleanup.removeUserCompletely(targetUid, { staffOrgId: orgId });
+    try {
+      await auth.deleteUser(targetUid);
+    } catch (error) {
+      if (error.code !== "auth/user-not-found") throw error;
     }
   }
 
-  // 2. Delete from Auth (Admin SDK)
-  await db.ref(`app_access/${targetUid}`).remove();
-  await auth.deleteUser(targetUid);
-
-  // 3. Delete from DB
-  await db.ref().update(updates);
-
   await writeAuditLog(orgId, {
-    action: "USER_DELETED_GLOBALLY",
+    action: scope === "account" ? "USER_DELETED_GLOBALLY" : "USER_REMOVED_FROM_ORG",
     byUid: request.auth.uid,
     targetId: targetUid,
+    extra: { scope },
   });
 
-  return { success: true };
+  return { success: true, scope };
 });
 
 // ── Delete My Account (Bypasses recent login requirement by using Admin SDK) ───
@@ -352,9 +343,10 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
 
   let stage = "organization";
   try {
-    // 1. If admin, mark org for deletion (soft delete)
+    const cleanup = getAccountCleanup();
+    // 1. If admin, mark org for deletion (soft delete; purged after the grace period)
     if (role === 'admin' && orgId) {
-      await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+      await cleanup.markOrganizationDeleted(orgId, admin.database.ServerValue.TIMESTAMP);
       await writeAuditLog(orgId, {
         action: "ORG_DELETED_BY_OWNER",
         byUid: uid,
@@ -362,28 +354,10 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
       });
     }
 
-    stage = "profile-read";
-    // 2. Cleanup user data (Stripe customers and payment records are retained)
-    const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
-    const updates = {
-      [`users/${uid}`]: null,
-      [`otp_codes/${uid}`]: null,
-    };
-
-    if (joinedTripsSnap.exists()) {
-      const joinedTrips = joinedTripsSnap.val();
-      Object.keys(joinedTrips).forEach(tid => {
-        updates[`trips_participants/${tid}/${uid}`] = null;
-        const tripOrgId = joinedTrips[tid]?.org_id || joinedTrips[tid]?.orgId;
-        if (tripOrgId) {
-          updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
-        }
-      });
-    }
-
+    // 2. Cleanup user data (chat anonymised, media/presence/notifications wiped;
+    //    Stripe customers and payment records are retained)
     stage = "profile-cleanup";
-    updates[`app_access/${uid}`] = null;
-    await db.ref().update(updates);
+    await cleanup.removeUserCompletely(uid, { staffOrgId: orgId });
 
     stage = "auth-delete";
     await auth.deleteUser(uid);
