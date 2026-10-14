@@ -60,6 +60,10 @@ export default function CompatModal({
     });
 
     useEffect(() => {
+        // Stop any in-flight animation first so a fast open/close never leaves
+        // the backdrop or content mid-way (and swallowing touches) after the Modal closes.
+        backdropAnim.stopAnimation();
+        contentAnim.stopAnimation();
         if (isVisible) {
             Animated.parallel([
                 Animated.timing(backdropAnim, { toValue: 1, duration: FADE_DURATION, useNativeDriver: true }),
@@ -85,14 +89,18 @@ export default function CompatModal({
         : [];
 
     const inner = (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+        <View style={StyleSheet.absoluteFill} pointerEvents={isVisible ? 'box-none' : 'none'}>
             <Animated.View
                 style={[
                     StyleSheet.absoluteFill,
                     { backgroundColor: `rgba(0,0,0,${backdropOpacity})`, opacity: backdropAnim },
                 ]}
             >
-                <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdropPress} />
+                <Pressable
+                    style={StyleSheet.absoluteFill}
+                    onPress={handleBackdropPress}
+                    disabled={!isVisible}
+                />
             </Animated.View>
             <Animated.View
                 style={[
