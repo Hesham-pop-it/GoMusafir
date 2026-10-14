@@ -83,3 +83,8 @@ test('openStaffPrivate creates the chat first, then opens it', async () => {
     await assert.rejects(openStaffPrivate(navigation, { id: 't1' }, { viewerUid: 'me', target: { id: 'a1' }, openChat: async () => { throw new Error('no'); } }));
     assert.equal(calls.length, 2);
 });
+
+test('staffPrivateConversation titles the chat with the staff name when the shown name is masked', () => {
+    const c = plain(staffPrivateConversation('me', { id: 'a1', name: 'Staff Member', staffName: 'Amina Yusuf', image: 'img' }));
+    assert.equal(c.title, 'Amina Yusuf');
+});

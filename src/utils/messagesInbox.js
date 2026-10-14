@@ -3,6 +3,7 @@
 // Name and photo of an inbox row's peer: the masked people list when loaded, else the server-masked peer_name.
 export function peerShown(row, people) {
     const person = (people || []).find((p) => p.id === row?.peer);
+    if (row?.staff && person?.staffName) return { name: person.staffName, image: person.staffImage || '' };
     return { name: (person && person.name) || row?.peer_name || '', image: (person && person.image) || '' };
 }
 

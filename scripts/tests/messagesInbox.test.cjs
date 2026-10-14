@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../src/utils/messagesInbox.js'), 'utf8');
 const context = {};
-vm.runInNewContext(source.replace(/export function/g, 'function').replace(/export const/g, 'const') + '\nthis.api = { initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, reportsFor, filterStaffChats, splitInbox, fill, previewMessages };', context);
+vm.runInNewContext(source.replace(/export function/g, 'function').replace(/export const/g, 'const') + '\nthis.api = { peerShown, initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, reportsFor, filterStaffChats, splitInbox, fill, previewMessages };', context);
 const api = context.api;
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
@@ -87,4 +87,10 @@ test('filterStaffChats lists a staff member private chats under all and unread o
     assert.deepEqual(api.filterStaffChats(rows, 'all').map((r) => r.threadId), ['x', 'y']);
     assert.deepEqual(api.filterStaffChats(rows, 'unread').map((r) => r.threadId), ['y']);
     assert.deepEqual(plain(api.filterStaffChats(rows, 'reports')), []);
+});
+
+test('peerShown names the staff member in a private staff chat, even when their name is hidden elsewhere', () => {
+    const people = [{ id: 's1', name: 'Staff Member', image: '', isStaff: true, staffName: 'Amina Yusuf', staffImage: 'a.jpg' }];
+    assert.deepEqual(plain(api.peerShown({ peer: 's1', staff: true }, people)), { name: 'Amina Yusuf', image: 'a.jpg' });
+    assert.deepEqual(plain(api.peerShown({ peer: 's1' }, people)), { name: 'Staff Member', image: '' });
 });

@@ -303,7 +303,7 @@ const ParticipantDetailModal = ({
 
     const handleStaffPrivate = async () => {
         try {
-            await openStaffPrivate(navigation, trip, { viewerUid, target: { id: participant.id, name: participant.name, image: participant.image }, openChat: openStaffChat });
+            await openStaffPrivate(navigation, trip, { viewerUid, target: { id: participant.id, name: participant.name, staffName: `${extractedFirst} ${extractedLast}`.trim() || null, image: participant.image }, openChat: openStaffChat });
             onClose();
         } catch (e) {
             Alert.alert(t('msg_error_generic'));
