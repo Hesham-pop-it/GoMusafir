@@ -39,7 +39,7 @@ import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
-import { conversationPaths, markInboxRead, markTeamRead, subscribeThread, subscribePresence } from '../../services/messaging';
+import { conversationPaths, markInboxRead, markTeamRead, subscribeThread, subscribePresence, reportStaffChat } from '../../services/messaging';
 import { teamConversation } from '../../utils/openConversation';
 import { fill } from '../../utils/messagesInbox';
 import { useLanguage } from '../../context/LanguageContext';
@@ -173,7 +173,7 @@ const SystemLine = React.memo(({ item, t, onJoin }) => {
 // Only the server writes system lines: both markers must match.
 const isSystemLine = (m) => m.type === 'system' && m.sender_id === 'system';
 
-const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
+const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, hideTeamBadge, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
@@ -241,11 +241,13 @@ const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, isMe, isM
                             <Text numberOfLines={1} style={[styles.senderName, styles.staffSenderName, isMe && { color: '#30250C' }]}>
                                 {isMe ? 'You' : (participantProfiles[item.sender_id]?.name || item.senderName || item.sender_name || 'Journey team')}
                             </Text>
-                            <View accessible accessibilityLabel="Journey team"
-                                style={[styles.staffBadge, isMe && styles.staffBadgeMe]}>
-                                <Ionicons name="shield-checkmark-outline" size={11} color={isMe ? '#30250C' : '#E5C875'} />
-                                <Text style={[styles.staffBadgeText, isMe && { color: '#30250C' }]}>Journey team</Text>
-                            </View>
+                            {!hideTeamBadge && (
+                                <View accessible accessibilityLabel="Journey team"
+                                    style={[styles.staffBadge, isMe && styles.staffBadgeMe]}>
+                                    <Ionicons name="shield-checkmark-outline" size={11} color={isMe ? '#30250C' : '#E5C875'} />
+                                    <Text style={[styles.staffBadgeText, isMe && { color: '#30250C' }]}>Journey team</Text>
+                                </View>
+                            )}
                             {showRole && !isMe && (
                                 <View style={styles.staffBadge}>
                                     <Text style={styles.staffBadgeText}>{staffRole.toUpperCase()}</Text>
@@ -534,8 +536,6 @@ const TripChatScreen = () => {
     const conversation = route.params?.conversation;
     const kind = conversation?.kind || 'group';
     const isGroup = kind === 'group';
-    // Direct messages carry no name or photo: the other pilgrim sees only what the visibility settings allow.
-    const isDirect = kind === 'dm';
     const voiceLive = useVoiceLive(isGroup ? orgId : null, tripId);
     const convId = conversation?.id;
     // Non-group conversations keep their own local cache rows; the group chat stays keyed by the trip.
@@ -575,6 +575,15 @@ const TripChatScreen = () => {
     const [threadStatus, setThreadStatus] = useState(null);
     const [threadLoaded, setThreadLoaded] = useState(false);
     const [peerOnline, setPeerOnline] = useState(false);
+    const [threadStaff, setThreadStaff] = useState(null);
+    const [threadMembers, setThreadMembers] = useState(null);
+    // A private chat with one staff member: the thread's `staff` field wins over the route hint once it has loaded.
+    const isStaffPrivate = kind === 'dm' && (threadLoaded ? !!threadStaff : !!conversation?.staff);
+    // Direct messages carry no name or photo: the other pilgrim sees only what the visibility settings allow. Staff always show.
+    const isDirect = kind === 'dm' && !isStaffPrivate;
+    // An Admin reads a reported private chat without being in it.
+    const isReportView = isStaffPrivate && threadLoaded && !!threadMembers && threadMembers[auth.currentUser?.uid] !== true;
+    const isPilgrimOfPrivate = isStaffPrivate && threadLoaded && !isReportView && threadStaff !== auth.currentUser?.uid;
     // Once the thread has loaded it wins over the route's pending hint, so a stale param never locks the composer.
     const isPending = kind === 'dm' && (threadLoaded ? threadStatus === 'pending' : !!conversation?.pending);
     const markReadTimer = useRef(null);
@@ -861,6 +870,8 @@ const TripChatScreen = () => {
         if (kind !== 'dm' || !orgId || !tripId || !convId) return;
         return subscribeThread(orgId, tripId, convId, (thread) => {
             setThreadStatus(thread?.status || null);
+            setThreadStaff(thread?.staff || null);
+            setThreadMembers(thread?.members || null);
             setThreadLoaded(true);
             // The recipient of a pending request reviews it; the chat stays locked for the sender only.
             if (thread?.status === 'pending' && thread.requester !== auth.currentUser?.uid) {
@@ -899,8 +910,8 @@ const TripChatScreen = () => {
                     const targetRole = staffData?.[uid];
                     const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
                     const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdmin;
-                    // In the Journey team thread staff always show by name and photo, whatever the participant visibility says.
-                    const showStaffInTeam = kind === 'team' && isTargetStaff;
+                    // In the Journey team thread and in private staff chats staff always show by name and photo, whatever the participant visibility says.
+                    const showStaffInTeam = (kind === 'team' || isStaffPrivate) && isTargetStaff;
                     const globalConfig = showStaffInTeam ? {} : globalVisibilityConfig;
                     const personalVisibility = showStaffInTeam ? {} : visibility;
 
@@ -955,7 +966,7 @@ const TripChatScreen = () => {
         };
 
         fetchProfiles();
-    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId, kind]);
+    }, [currentParticipants, staffData, organizerId, globalVisibilityConfig, isAdmin, userRole, tripId, kind, isStaffPrivate]);
 
     // Handle results if the activity was killed in the background (Android crash fix)
     useEffect(() => {
@@ -1399,6 +1410,17 @@ const TripChatScreen = () => {
     const peerFirstName = (conversation?.title || '').split(' ')[0];
     const inputPlaceholder = kind === 'team' ? t('msg_placeholder_team') : kind === 'staff' ? t('msg_placeholder_staff') : kind === 'dm' ? fill(t('msg_placeholder_dm'), { name: peerFirstName }) : '';
     const isOwnTeamThread = kind === 'team' && convId === auth.currentUser?.uid;
+    const reportChat = () => Alert.alert(t('msg_report_chat_title'), t('msg_report_chat_body'), [
+        { text: t('msg_cancel'), style: 'cancel' },
+        { text: t('msg_report_chat'), style: 'destructive', onPress: async () => {
+            try {
+                await reportStaffChat({ tripId, threadId: convId });
+                Alert.alert(t('msg_report_chat_done'));
+            } catch (e) {
+                Alert.alert(t('msg_error_generic'));
+            }
+        } },
+    ]);
     const openOwnTeamThread = () => navigation.replace('TripChat', { trip, conversation: teamConversation(auth.currentUser?.uid, t('msg_journey_team')) });
 
     // The newest "started" line carries the Join link while voice is live.
@@ -1421,6 +1443,7 @@ const TripChatScreen = () => {
                 staffRole={getChatStaffRole(staffData, item.sender_id)}
                 showRole={!isGroup}
                 isDirect={isDirect}
+                hideTeamBadge={isStaffPrivate}
                 isMe={isMe}
                 isMedia={isMedia}
                 isShortText={isShortText}
@@ -1433,7 +1456,7 @@ const TripChatScreen = () => {
                 onVideoPress={setViewerVideo}
             />
         );
-    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup, isDirect, joinLineId, t]);
+    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup, isDirect, isStaffPrivate, joinLineId, t]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
@@ -1507,6 +1530,11 @@ const TripChatScreen = () => {
                                         </Text>
                                     )}
                                 </View>
+                                {isPilgrimOfPrivate && (
+                                    <TouchableOpacity style={styles.headerReport} onPress={reportChat} accessibilityLabel={t('msg_report_chat')}>
+                                        <Ionicons name="flag-outline" size={24} color="#FFF" />
+                                    </TouchableOpacity>
+                                )}
                                 {isGroup && voiceLive && (
                                     <TouchableOpacity style={styles.headerVoice} onPress={joinVoice} accessibilityLabel={t('msg_voice_join')}>
                                         <Ionicons name="mic-outline" size={26} color="#0E1A12" />
@@ -1560,6 +1588,14 @@ const TripChatScreen = () => {
                             </View>
                         </View>
                     )}
+                    {isStaffPrivate && threadLoaded && !isReportView && (
+                        <View style={[styles.infoBanner, styles.teamBanner]}>
+                            <Ionicons name="lock-closed-outline" size={22} color="#8DA9D6" style={{ marginRight: 14, marginTop: 2 }} />
+                            <Text style={[styles.infoBannerText, { flex: 1, color: '#FFF', marginTop: 0 }]}>
+                                {fill(t(isPilgrimOfPrivate ? 'msg_private_note_pilgrim' : 'msg_private_note_staff'), { name: peerFirstName })}
+                            </Text>
+                        </View>
+                    )}
                     {isOwnTeamThread && (
                         <View style={[styles.infoBanner, styles.teamBanner]}>
                             <Ionicons name="shield-outline" size={22} color="#8DA9D6" style={{ marginRight: 14, marginTop: 2 }} />
@@ -1611,6 +1647,12 @@ const TripChatScreen = () => {
                             </View>
                         )}
 
+                        {isReportView && (
+                            <View style={styles.lockedBar}>
+                                <Ionicons name="lock-closed-outline" size={18} color="#A1A1AA" />
+                                <Text style={styles.lockedBarText}>{t('msg_reported_view')}</Text>
+                            </View>
+                        )}
                         {isPending && (
                             <View style={styles.lockedBar}>
                                 <Ionicons name="lock-closed-outline" size={18} color="#A1A1AA" />
@@ -1622,7 +1664,7 @@ const TripChatScreen = () => {
                         )}
 
                         {/* Input Bar */}
-                        {!isPending && (
+                        {!isPending && !isReportView && (
                         <View style={[styles.inputBar, (showAttachments || replyingTo) && { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderTopLeftRadius: replyingTo ? 0 : 20, borderTopRightRadius: replyingTo ? 0 : 20 }]}>
                             <TouchableOpacity onPress={toggleAttachments} style={styles.iconBtn}>
                                 {showAttachments ? (
@@ -1913,6 +1955,13 @@ const styles = StyleSheet.create({
         fontSize: 14,
         flex: 1,
         fontFamily: Typography.sans.regular,
+    },
+    headerReport: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 10,
     },
     headerVoice: {
         width: 52,
