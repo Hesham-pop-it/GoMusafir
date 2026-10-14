@@ -8,10 +8,14 @@ import { auth } from '../config/firebase';
  */
 class ChatDatabase {
     static db = null;
+    static initPromise = null;
     static generation = 0;
 
     static async clearAll() {
         this.generation++;
+        // Let any in-flight init finish so it cannot reopen the DB after we close it.
+        if (this.initPromise) await this.initPromise;
+        this.initPromise = null;
         // Open directly: clearing must not initialize a new encryption key.
         if (!this.db) this.db = await SQLite.openDatabaseAsync('gomusafir_chat.db');
         await this.db.execAsync('DROP TABLE IF EXISTS messages;');
@@ -22,11 +26,20 @@ class ChatDatabase {
     /**
      * Initializes the SQLite database and creates the messages table if it doesn't exist
      */
-    static async init() {
-        if (this.db) return;
+    static init() {
+        // One shared promise: every caller awaits the same open.
+        if (!this.initPromise) {
+            this.initPromise = this.openDatabase().then((ok) => {
+                if (!ok) this.initPromise = null; // allow a retry after a failed open
+            });
+        }
+        return this.initPromise;
+    }
 
+    static async openDatabase() {
         try {
-            this.db = await SQLite.openDatabaseAsync('gomusafir_chat.db');
+            const db = await SQLite.openDatabaseAsync('gomusafir_chat.db');
+            this.db = db;
 
             // Initialize the encryption system
             await ChatEncryption.initialize();
@@ -57,9 +70,11 @@ class ChatDatabase {
                 // Column already exists
             }
 
-            // console.log('Chat Database initialized successfully');
+            return true;
         } catch (error) {
             console.log('SQLite Initialization Error:', error);
+            this.db = null;
+            return false;
         }
     }
 
@@ -70,7 +85,7 @@ class ChatDatabase {
         const generation = this.generation;
         const uid = auth.currentUser?.uid;
         if (!uid) return;
-        if (!this.db) await this.init();
+        await this.init();
         if (generation !== this.generation || auth.currentUser?.uid !== uid) return;
 
         try {
@@ -108,7 +123,7 @@ class ChatDatabase {
      * Loads messages for a specific trip (Decrypts after loading)
      */
     static async getMessages(tripId, limit = 50) {
-        if (!this.db) await this.init();
+        await this.init();
 
         try {
             const rows = await this.db.getAllAsync(
@@ -161,7 +176,7 @@ class ChatDatabase {
      * Deletes all messages for a specific trip
      */
     static async clearChat(tripId) {
-        if (!this.db) await this.init();
+        await this.init();
         try {
             await this.db.runAsync('DELETE FROM messages WHERE trip_id = ?', [tripId]);
         } catch (error) {
