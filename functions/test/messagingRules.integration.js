@@ -186,6 +186,9 @@ async function main() {
   await deny(a, `${T}/message_settings/${a.uid}`, 'PUT', { requests: 'members' });
   await allow(staff, `${T}/team/${a.uid}/m9`, 'PUT', msg(staff));
   await allow(staff, `${T}/staff_chat/s3`, 'PUT', msg(staff));
+  await deny(a, `${T}/dm_messages/${am}/m9`, 'PUT', msg(a));
+  await allow(mgr, `${T}/dm_messages/${am}`);
+  await allow(staff, `${T}/dm_messages/${am}`);
   console.log(`PASS: ${checks} direct RTDB checks for messaging rules.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
