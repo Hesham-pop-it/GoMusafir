@@ -37,6 +37,7 @@ import * as Location from 'expo-location';
 import { createAudioPlayer, useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { ActivityIndicator, Linking, Vibration, Alert } from 'react-native';
 import ChatDatabase from '../../utils/chatDb';
+import { mergeMessages } from '../../utils/chatMerge';
 import { getChatStaffRole } from '../../utils/chatStaffRole';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
@@ -580,13 +581,15 @@ const TripChatScreen = () => {
             const localMsgs = await ChatDatabase.getMessages(tripId);
 
             if (localMsgs.length > 0) {
-                setMessages(localMsgs.map(m => ({
+                const cached = localMsgs.map(m => ({
                     ...m,
                     sender: m.sender_id === auth.currentUser?.uid ? 'me' : 'other',
                     senderName: m.sender_name || 'Participant',
                     time: new Date(m.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
                     rawTimestamp: m.timestamp
-                })));
+                }));
+                // Merge with whatever the live listener already delivered instead of replacing it.
+                setMessages(prev => mergeMessages(cached, prev));
             }
         };
 
@@ -656,16 +659,7 @@ const TripChatScreen = () => {
                         avatar: data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.sender_name || 'User')}&background=B99A4A&color=fff`,
                     };
 
-                    setMessages((prev) => {
-                        const existingIndex = prev.findIndex(m => m.id === msg.id);
-                        if (existingIndex >= 0) {
-                            const updated = [...prev];
-                            updated[existingIndex] = { ...updated[existingIndex], ...msg };
-                            return updated;
-                        }
-                        // Prepend for inverted list (newest first in array)
-                        return [msg, ...prev];
-                    });
+                    setMessages((prev) => mergeMessages(prev, [msg]));
 
                     // S24: Save to local encrypted database for offline access
                     ChatDatabase.saveMessage(tripId, {
