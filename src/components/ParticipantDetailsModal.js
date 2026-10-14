@@ -162,7 +162,7 @@ const ParticipantDetailsModal = ({ visible, onClose, participant, onDelete, isDe
                         {/* Avatar */}
                         <View style={styles.avatarContainer}>
                             <Image
-                                source={{ uri: participant.image || 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?q=80&w=3387&auto=format&fit=crop' }}
+                                source={{ uri: participant.image || `https://ui-avatars.com/api/?name=${encodeURIComponent((participant.name || 'U')[0])}&background=B99A4A&color=fff` }}
                                 style={styles.avatar}
                             />
                         </View>

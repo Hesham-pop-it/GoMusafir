@@ -64,24 +64,6 @@ const LocationPinIcon = ({ color = "#FFF", size = 28 }) => (
     </Svg>
 );
 
-// Mock participant locations
-const MOCK_PARTICIPANTS = [
-    {
-        id: '1',
-        name: 'Ethan Carter',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-        latitude: 37.78825,
-        longitude: -122.4324,
-    },
-    {
-        id: '2',
-        name: 'Sophia Bennett',
-        avatar: 'https://randomuser.me/api/portraits/women/44.jpg',
-        latitude: 37.78925,
-        longitude: -122.4314,
-    },
-];
-
 const LiveLocationScreen = () => {
     const navigation = useNavigation();
     const mapRef = useRef(null);

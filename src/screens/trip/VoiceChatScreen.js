@@ -506,7 +506,7 @@ const VoiceChatContent = ({
                         {sortedParticipants.map((participant, index) => {
                             const pData = participantMap[participant.identity] || { 
                                 name: participant.name || 'User', 
-                                avatar: 'https://randomuser.me/api/portraits/lego/1.jpg' 
+                                avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent((participant.name || 'U')[0])}&background=B99A4A&color=fff`
                             };
                             const isSpeaking = speakingUids.includes(participant.identity);
                             const isLocal = participant.isLocal;

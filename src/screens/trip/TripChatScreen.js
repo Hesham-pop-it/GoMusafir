@@ -76,45 +76,6 @@ const TemplateIconSvg = ({ size = 40, color = "#FFFFFF" }) => (
     </Svg>
 );
 
-const MOCK_MESSAGES = [
-    {
-        id: '1',
-        text: '1912. Again...',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '08:55',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-    },
-    {
-        id: '2',
-        text: 'Anyway... Group trip? Any era’s fine, just not 2020. 😐',
-        sender: 'me',
-        time: '09:34',
-        read: true,
-    },
-    {
-        id: '3',
-        text: 'You’ll all laugh...',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '10:01',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-        replyTo: {
-            sender: 'You',
-            text: 'Anyway... Group trip? Any era’s fine, just not 2020. 😐',
-            color: '#D32F2F' // Pinkish line color from screenshot
-        }
-    },
-    {
-        id: '4',
-        text: '...until the clock hits 2:17 AM, March 14th, 2036.',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '10:01',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-    }
-];
-
 const QUICK_OPTIONS = [
     { id: 'photo', label: 'Photo', icon: 'custom', color: '#007BFC', bg: '#1A2733' },
     { id: 'location', label: 'Location', icon: 'custom', color: '#06CF9C', bg: '#1A2927' },

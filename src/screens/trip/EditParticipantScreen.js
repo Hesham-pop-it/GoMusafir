@@ -114,7 +114,7 @@ const EditParticipantScreen = () => {
     const [lastName, setLastName] = useState(participant?.name ? (participant.name.split(' ')[1] || '') : '');
     const [email, setEmail] = useState(participant?.email || '');
     const [phone, setPhone] = useState(participant?.phone || '');
-    const [avatarUri, setAvatarUri] = useState(participant?.image || 'https://randomuser.me/api/portraits/men/32.jpg');
+    const [avatarUri, setAvatarUri] = useState(participant?.image || '');
     const [successVisible, setSuccessVisible] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
@@ -410,7 +410,7 @@ const EditParticipantScreen = () => {
                         <View style={styles.avatarSection}>
                             <View style={styles.avatarWrapper}>
                                 <Image
-                                    source={{ uri: avatarUri }}
+                                    source={{ uri: avatarUri || `https://ui-avatars.com/api/?name=${encodeURIComponent((firstName || participant?.name || 'U')[0])}&background=B99A4A&color=fff` }}
                                     style={styles.avatar}
                                 />
                                 <TouchableOpacity style={styles.editIconContainer} onPress={handlePickImage}>
