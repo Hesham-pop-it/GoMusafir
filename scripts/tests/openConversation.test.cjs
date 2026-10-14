@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const read = (f) => fs.readFileSync(path.join(__dirname, '../../src/utils', f), 'utf8');
-const strip = (src) => src.replace(/^import .*$/gm, '').replace(/export const/g, 'const').replace(/export function/g, 'function');
+const strip = (src) => src.replace(/^import .*$/gm, '').replace(/export const/g, 'const').replace(/export (async )?function/g, '$1function');
 const context = {};
-vm.runInNewContext(`${strip(read('messagingRules.js'))}\n${strip(read('openConversation.js'))}\nthis.api = { decideOpen, openConversation };`, context);
-const { decideOpen, openConversation } = context.api;
+vm.runInNewContext(`${strip(read('messagingRules.js'))}\n${strip(read('openConversation.js'))}\nthis.api = { decideOpen, openConversation, staffPrivateConversation, openStaffPrivate };`, context);
+const { decideOpen, openConversation, staffPrivateConversation, openStaffPrivate } = context.api;
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
 const base = { viewerUid: 'me', viewerIsStaff: false, inbox: {} };
@@ -66,4 +66,20 @@ test('openConversation navigates with the trip', () => {
     assert.equal(calls[0][1].trip.id, 't');
     assert.equal(openConversation(nav, { id: 't' }, { ...base, target: { ...pilgrim, nameVisible: false } }), false);
     assert.equal(calls.length, 1);
+});
+
+test('staffPrivateConversation is a dm keyed by both uids and flagged as a staff chat', () => {
+    const c = plain(staffPrivateConversation('me', { id: 'a1', name: 'Maryam S', image: 'img' }));
+    assert.deepEqual(c, { kind: 'dm', id: 'a1_me', title: 'Maryam S', avatar: 'img', peerUid: 'a1', staff: true });
+});
+
+test('openStaffPrivate creates the chat first, then opens it', async () => {
+    const calls = [];
+    const navigation = { navigate: (route, params) => calls.push(['navigate', route, plain(params)]) };
+    await openStaffPrivate(navigation, { id: 't1' }, { viewerUid: 'me', target: { id: 'a1', name: 'Maryam S' }, openChat: async (args) => calls.push(['open', args]) });
+    assert.deepEqual(plain(calls[0]), ['open', { tripId: 't1', targetUid: 'a1' }]);
+    assert.equal(calls[1][1], 'TripChat');
+    assert.equal(calls[1][2].conversation.id, 'a1_me');
+    await assert.rejects(openStaffPrivate(navigation, { id: 't1' }, { viewerUid: 'me', target: { id: 'a1' }, openChat: async () => { throw new Error('no'); } }));
+    assert.equal(calls.length, 2);
 });

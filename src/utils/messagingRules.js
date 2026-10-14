@@ -23,6 +23,13 @@ export function detailButtonFor({ viewerIsStaff, targetIsStaff, isSelf, inboxRow
     }
 }
 
+// Every button the participant detail shows: the primary one, plus a private chat between a pilgrim and one staff member.
+export function detailButtonsFor(args) {
+    const primary = detailButtonFor(args);
+    if (primary === 'team' || primary === 'message_staff') return [primary, 'staff_private'];
+    return primary ? [primary] : [];
+}
+
 // Newest last_at first; ties keep their original order.
 export function inboxSort(rows) {
     return (rows || [])

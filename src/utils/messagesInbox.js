@@ -72,6 +72,19 @@ export function sortReports(reportsMap) {
         .sort((a, b) => (b.at || 0) - (a.at || 0));
 }
 
+// Reports this staff member may open: a reported private staff chat is for Admins only, and never for the staff member it names.
+export function reportsFor(reports, myUid, myRole) {
+    return (reports || []).filter((r) => !r.staffThread || (myRole === 'admin' && r.reported !== myUid));
+}
+
+// A staff member's own private chats from their inbox rows, by the same all and unread filters.
+export function filterStaffChats(rows, filter) {
+    const chats = (rows || []).filter((r) => r.staff);
+    if (filter === 'unread') return chats.filter((r) => r.unread > 0);
+    if (filter === 'reports') return [];
+    return chats;
+}
+
 // Inbox rows as an array with their thread id, split by kind.
 export function splitInbox(inbox) {
     const rows = Object.entries(inbox || {}).map(([threadId, row]) => ({ threadId, ...row }));

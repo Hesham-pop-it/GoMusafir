@@ -39,3 +39,14 @@ export function openConversation(navigation, trip, args) {
 
 // Journey team thread of the viewing pilgrim.
 export const teamConversation = (viewerUid, title = 'Journey team') => ({ kind: 'team', id: viewerUid, title });
+
+// Pure: the TripChat conversation for a private chat between a pilgrim and one staff member.
+export const staffPrivateConversation = (viewerUid, target) => ({
+    kind: 'dm', id: threadIdFor(viewerUid, target.id), title: target.name, avatar: target.image, peerUid: target.id, staff: true,
+});
+
+// Create or find the private chat on the server, then open it. `openChat` is the openStaffChat callable.
+export async function openStaffPrivate(navigation, trip, { viewerUid, target, openChat }) {
+    await openChat({ tripId: trip?.id || trip?.tripId, targetUid: target.id });
+    navigation.navigate('TripChat', { trip, conversation: staffPrivateConversation(viewerUid, target) });
+}

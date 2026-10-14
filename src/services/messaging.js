@@ -44,7 +44,7 @@ export const subscribeBlocks = (orgId, tripId, uid, cb) => watch(`${paths(orgId,
 // A staff member's team read pointers, { pilgrimUid: timestamp }.
 export const subscribeTeamRead = (orgId, tripId, staffUid, cb) => watch(`${paths(orgId, tripId).teamRead}/${staffUid}`, (v) => cb(v || {}));
 
-// Report alerts, { reportId: { reporter, reported, threadId, at } } (staff only).
+// Report alerts, { reportId: { reporter, reported, threadId, at, staffThread? } } (staff only).
 export const subscribeReports = (orgId, tripId, cb) => watch(paths(orgId, tripId).reports, (v) => cb(v || {}));
 // App presence map { uid: true } for the trip.
 export const subscribePresence = (orgId, tripId, cb) => watch(`${paths(orgId, tripId).base}/voice_channel/app_presence`, (v) => cb(v || {}));
@@ -83,6 +83,14 @@ export async function sendRequest({ tripId, targetUid, text }) {
 }
 export async function respondToRequest({ tripId, threadId, action }) {
     const { data } = await httpsCallable(functions, 'respondToMessageRequest')({ tripId, threadId, action });
+    return data;
+}
+export async function openStaffChat({ tripId, targetUid }) {
+    const { data } = await httpsCallable(functions, 'openStaffChat')({ tripId, targetUid });
+    return data;
+}
+export async function reportStaffChat({ tripId, threadId }) {
+    const { data } = await httpsCallable(functions, 'reportStaffChat')({ tripId, threadId });
     return data;
 }
 export async function unblock({ tripId, uid }) {
