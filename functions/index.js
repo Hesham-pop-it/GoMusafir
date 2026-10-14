@@ -53,6 +53,7 @@ exports.createOrganization    = orgFunctions.createOrganization;
 exports.updateMemberRole      = orgFunctions.updateMemberRole;
 exports.deleteOrganization    = orgFunctions.deleteOrganization;
 exports.inviteTeamMember      = orgFunctions.inviteTeamMember;
+exports.leaveOrganization     = orgFunctions.leaveOrganization;
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
 exports.createTrip            = tripFunctions.createTrip;
