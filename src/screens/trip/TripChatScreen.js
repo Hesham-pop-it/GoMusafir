@@ -592,8 +592,12 @@ const TripChatScreen = () => {
             inputRef.current?.focus();
         }, 500);
 
-        const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
-        const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+        // iOS: use the Will events so the bottom safe-area edge changes in step with
+        // KeyboardAvoidingView instead of jumping after the keyboard animation.
+        const kbShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const kbHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const keyboardDidShowListener = Keyboard.addListener(kbShowEvent, () => setIsKeyboardVisible(true));
+        const keyboardDidHideListener = Keyboard.addListener(kbHideEvent, () => setIsKeyboardVisible(false));
 
         let chatRef;
         if (orgId && tripId) {
@@ -1382,6 +1386,7 @@ const TripChatScreen = () => {
                         contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
                         onScrollBeginDrag={dismissAll}
                         keyboardDismissMode="interactive"
+                        keyboardShouldPersistTaps="handled"
                         initialNumToRender={15}
                         maxToRenderPerBatch={10}
                         windowSize={10}
@@ -1447,7 +1452,8 @@ const TripChatScreen = () => {
                                 onPress={handleSendMessage}
                                 // onPressIn={inputText.trim().length === 0 ? startRecording : null}
                                 // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
-                                disabled={isUploading || inputText.trim().length === 0}
+                                // handleSendMessage ignores empty text; do not gate on inputText here so paste/dictation never leaves it dead
+                                disabled={isUploading}
                             >
                                 {isUploading ? (
                                     <ActivityIndicator size="small" color="#FFF" />
