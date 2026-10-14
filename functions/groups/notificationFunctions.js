@@ -206,6 +206,15 @@ exports.onVoiceChannelUpdated = onValueWritten({
     const after = event.data.after.val() || {};
     const { orgId, tripId } = event.params;
 
+    const beforeStarted = before.isChannelStarted === true || before.isChannelActive === true;
+    const afterStarted = after.isChannelStarted === true || after.isChannelActive === true;
+    const startChanged = beforeStarted !== afterStarted;
+    const muteChanged = before.isAllMuted !== after.isAllMuted && after.isAllMuted !== undefined;
+    const recordingChanged = before.isRecording !== after.isRecording && after.isRecording !== undefined;
+
+    // Other voice_channel writes (participant state, heartbeats) notify nobody, so skip the reads below.
+    if (!startChanged && !muteChanged && !recordingChanged) return;
+
     // Fetch both participants and staff members to ensure all relevant users are notified
     const [participantsSnap, staffSnap] = await Promise.all([
         db.ref(`trips_participants/${tripId}`).once("value"),
@@ -233,9 +242,6 @@ exports.onVoiceChannelUpdated = onValueWritten({
 
     if (recipients.length === 0) return;
 
-    const beforeStarted = before.isChannelStarted === true || before.isChannelActive === true;
-    const afterStarted = after.isChannelStarted === true || after.isChannelActive === true;
-
     // Helper to distribute in-app notifications to all recipients.
     // Writing to trips_active/.../notifications triggers onNotificationCreated to dispatch push notifications.
     const distributeNotification = async (notifType, title, message) => {
@@ -258,7 +264,7 @@ exports.onVoiceChannelUpdated = onValueWritten({
     };
 
     // 1. Channel Start / End State
-    if (beforeStarted !== afterStarted) {
+    if (startChanged) {
         const isStarted = afterStarted === true;
         const title = isStarted ? "Voice Chat Started" : "Voice Chat Ended";
         const body = isStarted
@@ -269,7 +275,7 @@ exports.onVoiceChannelUpdated = onValueWritten({
     }
 
     // 2. Mute All State (Time Sensitive)
-    if (before.isAllMuted !== after.isAllMuted && after.isAllMuted !== undefined) {
+    if (muteChanged) {
         const isMutedAll = after.isAllMuted === true;
         const title = isMutedAll ? "Organizer Muted Everyone" : "Mute All Disabled";
         const body = isMutedAll ? "You have been muted by the organizer." : "You can now unmute your microphone.";
@@ -278,7 +284,7 @@ exports.onVoiceChannelUpdated = onValueWritten({
     }
 
     // 3. Recording State (Time Sensitive)
-    if (before.isRecording !== after.isRecording && after.isRecording !== undefined) {
+    if (recordingChanged) {
         const isRecording = after.isRecording === true;
         const title = isRecording ? "Recording Started" : "Recording Stopped";
         const body = isRecording ? "This audio channel is now being recorded." : "The recording has ended.";
