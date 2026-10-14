@@ -1,3 +1,4 @@
+import { flushPendingNotificationTaps } from '../services/notificationService';
 import { brandedBrowserOptions } from '../utils/browserOptions';
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -226,6 +227,7 @@ export default function RootNavigator({ initialRouteName = "Welcome" }) {
                 ref={navigationRef}
                 linking={linking}
                 onReady={() => {
+                    flushPendingNotificationTaps().catch(() => {});
                     const route = navigationRef.current?.getCurrentRoute();
                     if (route) {
                         if (route.name === 'Home' || route.name === 'Welcome' || route.name === 'Login' || route.name === 'Signup') {

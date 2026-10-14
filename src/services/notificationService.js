@@ -12,18 +12,30 @@ const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreCl
 
 let isForegroundListenerRegistered = false;
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createTapQueue } from '../utils/notificationTapQueue';
 import { normalizeNotification, publishForegroundNotification, resetNotificationPresentation } from './notificationPresentation';
 const PENDING_TAP = 'gomusafir.pendingNotificationTap';
-const recentTaps = new Map();
+let tapQueue = null;
+function getTapQueue() {
+    if (!tapQueue) {
+        const { navigationRef } = require('../navigation/RootNavigator');
+        tapQueue = createTapQueue({
+            isReady: () => navigationRef.isReady(),
+            navigate: async (item) => {
+                const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
+                await navigateToNotificationTarget(item);
+            },
+        });
+    }
+    return tapQueue;
+}
+// Called by the navigation container once it is ready, to deliver taps received before that.
+export function flushPendingNotificationTaps() {
+    return getTapQueue().flush();
+}
 export async function handleNotificationPress(data) {
     if (!data) return;
-    const key = data.notificationId || data.messageId || data.id || JSON.stringify(data);
-    const now = Date.now();
-    for (const [id, time] of recentTaps) if (now - time > 30000) recentTaps.delete(id);
-    if (recentTaps.has(key)) return;
-    recentTaps.set(key, now);
-    const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
-    await navigateToNotificationTarget(data);
+    await getTapQueue().enqueue(data);
 }
 export async function saveBackgroundNotificationPress(notification) {
     await AsyncStorage.setItem(PENDING_TAP, JSON.stringify(normalizeNotification({ data: notification?.data, messageId: notification?.id, notification: { title: notification?.title, body: notification?.body } })));
@@ -71,7 +83,7 @@ export async function registerForPushNotificationsAsync(user = null) {
     }
 
     try {
-        // 1. Request Permission (iOS requires this explicitly for Firebase)
+        // 2. Request Permission (iOS, and POST_NOTIFICATIONS on Android 13+)
         const authStatus = await messaging().requestPermission();
         const enabled =
             authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
@@ -82,7 +94,7 @@ export async function registerForPushNotificationsAsync(user = null) {
             return null;
         }
 
-        // 2. Create Android Notification Channels (Required for Android 8.0+)
+        // 1. Create Android Notification Channels first (Android 13+ only shows the permission prompt once a channel exists)
         if (Platform.OS === 'android') {
             await Promise.all([STANDARD, SOS].map(profile => notifee.createChannel({
                 id: profile.channelId, name: profile.name, sound: profile.sound,
