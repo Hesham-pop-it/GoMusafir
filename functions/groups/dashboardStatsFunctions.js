@@ -509,10 +509,11 @@ exports.onPaymentWrite = onValueWritten({
   await calculateAndStoreStats(orgId);
 });
 
-// Trip fields the dashboard metrics read; writes to anything else (live_data, titles, etc.) are skipped.
+// Trip fields the dashboard stats read; writes to anything else (live_data, etc.) are skipped.
 const TRIP_STAT_FIELDS = [
-  "status", "deleted", "deleted_at", "startDate", "start_date",
-  "endDate", "end_date", "participants", "total_seats", "seats",
+  "status", "deleted", "deleted_at", "completed_at", "created_at",
+  "startDate", "start_date", "departureDate", "endDate", "end_date", "returnDate",
+  "name", "title", "tripName", "destination", "participants", "total_seats", "seats",
 ];
 
 function tripStatsChanged(before, after) {
