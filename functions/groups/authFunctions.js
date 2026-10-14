@@ -14,6 +14,8 @@ const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddlewar
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
+const { createEmailOtpService, generateCode } = require("../services/emailOtpService");
+const emailOtp = createEmailOtpService(db);
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -159,24 +161,28 @@ exports.sendCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1", 
   const uid = request.auth.uid;
   const email = request.auth.token.email;
 
-  // Rate Limiting check (prevent spamming emails)
-  const rateLimitRef = db.ref(`otp_codes/${uid}/lastSent`);
-  const snapshot = await rateLimitRef.get();
+  // Per-user cooldown (also refuses while the user is locked out after wrong attempts)
   const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-  const limitTime = isEmulator ? 5000 : 60000;
-  if (snapshot.exists() && Date.now() - snapshot.val() < limitTime) {
-    throw new HttpsError("resource-exhausted", "auth/too-many-requests");
+  const claim = await emailOtp.claimSend(uid, isEmulator ? 5000 : 60000);
+  if (!claim.ok) {
+    throw new HttpsError("resource-exhausted", claim.locked
+      ? `Too many incorrect attempts. Try again in ${claim.retryAfterSeconds} seconds.`
+      : `Please wait ${claim.retryAfterSeconds} seconds before requesting another code.`,
+    { reason: claim.locked ? "locked" : "cooldown", retryAfterSeconds: claim.retryAfterSeconds });
+  }
+  // Per-email hourly limit
+  // The App Review account is exempt so reviewers can never be throttled out.
+  const emailRate = email === 'apple@popitnl.nl' ? { ok: true } : await emailOtp.countEmailSend(email);
+  if (!emailRate.ok) {
+    throw new HttpsError("resource-exhausted", "Too many codes requested for this email. Try again later.",
+      { reason: "email-limit", retryAfterSeconds: emailRate.retryAfterSeconds });
   }
 
-  // Generate ultra-secure 6-digit code
-  const code = email === 'apple@popitnl.nl' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
+  // Cryptographically random 6-digit code (fixed code only for the App Review account)
+  const code = email === 'apple@popitnl.nl' ? '123456' : generateCode();
 
-  // Store code in RTDB securely with an expiration timestamp
-  await db.ref(`otp_codes/${uid}`).set({
-    code: code,
-    expiresAt: Date.now() + 10 * 60 * 1000, // Valid for 10 minutes
-    lastSent: Date.now()
-  });
+  // Only a salted hash of the code is stored
+  await emailOtp.storeCode(uid, code);
 
   if (email === 'apple@popitnl.nl') {
       return { success: true };
@@ -226,20 +232,21 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
   }
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const otpRef = db.ref(`otp_codes/${uid}`);
-  const snapshot = await otpRef.get();
+  const check = await emailOtp.checkCode(uid, String(otp));
 
-  if (!snapshot.exists()) {
+  if (check.outcome === "not-found") {
     throw new HttpsError("not-found", "No pending OTP request found.");
   }
-
-  const data = snapshot.val();
-  if (Date.now() > data.expiresAt) {
+  if (check.outcome === "expired") {
     throw new HttpsError("deadline-exceeded", "OTP has expired. Please request a new one.");
   }
-
-  if (data.code !== otp) {
-    throw new HttpsError("permission-denied", "Incorrect OTP code.");
+  if (check.outcome === "locked") {
+    throw new HttpsError("resource-exhausted",
+      `Too many incorrect attempts. Try again in ${check.retryAfterSeconds} seconds.`,
+      { reason: "locked", retryAfterSeconds: check.retryAfterSeconds });
+  }
+  if (check.outcome === "wrong") {
+    throw new HttpsError("permission-denied", "Incorrect OTP code.", { attemptsLeft: check.attemptsLeft });
   }
 
   // OTP Matches! Authenticate the user cryptographically via Firebase Admin SDK
@@ -247,8 +254,7 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
     emailVerified: true
   });
 
-  // Cleanup the used code to prevent multi-use attacks
-  await otpRef.remove();
+  // The matching transaction already deleted the used code (no multi-use).
 
   return { verified: true };
 });

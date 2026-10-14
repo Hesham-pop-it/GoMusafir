@@ -31,7 +31,8 @@ function fixture({ cleanupFails = false } = {}) {
     '../middleware/appCheckMiddleware': { verifyAppCheck: noop, requireAuth: request => {
       if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in');
     } },
-    '../services/emailService': {}, '../services/notificationService': {},
+    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' },
+    '../services/notificationService': {},
     '../services/stripeService': { deleteStripeCustomer: async () => calls.push('stripe-delete') },
     crypto: require('node:crypto'),
   };
