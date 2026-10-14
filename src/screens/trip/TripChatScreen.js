@@ -173,7 +173,7 @@ const SystemLine = React.memo(({ item, t, onJoin }) => {
 // Only the server writes system lines: both markers must match.
 const isSystemLine = (m) => m.type === 'system' && m.sender_id === 'system';
 
-const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
+const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, isMe, isMedia, isShortText, setReplyingTo, inputRef, currentParticipants, readPointers, participantProfiles, onImagePress, onVideoPress }) => {
     const swipeableRef = useRef(null);
 
     const renderMeta = () => (
@@ -214,7 +214,7 @@ const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isSh
             leftThreshold={40}
         >
             <View style={[styles.messageRow, isMe ? styles.messageRowMe : styles.messageRowOther]}>
-                {!isMe && (
+                {!isMe && !isDirect && (
                     <Image
                         source={{
                             uri: participantProfiles[item.sender_id]?.avatar ||
@@ -252,7 +252,7 @@ const ChatMessage = React.memo(({ item, staffRole, showRole, isMe, isMedia, isSh
                                 </View>
                             )}
                         </View>
-                    ) : !isMe && (
+                    ) : !isMe && !isDirect && (
                         <Text style={[
                             styles.senderName,
                             { color: item.color || getParticipantColor(item.sender_id) },
@@ -1420,6 +1420,7 @@ const TripChatScreen = () => {
                 item={item}
                 staffRole={getChatStaffRole(staffData, item.sender_id)}
                 showRole={!isGroup}
+                isDirect={isDirect}
                 isMe={isMe}
                 isMedia={isMedia}
                 isShortText={isShortText}
@@ -1432,7 +1433,7 @@ const TripChatScreen = () => {
                 onVideoPress={setViewerVideo}
             />
         );
-    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup, joinLineId, t]);
+    }, [currentParticipants, readPointers, participantProfiles, staffData, isGroup, isDirect, joinLineId, t]);
 
     const renderOptionItem = (item) => {
         let IconComponent = null;
