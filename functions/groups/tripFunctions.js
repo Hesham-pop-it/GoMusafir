@@ -13,6 +13,7 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
+const { getAccountCleanup } = require("../services/accountCleanupService");
 
 // ── Request Trip Creation Link (Step 4) ──────────────────────────────────────
 exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
@@ -385,40 +386,10 @@ exports.deleteTrip = onCall({ region: "europe-west1" }, async (request) => {
   if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
 
   const trip = tripSnap.val();
-  const inviteCode = trip.invitation_code;
 
-  // 2. Find all participants to remove the trip from their joined_trips list
-  const participantsSnap = await db.ref(`trips_participants/${tripId}`).get();
-  const participantIds = [];
-  if (participantsSnap.exists()) {
-    const val = participantsSnap.val();
-    if (typeof val === "object" && val !== null) {
-      Object.keys(val).forEach(pid => {
-        if (val[pid]) participantIds.push(pid);
-      });
-    }
-  }
-
-  // 3. Construct atomic update
-  const updates = {};
-
-  // Remove trip metadata and active status
-  updates[`orgs/${orgId}/trips/${tripId}`] = null;
-  updates[`trips_orgs/${tripId}`] = null;
-  updates[`trips_participants/${tripId}`] = null;
-  updates[`trips_active/${orgId}/${tripId}`] = null;
-
-  // Invalidate invitation code if it exists
-  if (inviteCode) {
-    updates[`invites/${inviteCode}`] = null;
-  }
-
-  // Remove from joined_trips for all participants
-  participantIds.forEach(pid => {
-    updates[`users/${pid}/joined_trips/${tripId}`] = null;
-  });
-
-  await db.ref().update(updates);
+  // 2. Delete the trip's media in Storage first, then its database records, and
+  //    remove the trip from every participant's joined_trips list.
+  const { participantIds } = await getAccountCleanup().deleteTripData(orgId, tripId, trip);
 
   // Revoke session for participants who have no other active trips
   await Promise.all(participantIds.map(pid => checkAndRevokeInactiveParticipant(pid)));

@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
 const { createStripeCustomer } = require("../services/stripeService");
+const { getAccountCleanup } = require("../services/accountCleanupService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -209,8 +210,8 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
     );
   }
 
-  // Soft-delete: mark org as deleted, clean-up scheduled by dataCleanupCron
-  await db.ref(`orgs/${callerOrgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+  // Soft-delete: mark org as deleted. Data is purged by purgeDeletedOrganizations only after the 30 day grace period (not enabled by default).
+  await getAccountCleanup().markOrganizationDeleted(callerOrgId, admin.database.ServerValue.TIMESTAMP);
 
   await writeAuditLog(callerOrgId, {
     action: "ORG_DELETED",
