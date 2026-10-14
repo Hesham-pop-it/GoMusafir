@@ -91,7 +91,8 @@ exports.verifyAppleIAPReceipt = paymentFunctions.verifyAppleIAPReceipt;
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
 exports.dataCleanupCron       = systemFunctions.dataCleanupCron;
-exports.secureCleanupPII      = systemFunctions.secureCleanupPII;
+// secureCleanupPII is intentionally not exported: it walks every user on the platform and any org admin could trigger it.
+// It stays in groups/systemFunctions.js for a one-off platform-owner migration (export temporarily, then remove again).
 
 // ── Voice Chat ────────────────────────────────────────────────────────────────
 exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
