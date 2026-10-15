@@ -92,6 +92,29 @@ async function main() {
   await assert.rejects(answerApproval({ db, uid, id: gone.id, number: gone.number, authTime: 200, now: now + 200001 }), { code: 'not-found' });
   assert.equal((await db.ref(`login_approvals/${uid}/${gone.id}`).get()).exists(), false);
 
+  // The callable reports whether a push was actually sent.
+  const endpoint = (push) => {
+    const fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
+    const file = path.join(__dirname, '../groups/loginApprovalFunctions.js');
+    const localRequire = require('node:module').createRequire(file);
+    const overrides = {
+      '../middleware/participantAccessMiddleware': { onCall: (_, handler) => handler },
+      '../services/notificationService': { sendPushNotification: push },
+    };
+    const module = { exports: {} };
+    vm.runInNewContext(fs.readFileSync(file, 'utf8'), { module, exports: module.exports,
+      require: id => overrides[id] || localRequire(id), process: { env: { FUNCTIONS_EMULATOR: 'true' } }, console, Date });
+    return module.exports.requestLoginApproval;
+  };
+  const call = (push) => endpoint(push)({ app: {}, auth: { uid, token: { auth_time: 100 } }, data: { browser: 'Opera' } });
+  await db.ref(`login_approval_secrets/${uid}/last_request`).remove();
+  const noToken = await call(async () => undefined);
+  assert.equal(noToken.pushed, false);
+  assert.ok(noToken.id && noToken.number && noToken.numbers.length === 3 && noToken.expires_at);
+  await new Promise(r => setTimeout(r, 1100));
+  assert.equal((await call(async () => 'projects/x/messages/1')).pushed, true);
+  checks += 2;
+
   // Stale entries are cleaned on the next request.
   const later = await createApproval({ db, uid, browser: 'Brave', authTime: 100, now: now + 60000 + 11 * 60000 });
   const left = Object.keys((await db.ref(`login_approvals/${uid}`).get()).val());

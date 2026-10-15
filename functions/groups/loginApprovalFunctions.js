@@ -23,10 +23,11 @@ exports.requestLoginApproval = onCall({ enrollment: true, region: "europe-west1"
   const result = await createApproval({
     db, uid, browser, authTime: request.auth.token.auth_time, minGapMs: isEmulator ? 1000 : 10000,
   }).catch(rethrow);
-  await sendPushNotification(uid, "Login request", `Did you try to sign in on the web? ${browser}`,
+  const sent = await sendPushNotification(uid, "Login request", `Did you try to sign in on the web? ${browser}`,
     { type: "login_approval", id: result.id },
     { interruptionLevel: "critical", skipDbSave: true });
-  return result;
+  // sendPushNotification returns the FCM message id, or nothing when there is no token or the send failed.
+  return { ...result, pushed: Boolean(sent) };
 });
 
 // Called by the app. Approving also completes the second factor the same way a
