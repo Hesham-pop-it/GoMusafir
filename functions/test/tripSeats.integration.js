@@ -119,7 +119,11 @@ async function main() {
   await assert.rejects(paymentEndpoints.requestSeats({ app: {}, data: { action: 'CREATE_TRIP', seats: 10, linkToken: mgrToken, tripData: { ...input } } }), denied);
   await assert.rejects(tripEndpoints.uploadTripPhoto({ app: {}, data: { linkToken: mgrToken, dataUrl: 'data:image/jpeg;base64,AAAA' } }), denied);
   await assert.rejects(paymentEndpoints.createCheckoutSession(as('mgr', 'manager', { planId: 'x', seats: 1, journeyName: 'Trip' })), denied);
+  await assert.rejects(paymentEndpoints.verifyAppleIAPReceipt(as('mgr', 'manager', { productId: 'seat.10', transactionId: 'tx-mgr' })), denied);
   assert.deepEqual((await org().get()).val(), before, 'manager attempts must not change the organization');
+  const iapBefore = (await org().child('prepaid_seats').get()).val();
+  await paymentEndpoints.verifyAppleIAPReceipt(as('cohost', 'co-host', { productId: 'seat.5', transactionId: 'tx-cohost' }));
+  assert.equal((await org().child('prepaid_seats').get()).val(), iapBefore + 5, 'co-host IAP still adds seats');
   const topup = await paymentEndpoints.generateSeatTopupToken(as('cohost', 'co-host', { tripId: fromEndpoint.tripId, seatsToIncr: 1 }));
   assert.ok(topup, 'co-host still generates a top-up token');
   // Restore the earlier trip for rule checks below.

@@ -1224,12 +1224,14 @@ exports.verifyAppleIAPReceipt = onCall({ region: "europe-west1", secrets: ["SEND
   verifyAppCheck(request);
   const { auth: requestAuth, data } = request;
   if (!requestAuth) throw new HttpsError("unauthenticated", "Authentication required.");
+  requireRole(request, ["admin", "co-host"]);
 
   const { productId, transactionId, quantity } = data;
   if (!productId) throw new HttpsError("invalid-argument", "Product ID required.");
 
   const orgId = requestAuth.token.orgId;
   if (!orgId) throw new HttpsError("failed-precondition", "No organization linked to account.");
+  await requireOrgStaff(orgId, requestAuth.uid, ['admin', 'co-host']);
 
   const qty = parseInt(quantity) || 1;
 
