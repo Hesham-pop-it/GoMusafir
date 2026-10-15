@@ -27,6 +27,7 @@ import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
 import HelpSupportScreen from '../screens/support/HelpSupportScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ForgotPasswordVerifyScreen from '../screens/auth/ForgotPasswordVerifyScreen';
+import LoginApprovalScreen from '../screens/auth/LoginApprovalScreen';
 import ParticipantsScreen from '../screens/participants/ParticipantsScreen';
 import TripParticipantsScreen from '../screens/trip/ParticipantsScreen';
 import EditParticipantScreen from '../screens/trip/EditParticipantScreen';
@@ -370,6 +371,7 @@ export default function RootNavigator({ initialRouteName = "Welcome" }) {
                     <Stack.Screen name="EditParticipant" component={EditParticipantScreen} />
                     <Stack.Screen name="AlertHistory" component={AlertHistoryScreen} />
                     <Stack.Screen name="JourneySuccess" component={JourneySuccessScreen} />
+                    <Stack.Screen name="LoginApproval" component={LoginApprovalScreen} options={{ animation: 'slide_from_bottom', gestureEnabled: false }} />
                 </Stack.Navigator>
             </NavigationContainer>
         </VoiceProvider>
