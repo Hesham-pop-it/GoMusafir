@@ -114,6 +114,11 @@ async function main() {
   await assert.rejects(tripEndpoints.requestTripLink(as('mgr', 'manager', {})), denied);
   await assert.rejects(paymentEndpoints.requestSeatTopupLink(as('mgr', 'manager', { tripId: fromEndpoint.tripId, planId: 'x', seatsToIncr: 1 })), denied);
   await assert.rejects(paymentEndpoints.generateSeatTopupToken(as('mgr', 'manager', { tripId: fromEndpoint.tripId, seatsToIncr: 1 })), denied);
+  await db.ref('temp_links/seat-test-mgr-topup').set({ orgId: input.orgId, uid: 'mgr', action: 'SEAT_TOPUP', tripId: fromEndpoint.tripId, seats: 1, expiresAt: Date.now()+DAY, used: false });
+  await assert.rejects(paymentEndpoints.verifyAndPaySeatTopup(as('mgr', 'manager', { token: 'seat-test-mgr-topup' })), denied);
+  await assert.rejects(paymentEndpoints.requestSeats({ app: {}, data: { action: 'CREATE_TRIP', seats: 10, linkToken: mgrToken, tripData: { ...input } } }), denied);
+  await assert.rejects(tripEndpoints.uploadTripPhoto({ app: {}, data: { linkToken: mgrToken, dataUrl: 'data:image/jpeg;base64,AAAA' } }), denied);
+  await assert.rejects(paymentEndpoints.createCheckoutSession(as('mgr', 'manager', { planId: 'x', seats: 1, journeyName: 'Trip' })), denied);
   assert.deepEqual((await org().get()).val(), before, 'manager attempts must not change the organization');
   const topup = await paymentEndpoints.generateSeatTopupToken(as('cohost', 'co-host', { tripId: fromEndpoint.tripId, seatsToIncr: 1 }));
   assert.ok(topup, 'co-host still generates a top-up token');

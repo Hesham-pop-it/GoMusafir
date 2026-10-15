@@ -195,6 +195,8 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
   }
 
   if (!orgId) throw new HttpsError("unauthenticated", "Not authorized.");
+  // Managers cannot buy seats; the staff map is the source of truth, not the token claim.
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
 
   const planId = data.planId;
   const planName = data.planName || planId;
@@ -895,7 +897,7 @@ exports.verifyAndPaySeatTopup = onCall({ enrollment: true, region: "europe-west1
   const orgSnap = await db.ref(`orgs/${orgId}/prepaid_seats`).get();
   const currentPrepaid = orgSnap.val() || 0;
 
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const seatsToIncrNum = topupUsage(trip, seats).requiredSeats;
   const prepaidDeducted = Math.min(currentPrepaid, seatsToIncrNum);
   const unpaidSeats = seatsToIncrNum - prepaidDeducted;
@@ -1069,7 +1071,7 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
       (action === 'SEAT_TOPUP' && (tokenData.tripId !== tripId || Number(tokenData.seats) !== participantCount))) {
     throw new HttpsError('permission-denied', 'The link does not authorize this operation.');
   }
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   if (action === 'CREATE_TRIP') {
     if (!tripData) throw new HttpsError('invalid-argument', 'Missing trip data.');
     if (!Object.prototype.hasOwnProperty.call(PRICING_PLANS, planToUse)) throw new HttpsError('invalid-argument', 'Select a valid package.');

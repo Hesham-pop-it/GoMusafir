@@ -532,7 +532,7 @@ exports.uploadTripPhoto = onCall({ region: 'europe-west1' }, async request => {
     throw new HttpsError('permission-denied', 'This journey link has expired or has already been used.');
   }
   const { requireOrgStaff } = require('../services/tripSeatService');
-  await requireOrgStaff(link.orgId, link.uid);
+  await requireOrgStaff(link.orgId, link.uid, ['admin', 'co-host']);
   const { decodeTripPhoto } = require('../services/tripPhotoService');
   const bytes = decodeTripPhoto(dataUrl);
   const file = admin.storage().bucket().file(`trips/${uuidv4()}.jpg`);
