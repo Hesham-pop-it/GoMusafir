@@ -12,6 +12,7 @@ const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreCl
 
 let isForegroundListenerRegistered = false;
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isLoginApprovalPayload } from '../utils/loginApproval';
 import { normalizeNotification, publishForegroundNotification, resetNotificationPresentation } from './notificationPresentation';
 const PENDING_TAP = 'gomusafir.pendingNotificationTap';
 const recentTaps = new Map();
@@ -37,6 +38,11 @@ async function drainNotificationPress() {
 export async function presentRemoteNotification(remoteMessage, fromBackgroundHandler = false) {
     if (fromBackgroundHandler && remoteMessage.notification) return;
     if (AppState.currentState === 'active') {
+        // A web sign-in waiting for approval opens its screen right away instead of a banner.
+        if (isLoginApprovalPayload(remoteMessage)) {
+            await handleNotificationPress(normalizeNotification(remoteMessage));
+            return;
+        }
         publishForegroundNotification(remoteMessage);
         return;
     }

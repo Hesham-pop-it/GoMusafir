@@ -2,6 +2,7 @@ import { ref, update, get, set } from 'firebase/database';
 import { signOut } from 'firebase/auth';
 import { database, auth } from '../config/firebase';
 import { navigationRef } from '../navigation/RootNavigator';
+import { isLoginApprovalPayload } from './loginApproval';
 
 /**
  * Resolves the destination screen and parameters for any notification payload,
@@ -68,6 +69,19 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
             }
         } catch (err) {
             console.warn('[NotificationNavigation] Error signing out on new sign-in notification tap:', err);
+        }
+        return;
+    }
+
+    // Phone approval of a web sign-in: straight to the approval screen, no trip needed.
+    if (isLoginApprovalPayload({ ...(item.data || {}), ...item, type })) {
+        const params = { id: item.data?.id || item.id };
+        if (navigationRef.isReady()) navigationRef.navigate('LoginApproval', params);
+        else {
+            const interval = setInterval(() => {
+                if (navigationRef.isReady()) { clearInterval(interval); navigationRef.navigate('LoginApproval', params); }
+            }, 100);
+            setTimeout(() => clearInterval(interval), 5000);
         }
         return;
     }
