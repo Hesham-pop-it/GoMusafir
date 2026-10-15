@@ -17,7 +17,7 @@ const { sendPushNotification } = require("../services/notificationService");
 // ── Request Trip Creation Link (Step 4) ──────────────────────────────────────
 exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const { uid, token } = request.auth;
   const orgId = token.orgId;

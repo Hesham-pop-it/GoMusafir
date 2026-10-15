@@ -111,6 +111,7 @@ async function main() {
   const mgrToken = 'seat-test-mgr-token';
   await db.ref(`temp_links/${mgrToken}`).set({ orgId: input.orgId, uid: 'mgr', action: 'CREATE_TRIP', expiresAt: Date.now()+DAY, used: false });
   await assert.rejects(tripEndpoints.createTrip(as('mgr', 'manager', { ...input, linkToken: mgrToken })), denied);
+  await assert.rejects(tripEndpoints.requestTripLink(as('mgr', 'manager', {})), denied);
   await assert.rejects(paymentEndpoints.requestSeatTopupLink(as('mgr', 'manager', { tripId: fromEndpoint.tripId, planId: 'x', seatsToIncr: 1 })), denied);
   await assert.rejects(paymentEndpoints.generateSeatTopupToken(as('mgr', 'manager', { tripId: fromEndpoint.tripId, seatsToIncr: 1 })), denied);
   assert.deepEqual((await org().get()).val(), before, 'manager attempts must not change the organization');
