@@ -126,6 +126,28 @@ async function main() {
   await db.ref(P('retry')).set(clean(item({ text: 'Retry', send_at: now - 100, chat_key: 'fixedkey' })));
   await db.ref('trips_active/o/t/chat/fixedkey').set({ type: 'text', text: 'Retry', sender_id: uid, sender_name: 'Saif', timestamp: now });
   assert.equal(await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'retry', now, timestamp: ts }), 'sent');
+  // A crashed attempt that already notified must not notify again on retry (create-only, keyed by item id).
+  await db.ref(P('renotify')).set(clean(item({ text: 'Renotify', send_at: now - 100 })));
+  await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'renotify', now, timestamp: ts });
+  await db.ref(P('renotify/status')).set('pending');
+  await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'renotify', now: now + 1, timestamp: ts });
+  const notifs = (await db.ref('trips_active/o/t/notifications').get()).val();
+  assert.equal(notifs[uid], undefined, 'the sender gets no notification');
+  for (const role of ['manager', 'co-host', 'participant']) {
+    const mine = Object.entries(notifs[users[role].uid]);
+    assert.equal(mine.filter(([, n]) => n.message === 'Due now').length, 1);
+    assert.deepEqual(notifs[users[role].uid].sched_due, { name: 'Saif', message: 'Due now', timestamp: now, type: 'alert', senderUid: uid });
+    assert.equal(mine.filter(([, n]) => n.message === 'Renotify').length, 1, 'retry does not duplicate');
+    assert.equal(mine.filter(([, n]) => n.message === 'Future' || n.message === 'Cancelled').length, 0);
+  }
+  assert.equal((await db.ref('trips_active/o/done/notifications').get()).exists(), false);
+  // A failing notification write never fails the item.
+  const realRef = db.ref.bind(db);
+  db.ref = p => { if (String(p).startsWith('trips_participants/')) throw new Error('boom'); return realRef(p); };
+  await realRef(P('nofail')).set(clean(item({ text: 'No fail', send_at: now - 100 })));
+  assert.equal(await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'nofail', now, timestamp: ts }), 'sent');
+  db.ref = realRef;
+  assert.equal((await db.ref(P('nofail/status')).get()).val(), 'sent');
   const retried = Object.values((await db.ref('trips_active/o/t/chat').get()).val()).filter(m => m.text === 'Retry');
   assert.equal(retried.length, 1);
   // Malformed chat keys are replaced, ended trips cancel, repeated failures give up.

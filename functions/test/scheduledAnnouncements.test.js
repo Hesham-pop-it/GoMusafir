@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isDue, queueEntry, selectDue, chatMessageFor, queueKey, tripEnded, CHAT_KEY } = require('../services/scheduledAnnouncementService');
+const { isDue, queueEntry, selectDue, chatMessageFor, alertNotificationFor, broadcastTargets, queueKey, tripEnded, CHAT_KEY } = require('../services/scheduledAnnouncementService');
 
 const now = 1_800_000_000_000;
 const item = (over = {}) => ({ text: 'Bus leaves at 8', send_at: now - 1, created_by: 'u1', created_at: now - 9, mode: 'time', status: 'pending', ...over });
@@ -66,4 +66,15 @@ test('a trip is ended once its end date has arrived, whatever the date format', 
 test('only well-formed chat keys are reused', () => {
   for (const ok of ['-Nabc_123', 'fixedkey']) assert.equal(CHAT_KEY.test(ok), true);
   for (const bad of ['', 'a/b', 'a.b', '../x', 'x'.repeat(65), 'a b']) assert.equal(CHAT_KEY.test(bad), false);
+});
+
+test('the alert notification has the shape of a staff broadcast in the app', () => {
+  assert.deepEqual(alertNotificationFor(item(), 'Saif', 5), { name: 'Saif', message: 'Bus leaves at 8', timestamp: 5, type: 'alert', senderUid: 'u1' });
+  assert.equal(alertNotificationFor(item(), undefined, 5).name, 'Admin');
+});
+
+test('broadcast targets are unique string participants without the sender, from a map or an array', () => {
+  assert.deepEqual(broadcastTargets({ u1: true, u2: true, u3: true }, 'u1'), ['u2', 'u3']);
+  assert.deepEqual(broadcastTargets(['u2', null, 'u2', 'u1', 7], 'u1'), ['u2']);
+  assert.deepEqual(broadcastTargets(null, 'u1'), []);
 });

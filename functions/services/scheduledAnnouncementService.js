@@ -42,6 +42,37 @@ const chatMessageFor = (item, senderName, timestamp) => ({
   timestamp,
 });
 
+// Same shape the app and the website write for a staff broadcast (TripChatScreen triggerTemplateBroadcast).
+const alertNotificationFor = (item, senderName, timestamp) => ({
+  name: senderName || 'Admin',
+  message: item.text,
+  timestamp,
+  type: 'alert',
+  senderUid: item.created_by,
+});
+
+// Unique string uids of the trip participants without the sender (map or array, as the app reads it).
+function broadcastTargets(participants, senderUid) {
+  if (!participants) return [];
+  const raw = Array.isArray(participants) ? participants.filter(v => v !== null) : Object.keys(participants);
+  return Array.from(new Set(raw.filter(uid => typeof uid === 'string' && uid !== senderUid)));
+}
+
+// Alert notification for every participant but the sender, like a staff broadcast. Each one is keyed by
+// the item id and create-only, so a retry never duplicates it (the existing notification trigger sends the push).
+// Best effort: a failure is logged and never fails the item or resends the chat message.
+async function notifyParticipants({ db, orgId, tripId, id, item, name, now }) {
+  try {
+    const participants = (await db.ref(`trips_participants/${tripId}`).get()).val();
+    const body = alertNotificationFor(item, name, now);
+    await Promise.all(broadcastTargets(participants, item.created_by).map(uid =>
+      db.ref(`trips_active/${orgId}/${tripId}/notifications/${uid}/sched_${id}`).transaction(cur => (cur ? undefined : body))
+        .catch(e => console.error('Scheduled announcement notification failed', id, uid, e))));
+  } catch (error) {
+    console.error('Scheduled announcement notifications failed', id, error);
+  }
+}
+
 // Posts one due item. Safe to run concurrently and to retry after a crash:
 // the chat key is fixed on the item first, the chat write is create-only, and
 // only then is the item marked sent.
@@ -69,6 +100,7 @@ async function sendScheduled({ db, orgId, tripId, id, now = Date.now(), timestam
   const name = (await db.ref(`users/${item.created_by}/full_name`).get()).val();
   await db.ref(`trips_active/${orgId}/${tripId}/chat/${item.chat_key}`).transaction(
     cur => (cur ? undefined : chatMessageFor(item, name, timestamp)));
+  await notifyParticipants({ db, orgId, tripId, id, item, name, now });
   await itemRef.transaction(cur => (cur === null ? cur : cur.status === 'pending' ? { ...cur, status: 'sent', sent_at: now } : undefined));
   await queueRef.remove();
   return 'sent';
@@ -98,4 +130,4 @@ async function sendDue({ db, now = Date.now(), timestamp }) {
   return results;
 }
 
-module.exports = { BATCH_SIZE, MAX_ATTEMPTS, queueKey, tripEnded, CHAT_KEY, recordFailure, isDue, queueEntry, selectDue, chatMessageFor, sendScheduled, sendDue };
+module.exports = { BATCH_SIZE, MAX_ATTEMPTS, queueKey, tripEnded, CHAT_KEY, recordFailure, isDue, queueEntry, selectDue, chatMessageFor, alertNotificationFor, broadcastTargets, sendScheduled, sendDue };
