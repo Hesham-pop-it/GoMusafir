@@ -127,6 +127,9 @@ const participantAccessFunctions = require('./groups/participantAccessFunctions'
 for (const name of ['getAppAccess', 'onTripAccessChanged', 'onMembershipAccessChanged', 'onStaffAccessChanged', 'expireParticipantAccess', 'backfillParticipantAccess', 'beginParticipantEnrollment', 'completeParticipantEnrollment']) {
   exports[name] = participantAccessFunctions[name];
 }
+const scheduledAnnouncementFunctions = require('./groups/scheduledAnnouncementFunctions');
+exports.onScheduledAnnouncementWritten = scheduledAnnouncementFunctions.onScheduledAnnouncementWritten;
+exports.sendScheduledAnnouncements = scheduledAnnouncementFunctions.sendScheduledAnnouncements;
 
 // Shared all-muted inactivity checks for iOS and Android.
 const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');

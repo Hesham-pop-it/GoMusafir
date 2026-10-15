@@ -205,6 +205,46 @@
           "safety_point": {
             ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())))",
             ".write": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((auth.token.orgId != null && (auth.token.role === 'admin' || auth.token.role === 'co-host' || auth.token.role === 'manager') && (root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'manager')) || root.child('app_access').child(auth.uid).child('expires_at').val() > now)) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+          },
+          "scheduled": {
+            ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')",
+            "$id": {
+              ".write": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')) && ((!data.exists() && newData.child('status').val() === 'pending' && newData.child('created_by').val() === auth.uid && newData.child('mode').val().matches(/^(time|prayer)$/)) || (data.exists() && data.child('status').val() === 'pending' && newData.child('status').val() === 'cancelled' && newData.child('text').val() === data.child('text').val() && newData.child('send_at').val() === data.child('send_at').val() && newData.child('created_by').val() === data.child('created_by').val()) || (!newData.exists() && data.child('status').val() === 'pending'))",
+              ".validate": "newData.hasChildren(['text', 'send_at', 'created_by', 'created_at', 'mode', 'status']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 1000 && newData.child('send_at').isNumber() && newData.child('created_at').isNumber() && newData.child('mode').isString() && newData.child('mode').val().matches(/^(time|prayer)$/) && newData.child('status').isString() && newData.child('status').val().matches(/^(pending|sent|cancelled)$/) && (!newData.child('prayer').exists() || newData.child('prayer').val().matches(/^(fajr|dhuhr|asr|maghrib|isha)$/)) && (!newData.child('offset_min').exists() || newData.child('offset_min').isNumber()) && (!newData.child('sent_at').exists() || newData.child('sent_at').isNumber())",
+              "text": {
+                ".validate": "true"
+              },
+              "send_at": {
+                ".validate": "true"
+              },
+              "created_by": {
+                ".validate": "true"
+              },
+              "created_at": {
+                ".validate": "true"
+              },
+              "mode": {
+                ".validate": "true"
+              },
+              "prayer": {
+                ".validate": "true"
+              },
+              "offset_min": {
+                ".validate": "true"
+              },
+              "status": {
+                ".validate": "true"
+              },
+              "sent_at": {
+                ".validate": "true"
+              },
+              "chat_key": {
+                ".validate": "true"
+              },
+              "$other": {
+                ".validate": "false"
+              }
+            }
           }
         }
       }
@@ -263,6 +303,11 @@
     "voice_rooms": {
       ".read": false,
       ".write": false
+    },
+    "scheduled_queue": {
+      ".indexOn": [
+        "send_at"
+      ]
     }
   }
 }
