@@ -102,6 +102,20 @@ async function main() {
   await assert.rejects(tripEndpoints.updateTripDates({ ...authenticated, auth:{uid:'outsider',token:{orgId:input.orgId,role:'admin'}},
     data:{tripId:fromEndpoint.tripId,startDate:start,endDate:start+61*DAY},
   }), /Organization staff access/);
+  // Decision D4: managers may not create journeys or buy seats; admins and co-hosts keep access.
+  await org().child('staff').update({ mgr: 'manager', cohost: 'co-host' });
+  const as = (uid, role, data) => ({ app: {}, auth: { uid, token: { orgId: input.orgId, role, email: `${uid}@example.test` } }, data });
+  const denied = /permission-denied|Access denied|Organization staff access/;
+  const before = (await org().get()).val();
+  await assert.rejects(tripEndpoints.createTrip(as('mgr', 'manager', { ...input })), denied);
+  const mgrToken = 'seat-test-mgr-token';
+  await db.ref(`temp_links/${mgrToken}`).set({ orgId: input.orgId, uid: 'mgr', action: 'CREATE_TRIP', expiresAt: Date.now()+DAY, used: false });
+  await assert.rejects(tripEndpoints.createTrip(as('mgr', 'manager', { ...input, linkToken: mgrToken })), denied);
+  await assert.rejects(paymentEndpoints.requestSeatTopupLink(as('mgr', 'manager', { tripId: fromEndpoint.tripId, planId: 'x', seatsToIncr: 1 })), denied);
+  await assert.rejects(paymentEndpoints.generateSeatTopupToken(as('mgr', 'manager', { tripId: fromEndpoint.tripId, seatsToIncr: 1 })), denied);
+  assert.deepEqual((await org().get()).val(), before, 'manager attempts must not change the organization');
+  const topup = await paymentEndpoints.generateSeatTopupToken(as('cohost', 'co-host', { tripId: fromEndpoint.tripId, seatsToIncr: 1 }));
+  assert.ok(topup, 'co-host still generates a top-up token');
   // Restore the earlier trip for rule checks below.
   await org().child(`trips/${tripId}`).set({start_date:start,end_date:start+61*DAY,total_seats:10,seats_required:30,
     seats_allocated:30,seat_periods:3,duration_days:61,status:'active'});

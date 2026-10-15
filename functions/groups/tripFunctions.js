@@ -129,7 +129,8 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     orgId = tokenData.orgId;
     uid = tokenData.uid;
   }
-  await requireOrgStaff(orgId, uid);
+  // Managers cannot create journeys; the staff map is the source of truth, not the token claim.
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const { tripId, inviteCode } = await createTripRecord({
     orgId, uid, title, destination, startDate, endDate, image, totalSeats,
     operationId: linkToken ? `create:${linkToken}` : request.data.requestId ? `create:${uid}:${request.data.requestId}` : undefined,

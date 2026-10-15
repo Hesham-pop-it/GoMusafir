@@ -87,8 +87,8 @@ function formatRange(start, end) {
   const format = ts => new Date(ts).toISOString().slice(0, 10).split('-').reverse().join('/');
   return `${format(start)} - ${format(end - 1)}`;
 }
-async function requireOrgStaff(orgId, uid) {
-  if (!orgId || !uid || !['admin', 'co-host', 'manager'].includes((await db.ref(`orgs/${orgId}/staff/${uid}`).get()).val())) {
+async function requireOrgStaff(orgId, uid, allowedRoles = ['admin', 'co-host', 'manager']) {
+  if (!orgId || !uid || !allowedRoles.includes((await db.ref(`orgs/${orgId}/staff/${uid}`).get()).val())) {
     throw new HttpsError('permission-denied', 'Organization staff access is required.');
   }
 }

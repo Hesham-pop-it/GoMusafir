@@ -302,7 +302,7 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
 // ── Request Seat Top-up Link ────────────────────────────────────────────────
 exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = request.data;
   const { tripId, planId, seatsToIncr, countryCode } = data;
@@ -319,7 +319,7 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
   if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
   const trip = tripSnap.val();
 
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const billedSeats = topupUsage(trip, seatsToIncr).requiredSeats;
   // Get Pricing
   const pricingConfig = getPlanPricing(countryCode || "DEFAULT", planId);
@@ -737,7 +737,7 @@ exports.verifyPayment = onCall({ enrollment: true, region: "europe-west1" }, asy
 // ── Generate Seat Top-up Token ───────────────────────────────────────────────
 exports.generateSeatTopupToken = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = request.data;
   const { tripId, seatsToIncr } = data;
