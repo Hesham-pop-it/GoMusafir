@@ -47,7 +47,7 @@ test('only one answer is possible', () => {
   }
 });
 
-test('the requesting session cannot answer for itself', () => {
+test('a token carrying the requesting sign-in time is refused (best effort, not proof of a different device)', () => {
   assert.equal(ask({ callerAuthTime: 100 }), 'same_session');
 });
 

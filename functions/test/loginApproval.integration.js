@@ -60,7 +60,7 @@ async function main() {
   await expect('staff', `login_approvals/${uid}/${made.id}/status`, 'GET', 401);
   await db.ref(`app_access/${uid}`).remove();
 
-  // Answer: requesting session refused, wrong number denies, correct approves once.
+  // Answer: the exact requesting sign-in is refused (a second browser sign-in is not detectable, see the service comment), wrong number denies, correct approves once.
   await assert.rejects(answerApproval({ db, uid, id: made.id, number: made.number, authTime: 100, now }), { code: 'permission-denied' });
   assert.equal((await db.ref(`login_approvals/${uid}/${made.id}/status`).get()).val(), 'pending');
   const wrong = made.numbers.find(n => n !== made.number);
@@ -85,6 +85,12 @@ async function main() {
   const fourth = await createApproval({ db, uid, browser: 'Edge', authTime: 100, now: now + 60000 });
   assert.deepEqual(await answerApproval({ db, uid, id: fourth.id, number: fourth.number, authTime: 200, now: now + 60000 + 120001 }), { status: 'expired' });
   await assert.rejects(answerApproval({ db, uid, id: 'missing', number: 11, authTime: 200, now }), { code: 'not-found' });
+
+  // Answering an approval deleted mid-flight must not recreate it.
+  const gone = await createApproval({ db, uid, browser: 'Gone', authTime: 100, now: now + 200000 });
+  await db.ref(`login_approvals/${uid}/${gone.id}`).remove();
+  await assert.rejects(answerApproval({ db, uid, id: gone.id, number: gone.number, authTime: 200, now: now + 200001 }), { code: 'not-found' });
+  assert.equal((await db.ref(`login_approvals/${uid}/${gone.id}`).get()).exists(), false);
 
   // Stale entries are cleaned on the next request.
   const later = await createApproval({ db, uid, browser: 'Brave', authTime: 100, now: now + 60000 + 11 * 60000 });

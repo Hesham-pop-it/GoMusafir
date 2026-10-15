@@ -26,6 +26,14 @@ function sanitizeBrowser(value) {
 }
 
 // Decides one answer. Pure: no clock, no database.
+//
+// Known limit of the same_session check: the server only sees the token's auth_time, so it
+// refuses answers from the exact sign-in the request came from, but it cannot tell the phone
+// from a second browser signed in with the same password. Anyone holding the password can
+// still sign in elsewhere and answer. Closing that needs App Check attestation (enforced
+// per request, see verifyAppCheck, which is bypassed today) to prove the answer comes from
+// the real app. Until then phone approval is a convenience factor on top of the password,
+// not a defence against a stolen password.
 // outcomes: approved | denied | expired | answered | same_session | not_found
 function evaluateAnswer({ approval, secret, callerAuthTime, number, deny, now }) {
   if (!approval || !secret) return 'not_found';
@@ -57,6 +65,11 @@ async function createApproval({ db, uid, browser, authTime, now = Date.now(), mi
     }
   }
 
+  const secrets = (await db.ref(`login_approval_secrets/${uid}`).get()).val() || {};
+  for (const secretId of Object.keys(secrets)) {
+    if (secretId !== 'last_request' && !old[secretId]) updates[`login_approval_secrets/${uid}/${secretId}`] = null;
+  }
+
   const { numbers, correct } = generateChallenge(randomInt);
   const id = newId || db.ref(`login_approvals/${uid}`).push().key;
   const expires_at = now + TTL_MS;
@@ -76,11 +89,16 @@ async function answerApproval({ db, uid, id, number, deny, authTime, now = Date.
   if (outcome === 'not_found') throw fail('not-found', 'This login request no longer exists.');
   if (outcome === 'same_session') throw fail('permission-denied', 'Answer from your phone, not the requesting browser.');
   if (outcome === 'answered') return { status: approvalSnap.val().status };
-  const tx = await db.ref(`login_approvals/${uid}/${id}/status`).transaction(
-    // A null first pass is the unsynced local view; the server retries with the real value.
-    cur => (cur === 'pending' || cur === null ? outcome : undefined));
-  if (!tx.committed) return { status: (await db.ref(`login_approvals/${uid}/${id}/status`).get()).val() };
-  await db.ref(`login_approvals/${uid}/${id}/answered_at`).set(now);
+  // Transact on the whole node so a deleted approval is never recreated as a bare status.
+  // A null first pass is the unsynced local view: returning it unchanged lets the server
+  // re-run us with the real value, and commits nothing if the node truly is gone.
+  const tx = await db.ref(`login_approvals/${uid}/${id}`).transaction(
+    cur => (cur === null ? cur : cur.status === 'pending' ? { ...cur, status: outcome, answered_at: now } : undefined));
+  if (!tx.committed || !tx.snapshot.exists()) {
+    const latest = (await db.ref(`login_approvals/${uid}/${id}/status`).get()).val();
+    if (latest === null) throw fail('not-found', 'This login request no longer exists.');
+    return { status: latest };
+  }
   return { status: outcome };
 }
 
