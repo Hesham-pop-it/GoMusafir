@@ -16,13 +16,15 @@ import { isLoginApprovalPayload } from '../utils/loginApproval';
 import { normalizeNotification, publishForegroundNotification, resetNotificationPresentation } from './notificationPresentation';
 const PENDING_TAP = 'gomusafir.pendingNotificationTap';
 const recentTaps = new Map();
+// A login approval can be reopened soon after it was closed; other taps wait out the full window.
+const TAP_WINDOW = 30000, APPROVAL_TAP_WINDOW = 2000;
 export async function handleNotificationPress(data) {
     if (!data) return;
     const key = data.notificationId || data.messageId || data.id || JSON.stringify(data);
     const now = Date.now();
-    for (const [id, time] of recentTaps) if (now - time > 30000) recentTaps.delete(id);
+    for (const [id, entry] of recentTaps) if (now - entry.time > entry.window) recentTaps.delete(id);
     if (recentTaps.has(key)) return;
-    recentTaps.set(key, now);
+    recentTaps.set(key, { time: now, window: isLoginApprovalPayload(data) ? APPROVAL_TAP_WINDOW : TAP_WINDOW });
     const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
     await navigateToNotificationTarget(data);
 }
