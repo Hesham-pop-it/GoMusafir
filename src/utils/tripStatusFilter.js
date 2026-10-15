@@ -7,7 +7,7 @@ function toMs(value) {
     return Number.isFinite(ms) ? ms : NaN;
 }
 
-// upcoming: start_date in the future. active: start_date <= now < end_date and not closed.
+// upcoming: start_date in the future and not closed. active: start_date <= now < end_date and not closed.
 // ended: now >= end_date, or closed. A trip without usable dates matches only via closed.
 function matchesStatusFilter(trip, filter, now = Date.now()) {
     if (!filter) return true;
@@ -15,7 +15,7 @@ function matchesStatusFilter(trip, filter, now = Date.now()) {
     const start = toMs(trip.start_date);
     const end = toMs(trip.end_date);
     const closed = trip.status === 'closed';
-    if (filter === 'upcoming') return start > now;
+    if (filter === 'upcoming') return !closed && start > now;
     if (filter === 'active') return !closed && start <= now && now < end;
     if (filter === 'ended') return closed || now >= end;
     return false;

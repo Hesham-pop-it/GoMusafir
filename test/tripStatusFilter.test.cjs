@@ -23,7 +23,7 @@ test('end is exclusive: now equal to end is ended', () => {
 });
 test('closed is ended and never active, whatever the dates', () => {
   assert.deepEqual(bucket(trip(now - H, now + H, 'closed')), ['ended']);
-  assert.ok(matchesStatusFilter(trip(now + H, now + 2 * H, 'closed'), 'ended', now));
+  assert.deepEqual(bucket(trip(now + H, now + 2 * H, 'closed')), ['ended']);
 });
 test('ISO date strings are accepted', () => {
   assert.deepEqual(bucket(trip('2027-06-14T00:00:00Z', '2027-06-20T00:00:00Z')), ['active']);
