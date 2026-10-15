@@ -28,12 +28,23 @@ test('closed is ended and never active, whatever the dates', () => {
 test('ISO date strings are accepted', () => {
   assert.deepEqual(bucket(trip('2027-06-14T00:00:00Z', '2027-06-20T00:00:00Z')), ['active']);
 });
-test('missing or invalid dates match nothing unless closed', () => {
-  assert.deepEqual(bucket({}), []);
+test('missing or invalid dates match nothing unless the status is not active', () => {
+  assert.deepEqual(bucket({ status: 'active' }), []);
+  assert.deepEqual(bucket({}), ['ended']);
   assert.deepEqual(bucket(null), []);
   assert.deepEqual(bucket(trip('nope', undefined)), []);
+  assert.deepEqual(bucket(trip('nope', undefined, 'cancelled')), ['ended']);
   assert.deepEqual(bucket({ status: 'closed' }), ['ended']);
 });
 test('empty filter matches everything', () => {
   assert.equal(matchesStatusFilter({}, '', now), true);
+});
+
+test('any status other than active is ended and never upcoming or active', () => {
+  for (const status of ['closed', 'cancelled', 'archived', undefined, null, '']) {
+    const t = { start_date: now - H, end_date: now + H, status };
+    assert.equal(matchesStatusFilter(t, 'ended', now), true, String(status));
+    assert.equal(matchesStatusFilter(t, 'active', now), false, String(status));
+    assert.equal(matchesStatusFilter({ start_date: now + H, end_date: now + 2 * H, status }, 'upcoming', now), false, String(status));
+  }
 });
