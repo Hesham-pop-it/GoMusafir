@@ -273,7 +273,7 @@
         "revocation_pending"
       ],
       "$uid": {
-        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && auth.uid === $uid",
+        ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
     },
@@ -306,7 +306,7 @@
     },
     "login_approvals": {
       "$uid": {
-        ".read": "auth != null && auth.uid === $uid",
+        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && auth.uid === $uid",
         ".write": false
       }
     },

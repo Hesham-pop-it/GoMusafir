@@ -55,6 +55,11 @@ async function main() {
   await expect('staff', `login_approval_secrets/${uid}/${made.id}/correct`, 'PUT', 401, 1);
   await expect('other', `login_approval_secrets/${uid}/${made.id}`, 'GET', 401);
 
+  // A revoked session cannot read.
+  await db.ref(`app_access/${uid}/revoked_before`).set(4102444800);
+  await expect('staff', `login_approvals/${uid}/${made.id}/status`, 'GET', 401);
+  await db.ref(`app_access/${uid}`).remove();
+
   // Answer: requesting session refused, wrong number denies, correct approves once.
   await assert.rejects(answerApproval({ db, uid, id: made.id, number: made.number, authTime: 100, now }), { code: 'permission-denied' });
   assert.equal((await db.ref(`login_approvals/${uid}/${made.id}/status`).get()).val(), 'pending');
