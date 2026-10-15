@@ -7,7 +7,7 @@ if (!project?.startsWith('demo-') || !databaseHost || !authHost) throw new Error
 const admin = require('firebase-admin');
 admin.initializeApp({ projectId: project, databaseURL: `http://${databaseHost}?ns=${project}-default-rtdb` });
 const db = admin.database();
-const { sendDue, sendScheduled } = require('../services/scheduledAnnouncementService');
+const { sendDue, sendScheduled, recordFailure, queueKey } = require('../services/scheduledAnnouncementService');
 const base = `http://${databaseHost}`, ns = `${project}-default-rtdb`;
 const DAY = 86400000;
 
@@ -64,6 +64,13 @@ async function main() {
   await check('admin', P('edit'), 'PUT', mk(uid), true);
   await check('admin', `${P('edit')}/text`, 'PUT', 'changed after scheduling', false);
   await check('admin', `${P('edit')}/send_at`, 'PUT', now + 1, false);
+  await check('admin', P('forged1'), 'PUT', mk(uid, { chat_key: 'preset' }), false);        // chat_key is server-only
+  await check('admin', P('forged2'), 'PUT', mk(uid, { sent_at: now }), false);              // so is sent_at
+  await check('admin', P('forged3'), 'PUT', mk(uid, { status: 'failed' }), false);          // and failed
+  await db.ref(P('keyed')).set(mk(uid, { chat_key: 'serverkey' }));
+  await check('admin', `${P('keyed')}/status`, 'PUT', 'failed', false);
+  await check('admin', P('keyed'), 'PUT', { ...mk(uid, { chat_key: 'other' }), status: 'cancelled' }, false); // cancel keeps chat_key
+  await check('admin', P('keyed'), 'PUT', { ...mk(uid, { chat_key: 'serverkey' }), status: 'cancelled' }, true);
   await check('admin', P('edit'), 'DELETE', undefined, true);               // pending items may be removed
   await db.ref(P('sentone')).set(mk(uid, { status: 'sent', sent_at: now }));
   await check('admin', P('sentone'), 'DELETE', undefined, false);           // sent history stays
@@ -92,10 +99,10 @@ async function main() {
   };
   for (const [id, it] of Object.entries(items)) {
     await db.ref(P(id)).set(clean(it));
-    if (it.status === 'pending') await db.ref(`scheduled_queue/${id}`).set({ org_id: 'o', trip_id: 't', send_at: it.send_at });
+    if (it.status === 'pending') await db.ref(`scheduled_queue/${queueKey('o', 't', id)}`).set({ org_id: 'o', trip_id: 't', item_id: id, send_at: it.send_at });
   }
   await db.ref('trips_active/o/done/scheduled/dead').set(clean(item({ text: 'Closed trip', send_at: now - 1000 })));
-  await db.ref('scheduled_queue/dead').set({ org_id: 'o', trip_id: 'done', send_at: now - 1000 });
+  await db.ref(`scheduled_queue/${queueKey('o', 'done', 'dead')}`).set({ org_id: 'o', trip_id: 'done', item_id: 'dead', send_at: now - 1000 });
 
   const ts = admin.database.ServerValue.TIMESTAMP;
   const results = await Promise.all([sendDue({ db, now, timestamp: ts }), sendDue({ db, now, timestamp: ts })]);
@@ -114,13 +121,32 @@ async function main() {
   assert.equal(after.sent.status, 'sent');
   assert.equal((await db.ref('trips_active/o/done/scheduled/dead/status').get()).val(), 'cancelled');
   assert.equal((await db.ref('trips_active/o/done/chat').get()).exists(), false);
-  assert.deepEqual(Object.keys((await db.ref('scheduled_queue').get()).val() || {}), ['future']);
+  assert.deepEqual(Object.keys((await db.ref('scheduled_queue').get()).val() || {}), [queueKey('o', 't', 'future')]);
   // Re-running a crashed attempt (chat written, item still pending) must not duplicate.
   await db.ref(P('retry')).set(clean(item({ text: 'Retry', send_at: now - 100, chat_key: 'fixedkey' })));
   await db.ref('trips_active/o/t/chat/fixedkey').set({ type: 'text', text: 'Retry', sender_id: uid, sender_name: 'Saif', timestamp: now });
   assert.equal(await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'retry', now, timestamp: ts }), 'sent');
   const retried = Object.values((await db.ref('trips_active/o/t/chat').get()).val()).filter(m => m.text === 'Retry');
   assert.equal(retried.length, 1);
-  console.log(`PASS: scheduled announcements rules (${checks} checks) and send path (once-only, cancelled, future, closed trip, retry).`);
+  // Malformed chat keys are replaced, ended trips cancel, repeated failures give up.
+  await db.ref('orgs/o/trips/over').set({ status: 'active', start_date: now - 3 * DAY, end_date: now - 1000 });
+  await db.ref(P('badkey')).set(clean(item({ text: 'Bad key', send_at: now - 100, chat_key: '../escape' })));
+  await db.ref(`scheduled_queue/${queueKey('o', 't', 'badkey')}`).set({ org_id: 'o', trip_id: 't', item_id: 'badkey', send_at: now - 100 });
+  assert.equal(await sendScheduled({ db, orgId: 'o', tripId: 't', id: 'badkey', now, timestamp: ts }), 'sent');
+  const badKeyItem = (await db.ref(P('badkey')).get()).val();
+  assert.match(badKeyItem.chat_key, /^[-\w]{1,64}$/); assert.notEqual(badKeyItem.chat_key, '../escape');
+  await db.ref('trips_active/o/over/scheduled/late').set(clean(item({ text: 'Too late', send_at: now - 100 })));
+  await db.ref(`scheduled_queue/${queueKey('o', 'over', 'late')}`).set({ org_id: 'o', trip_id: 'over', item_id: 'late', send_at: now - 100 });
+  assert.equal(await sendScheduled({ db, orgId: 'o', tripId: 'over', id: 'late', now, timestamp: ts }), 'cancelled');
+  assert.equal((await db.ref('trips_active/o/over/scheduled/late/status').get()).val(), 'cancelled');
+  assert.equal((await db.ref('trips_active/o/over/chat').get()).exists(), false);
+  await db.ref(P('doomed')).set(clean(item({ text: 'Doomed', send_at: now - 100 })));
+  const dKey = queueKey('o', 't', 'doomed');
+  await db.ref(`scheduled_queue/${dKey}`).set({ org_id: 'o', trip_id: 't', item_id: 'doomed', send_at: now - 100 });
+  for (let i = 0; i < 2; i++) await recordFailure({ db, orgId: 'o', tripId: 't', id: 'doomed' });
+  assert.equal((await db.ref(P('doomed/status')).get()).val(), 'pending'); assert.equal((await db.ref(`scheduled_queue/${dKey}/attempts`).get()).val(), 2);
+  await recordFailure({ db, orgId: 'o', tripId: 't', id: 'doomed' });
+  assert.equal((await db.ref(P('doomed/status')).get()).val(), 'failed'); assert.equal((await db.ref(`scheduled_queue/${dKey}`).get()).exists(), false);
+  console.log(`PASS: scheduled announcements rules (${checks} checks) and send path (once-only, cancelled, future, closed and ended trips, bad chat key, retry, give up after 3 failures).`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => admin.app().delete());

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isDue, queueEntry, selectDue, chatMessageFor } = require('../services/scheduledAnnouncementService');
+const { isDue, queueEntry, selectDue, chatMessageFor, queueKey, tripEnded, CHAT_KEY } = require('../services/scheduledAnnouncementService');
 
 const now = 1_800_000_000_000;
 const item = (over = {}) => ({ text: 'Bus leaves at 8', send_at: now - 1, created_by: 'u1', created_at: now - 9, mode: 'time', status: 'pending', ...over });
@@ -20,7 +20,7 @@ test('malformed items are never due', () => {
 });
 
 test('queue entries exist only for pending items with a numeric send time', () => {
-  assert.deepEqual(queueEntry('o', 't', item({ send_at: 5 })), { org_id: 'o', trip_id: 't', send_at: 5 });
+  assert.deepEqual(queueEntry('o', 't', item({ send_at: 5 }), 'i1'), { org_id: 'o', trip_id: 't', item_id: 'i1', send_at: 5 });
   assert.equal(queueEntry('o', 't', item({ status: 'sent' })), null);
   assert.equal(queueEntry('o', 't', item({ status: 'cancelled' })), null);
   assert.equal(queueEntry('o', 't', null), null);
@@ -29,11 +29,12 @@ test('queue entries exist only for pending items with a numeric send time', () =
 
 test('selectDue returns due entries oldest first and honours the limit', () => {
   const queue = {
-    c: { org_id: 'o', trip_id: 't', send_at: now - 1 },
-    a: { org_id: 'o', trip_id: 't', send_at: now - 30 },
-    b: { org_id: 'o2', trip_id: 't2', send_at: now - 10 },
-    later: { org_id: 'o', trip_id: 't', send_at: now + 1 },
+    o_t_c: { org_id: 'o', trip_id: 't', item_id: 'c', send_at: now - 1 },
+    o_t_a: { org_id: 'o', trip_id: 't', item_id: 'a', send_at: now - 30 },
+    o2_t2_b: { org_id: 'o2', trip_id: 't2', item_id: 'b', send_at: now - 10 },
+    o_t_later: { org_id: 'o', trip_id: 't', item_id: 'later', send_at: now + 1 },
     broken: { send_at: now - 5 },
+    noitem: { org_id: 'o', trip_id: 't', send_at: now - 5 },
   };
   assert.deepEqual(selectDue(queue, now).map(d => d.id), ['a', 'b', 'c']);
   assert.deepEqual(selectDue(queue, now, 2).map(d => d.id), ['a', 'b']);
@@ -46,4 +47,23 @@ test('the chat message has the shape of a staff template message in the app', ()
     type: 'text', text: 'Bus leaves at 8', sender_id: 'u1', sender_name: 'Saif', timestamp: 'TS',
   });
   assert.equal(chatMessageFor(item(), undefined, 1).sender_name, 'Admin');
+});
+
+test('queue keys include org, trip and item so the same item id in two trips never collides', () => {
+  assert.equal(queueKey('o', 't', 'i'), 'o_t_i');
+  assert.notEqual(queueKey('o', 't1', 'i'), queueKey('o', 't2', 'i'));
+});
+
+test('a trip is ended once its end date has arrived, whatever the date format', () => {
+  assert.equal(tripEnded({ end_date: now }, now), true);
+  assert.equal(tripEnded({ end_date: now - 1 }, now), true);
+  assert.equal(tripEnded({ end_date: now + 1 }, now), false);
+  assert.equal(tripEnded({ end_date: new Date(now - 1000).toISOString() }, now), true);
+  assert.equal(tripEnded({ end_date: new Date(now + 1000).toISOString() }, now), false);
+  for (const bad of [null, {}, { end_date: '' }, { end_date: 'soon' }]) assert.equal(tripEnded(bad, now), false);
+});
+
+test('only well-formed chat keys are reused', () => {
+  for (const ok of ['-Nabc_123', 'fixedkey']) assert.equal(CHAT_KEY.test(ok), true);
+  for (const bad of ['', 'a/b', 'a.b', '../x', 'x'.repeat(65), 'a b']) assert.equal(CHAT_KEY.test(bad), false);
 });
