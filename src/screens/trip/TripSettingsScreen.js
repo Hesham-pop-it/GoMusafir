@@ -587,6 +587,7 @@ const TripSettingsScreen = () => {
                     } catch (iapErr) {
                         console.warn("[TripSettingsScreen] purchaseSeatProduct threw error:", iapErr);
                         setIsProcessingTopup(false);
+                        Alert.alert("Purchase Failed", iapErr.message || "Could not start the App Store purchase.");
                     }
                 } else {
                     console.warn("[TripSettingsScreen] purchases array is empty!");

@@ -31,7 +31,8 @@ let purchaseErrorSubscription = null;
  */
 export const connectIAP = async (onPurchaseSuccess, onPurchaseError) => {
     try {
-        await RNIap.initConnection();
+        const connected = await RNIap.initConnection();
+        if (!connected) throw new Error('Could not connect to the App Store. Please try again.');
         if (Platform.OS === 'ios') {
             try {
                 await RNIap.clearTransactionIOS();
@@ -75,10 +76,11 @@ export const connectIAP = async (onPurchaseSuccess, onPurchaseError) => {
 
         purchaseErrorSubscription = RNIap.purchaseErrorListener((error) => {
             console.warn('IAP error:', error);
-            if (onPurchaseError) onPurchaseError(new Error(error.message || 'IAP Error'));
+            if (onPurchaseError) onPurchaseError(error);
         });
     } catch (err) {
         console.warn("connectIAP failed:", err);
+        if (onPurchaseError) onPurchaseError(err);
     }
 };
 
@@ -100,8 +102,21 @@ export const getIAPProducts = async (productIds = SEAT_PRODUCT_IDS) => {
  */
 export const purchaseSeatProduct = async (productId, quantity = 1) => {
     try {
+        if (!SEAT_PRODUCT_IDS.includes(productId)) {
+            throw new Error(`Unknown purchase product: ${productId}`);
+        }
+        if (!Number.isInteger(quantity) || quantity < 1) {
+            throw new Error('Purchase quantity must be a positive whole number.');
+        }
+        // Confirm that this storefront actually exposes the requested product.
+        // A missing product otherwise becomes a generic native purchase failure.
+        const products = await RNIap.fetchProducts({ skus: [productId], type: 'in-app' });
+        if (!products?.some(product => product.id === productId)) {
+            throw new Error(`The App Store did not return product "${productId}". Please contact support with this product ID.`);
+        }
         // RNIap v15 standard request structure
         await RNIap.requestPurchase({
+            type: 'in-app',
             request: {
                 apple: { sku: productId, quantity: quantity },
                 google: { skus: [productId] },
