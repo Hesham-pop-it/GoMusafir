@@ -26,3 +26,11 @@ test('the code mail shows the code in the subject and body, left to right even i
 test('the link base can point the emulator at a local website', () => {
   assert.match(passportLink(token), /^https:\/\/join\.gomusafir\.app\/paspoort\?t=a{43}$/);
 });
+
+test('line breaks in the organisation or trip name never reach the subject', () => {
+  for (const lang of ['en', 'nl', 'ar']) {
+    const m = buildLinkMail({ lang, org: 'Noor\r\nBcc: x@y.test', trip: { title: 'Umrah\nMei\u2028' }, token });
+    assert.doesNotMatch(m.subject, /[\r\n\u2028\u2029]/);
+  }
+  assert.equal(buildLinkMail({ org: 'A\r\nB', trip: { title: 'T' }, token }).subject, 'A B: fill in your passport details');
+});

@@ -36,6 +36,8 @@ const COPY = {
 };
 const TRANSLATED = Object.keys(COPY);
 
+// Names go into the mail subject: a line break there could add headers, so any is turned into a space.
+const oneLine = value => String(value ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const inviteLink = code => `${LINK_BASE}${encodeURIComponent(code)}`;
 
@@ -54,7 +56,7 @@ function buildInvitationMail({ lang = 'en', org, trip, code }) {
   const used = TRANSLATED.includes(lang) ? lang : 'en';
   const copy = COPY[used];
   const info = {
-    org: org || 'GoMusafir', title: trip?.title || 'GoMusafir',
+    org: oneLine(org) || 'GoMusafir', title: oneLine(trip?.title) || 'GoMusafir',
     destination: typeof trip?.destination === 'string' ? trip.destination : trip?.destination?.name,
     dates: formatDates(trip?.start_date, trip?.end_date, used),
   };

@@ -31,6 +31,8 @@ const COPY = {
     codeLead: 'استخدم هذا الرمز لفتح صفحة جواز سفرك:', codeNote: ({ minutes }) => `يعمل الرمز ${minutes} دقائق. لا تشاركه مع أحد.`,
   },
 };
+// Names go into the mail subject: a line break there could add headers, so any is turned into a space.
+const oneLine = value => String(value ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
 const TRANSLATED = Object.keys(COPY);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const passportLink = token => `${LINK_BASE}${LINK_BASE.includes('?') ? '&' : '?'}t=${encodeURIComponent(token)}`;
@@ -40,7 +42,7 @@ const pick = lang => { const used = TRANSLATED.includes(lang) ? lang : 'en'; ret
 // -> { subject, html, lang, fallback }
 function buildLinkMail({ lang = 'en', org, trip, token, days = 14 }) {
   const { used, copy } = pick(lang);
-  const info = { org: org || 'GoMusafir', title: trip?.title || 'GoMusafir', days };
+  const info = { org: oneLine(org) || 'GoMusafir', title: oneLine(trip?.title) || 'GoMusafir', days };
   const link = passportLink(token);
   const html = wrap(copy, `<p>${escapeHtml(copy.hello)}</p><p>${escapeHtml(copy.linkLead(info))}</p>`
     + `<p style="margin:24px 0"><a href="${escapeHtml(link)}" style="background:#0f766e;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">${escapeHtml(copy.cta)}</a></p>`

@@ -34,3 +34,11 @@ test('trip text is escaped in the body', () => {
   assert.ok(!mail.html.includes('<Ramadan>'));
   assert.ok(mail.html.includes('A&amp;B'));
 });
+
+test('line breaks in the organisation or trip name never reach the subject', () => {
+  for (const lang of ['en', 'nl', 'ar']) {
+    const mail = buildInvitationMail({ lang, org: 'Noor\r\nBcc: x@y.test', trip: { ...trip, title: 'Umrah\nMei' }, code: 'abc-123' });
+    assert.doesNotMatch(mail.subject, /[\r\n]/);
+  }
+  assert.equal(buildInvitationMail({ lang: 'en', org: 'A\r\nB', trip: { ...trip, title: 'T' }, code: 'c' }).subject, 'A B invites you to T');
+});
