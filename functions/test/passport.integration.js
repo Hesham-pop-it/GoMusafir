@@ -23,6 +23,7 @@ const db = admin.database();
 const bucket = admin.storage().bucket();
 const { passportSeed, sampleSteps, devToken } = require('./fixtures/passportSeed');
 const tokens = require('../services/passport/passportTokens');
+const { mockAuthenticator } = require('./fixtures/mockAuthenticator');
 const base = `http://${databaseHost}`, ns = `${project}-default-rtdb`;
 const DAY = 86400000, MIN = 60000;
 const plain = value => (value === undefined ? null : JSON.parse(JSON.stringify(value)));
@@ -158,7 +159,7 @@ async function main() {
   for (const bad of ['', 'short', 'x'.repeat(43), null]) await refuses(fns.passportOpen(P({ t: bad })), bad === null ? 'invalid-argument' : 'not-found', bad === null ? undefined : 'invalid');
   await refuses(fns.passportVerify(P({ t: 'x'.repeat(43), code: '123456' })), 'not-found', 'invalid');
   const opened = plain(await fns.passportOpen(P({ t: token1 })));
-  eq(opened, { email_masked: tokens.maskEmail(p1.email), needs_code: true, org_name: 'Noor Travel', trip_title: `Umrah ${trip}`, lang: 'nl' });
+  eq(opened, { email_masked: tokens.maskEmail(p1.email), needs_code: true, has_passkey: false, org_name: 'Noor Travel', trip_title: `Umrah ${trip}`, lang: 'nl' });
   ok(!JSON.stringify(opened).includes(p1.email), 'the address is only given masked');
   let codes = (await mailsTo(p1.email)).filter(x => x.custom_args?.kind === 'passport_code');
   eq(codes.length, 1);
@@ -391,7 +392,7 @@ async function main() {
     method, headers: { 'Content-Type': 'application/json' }, ...(value === undefined ? {} : { body: JSON.stringify(value) }) })).status;
   const nodes = ['passport', `passport/${org}/${trip}/${p1.uid}`, 'passport_status', `passport_status/${org}/${trip}`, 'passport_links', `passport_links/${h1}`, 'passport_link_index',
     `passport_codes/${h1}`, 'passport_codes', 'passport_sessions', 'passport_family', `passport_family/${org}/${trip}`, 'passport_settings', `passport_settings/${org}`,
-    'passport_trip_settings', 'passport_queue', 'passport_retention'];
+    'passport_trip_settings', 'passport_queue', 'passport_retention', 'passport_passkeys', `passport_passkeys/${trip}/${p1.uid}`, 'passport_passkey_challenges'];
   for (const [who, token] of [['admin', admin1.token], ['co-host', host.token], ['manager', manager.token], ['pilgrim', p1.token], ['anonymous', null]]) {
     for (const node of nodes) {
       eq([who, node, await raw(token, node, 'GET')], [who, node, 401]);
@@ -446,6 +447,7 @@ async function main() {
   await db.ref().update(seeded.updates);
   eq(seeded.links[oldTimer.uid].token, devToken('old-timer'));
   await bucket.file(`passport_docs/${org}/${oldTrip}/${oldTimer.uid}/passport.jpg`).save(Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3]), { contentType: 'image/jpeg' });
+  await db.ref(`passport_passkeys/${oldTrip}/${oldTimer.uid}/credA`).set({ public_key: 'k', counter: 0, created_at: now });
   await db.ref(`passport_family/${org}/${oldTrip}/f1`).set({ from_uid: oldTimer.uid, to_uid: null, status: 'pending' });
   const oldDue = (await val(`passport_retention/${oldTrip}`)).delete_after;
   eq(oldDue, now - 20 * DAY);
@@ -463,7 +465,7 @@ async function main() {
   eq(await val(`passport_retention/${oldTrip}/delete_after`), oldDue);
   const doneRun = plain(await retention.runRetention({ now: now + 1 }));
   eq([doneRun.trips, doneRun.people], [1, 1]);
-  for (const path of [`passport/${org}/${oldTrip}`, `passport_family/${org}/${oldTrip}`, `passport_link_index/${oldTrip}`, `passport_retention/${oldTrip}`,
+  for (const path of [`passport/${org}/${oldTrip}`, `passport_family/${org}/${oldTrip}`, `passport_link_index/${oldTrip}`, `passport_retention/${oldTrip}`, `passport_passkeys/${oldTrip}`,
     `passport_links/${hashOf(seeded.links[oldTimer.uid].token)}`]) eq([path, await val(path)], [path, null]);
   eq((await bucket.getFiles({ prefix: `passport_docs/${org}/${oldTrip}/` }))[0].length, 0);
   const kept = await val(`passport_status/${org}/${oldTrip}/${oldTimer.uid}`);
@@ -572,22 +574,95 @@ async function main() {
   eq(rowD.to_uid, rX.uid);
   eq(plain((await fns.familyAnswer(P({ session: sX, id: incomingX[0].id, relation: 'sister' }))).family.incoming.map(i => i.status)), ['confirmed']);
 
+  // ── Passkeys (P13): a mocked authenticator registers, opens the page without a code, and every link rule applies first ──
+  const RP = 'join.gomusafir.app', ORIGIN = 'https://join.gomusafir.app';
+  const codeMails = async person => (await mailsTo(person.email)).filter(m => m.custom_args?.kind === 'passport_code').length;
+  const auditCount = async action => Object.values((await val(`orgs/${org}/logs`)) || {}).filter(l => l.action === action).length;
+  const made = await links.createLink({ orgId: org, tripId: trip, uid: rE.uid });
+  const tE = made.token, hE = made.hash;
+  const sE = (await links.createSession({ hash: hE, link: (await links.resolveLink(tE)).link })).session;
+  eq((await fns.passportOpen(P({ t: tE }))).has_passkey, false);
+  eq(await codeMails(rE), 1); // no passkey yet: the code goes out as before
+  await refuses(fns.passkeyLoginOptions(P({ t: tE })), 'failed-precondition', 'no_passkey');
+  await refuses(fns.passkeyRegisterOptions(P({ session: 'x'.repeat(43) })), 'unauthenticated', 'session');
+  const key = mockAuthenticator({ rpId: RP, origin: ORIGIN });
+  const regOptions = (await fns.passkeyRegisterOptions(P({ session: sE }))).options;
+  eq([regOptions.rp.id, regOptions.authenticatorSelection.userVerification], [RP, 'required']);
+  const registered = await fns.passkeyRegister(P({ session: sE, response: key.create(regOptions) }));
+  eq([registered.ok, registered.credential_id], [true, key.id]);
+  ok(!!(await val(`passport_passkeys/${trip}/${rE.uid}/${key.id}`))?.public_key, 'the public key is stored');
+  eq(await auditCount('PASSPORT_PASSKEY_REGISTERED'), 1);
+  await refuses(fns.passkeyRegister(P({ session: sE, response: key.create(regOptions) })), 'failed-precondition', 'challenge_invalid'); // single use
+  // Opening with prefer passkey sends no code; without it the code is the fallback.
+  await db.ref(`passport_codes/${hE}`).remove();
+  const preferred = await fns.passportOpen(P({ t: tE, prefer: 'passkey' }));
+  eq([preferred.has_passkey, preferred.needs_code, await codeMails(rE), await val(`passport_codes/${hE}`)], [true, true, 1, null]);
+  await fns.passportOpen(P({ t: tE }));
+  eq(await codeMails(rE), 2);
+  eq((await fns.passportOpen(P({ t: tE, prefer: 'passkey' }))).has_passkey, true);
+  // Login gives the same kind of session as the code does.
+  const loginOptions = (await fns.passkeyLoginOptions(P({ t: tE }))).options;
+  eq([loginOptions.allowCredentials.map(c => c.id), loginOptions.userVerification], [[key.id], 'required']);
+  const answer = key.get(loginOptions);
+  const viaPasskey = plain(await fns.passkeyLogin(P({ t: tE, response: answer })));
+  ok(tokens.isTokenShape(viaPasskey.session) && viaPasskey.expires_at > Date.now(), 'a session token comes back');
+  const sessionRec = await val(`passport_sessions/${hashOf(viaPasskey.session)}`);
+  eq([sessionRec.uid, sessionRec.trip_id, sessionRec.link], [rE.uid, trip, hE]);
+  ok(!!(await fns.passportGet(P({ session: viaPasskey.session }))).steps, 'the session reads the passport');
+  eq(await auditCount('PASSPORT_PASSKEY_LOGIN'), 1);
+  eq((await val(`passport_passkeys/${trip}/${rE.uid}/${key.id}`)).counter, 1);
+  await refuses(fns.passkeyLogin(P({ t: tE, response: answer })), 'failed-precondition', 'challenge_invalid'); // replay
+  await refuses(fns.passkeyLogin(P({ t: tE, response: key.get((await fns.passkeyLoginOptions(P({ t: tE }))).options, { bump: -1 }) })), 'permission-denied', 'verification_failed'); // counter goes back
+  await refuses(fns.passkeyLogin(P({ t: tE, response: mockAuthenticator({ rpId: RP, origin: ORIGIN }).get((await fns.passkeyLoginOptions(P({ t: tE }))).options) })), 'permission-denied', 'verification_failed'); // not their credential
+  // Someone else's link cannot use this credential.
+  const madeB = await links.createLink({ orgId: org, tripId: trip, uid: rB.uid });
+  await refuses(fns.passkeyLoginOptions(P({ t: madeB.token })), 'failed-precondition', 'no_passkey');
+  await refuses(fns.passkeyLogin(P({ t: madeB.token, response: key.get(loginOptions) })), 'failed-precondition', 'challenge_invalid');
+  // A challenge older than 5 minutes is dead.
+  const stale = (await fns.passkeyLoginOptions(P({ t: tE }))).options;
+  const staleHash = require('node:crypto').createHash('sha256').update(stale.challenge).digest('hex');
+  await db.ref(`passport_passkey_challenges/${staleHash}/expires_at`).set(Date.now() - 1);
+  await refuses(fns.passkeyLogin(P({ t: tE, response: key.get(stale) })), 'failed-precondition', 'challenge_invalid');
+  const unused = require('node:crypto').createHash('sha256').update((await fns.passkeyLoginOptions(P({ t: tE }))).options.challenge).digest('hex');
+  await db.ref(`passport_passkey_challenges/${unused}/expires_at`).set(Date.now() - 1);
+  ok((await retention.dropExpiredSessions()) >= 1 && !(await val(`passport_passkey_challenges/${unused}`)), 'expired challenges are swept');
+  // The link rules apply before any option is handed out, and a session ends with its link.
+  await refuses(fns.passkeyLoginOptions(P({ t: 'x'.repeat(43) })), 'not-found', 'invalid');
+  await db.ref(`passport_links/${hE}/expires_at`).set(Date.now() - 1);
+  await refuses(fns.passkeyLoginOptions(P({ t: tE })), 'failed-precondition', 'expired');
+  await refuses(fns.passkeyLogin(P({ t: tE, response: key.get(loginOptions) })), 'failed-precondition', 'expired');
+  await refuses(fns.passkeyRegisterOptions(P({ session: sE })), 'unauthenticated');
+  await db.ref(`passport_links/${hE}/expires_at`).set(Date.now() + DAY);
+  await db.ref(`passport_links/${hE}/locked_at`).set(Date.now());
+  await refuses(fns.passkeyLoginOptions(P({ t: tE })), 'permission-denied', 'locked');
+  await db.ref(`passport_links/${hE}/locked_at`).remove();
+  await links.revokeHash(hE);
+  await refuses(fns.passkeyLoginOptions(P({ t: tE })), 'permission-denied', 'revoked');
+  await refuses(fns.passkeyLogin(P({ t: tE, response: key.get(loginOptions) })), 'permission-denied', 'revoked');
+  ok(!!(await val(`passport_passkeys/${trip}/${rE.uid}/${key.id}`)), 'revoking the link keeps the credential');
+  // Five per person at most.
+  for (let i = 0; i < 4; i++) { const k = mockAuthenticator({ rpId: RP, origin: ORIGIN }); const sx = await sessionFor(rE); await fns.passkeyRegister(P({ session: sx, response: k.create((await fns.passkeyRegisterOptions(P({ session: sx }))).options) })); }
+  const sFull = await sessionFor(rE);
+  await refuses(fns.passkeyRegisterOptions(P({ session: sFull })), 'resource-exhausted', 'passkey_limit');
+  eq(Object.keys(await val(`passport_passkeys/${trip}/${rE.uid}`)).length, 5);
+
   // Deleting an account removes that person's passport data and nobody else's.
   const gone = rD; // has a link, a session, a family row, a queue entry; give them data and a file as well
   await db.ref().update({ [`users/${gone.uid}/joined_trips/${trip}`]: { org_id: org }, [`passport_queue/${trip}_${gone.uid}`]: { org_id: org, trip_id: trip, uid: gone.uid, send_at: now + DAY } });
   await store.saveStep(org, trip, gone.uid, 'noodcontact', { contacts: [{ name: 'A', phone: '+31612345678', relation: 'brother' }] });
   await bucket.file(`passport_docs/${org}/${trip}/${gone.uid}/passport.jpg`).save(Buffer.from([0xff, 0xd8, 0xff, 1]), { contentType: 'image/jpeg' });
+  await db.ref(`passport_passkeys/${trip}/${gone.uid}/credG`).set({ public_key: 'k', counter: 0, created_at: now });
   const goneHash = (await val(`passport_link_index/${trip}/${gone.uid}`)).hash;
   ok(!!goneHash && !!(await val(`passport/${org}/${trip}/${gone.uid}`)) && !!(await val(`passport_status/${org}/${trip}/${gone.uid}`)), 'data to purge exists');
   const otherRows = Object.entries(await val(`passport_family/${org}/${trip}`)).filter(([, r]) => r.from_uid !== gone.uid && r.to_uid !== gone.uid).length;
   eq(await retention.purgePerson(gone.uid), 1);
   for (const path of [`passport/${org}/${trip}/${gone.uid}`, `passport_status/${org}/${trip}/${gone.uid}`, `passport_link_index/${trip}/${gone.uid}`,
-    `passport_links/${goneHash}`, `passport_codes/${goneHash}`, `passport_queue/${trip}_${gone.uid}`]) eq([path, await val(path)], [path, null]);
+    `passport_links/${goneHash}`, `passport_codes/${goneHash}`, `passport_queue/${trip}_${gone.uid}`, `passport_passkeys/${trip}/${gone.uid}`]) eq([path, await val(path)], [path, null]);
   eq((await bucket.getFiles({ prefix: `passport_docs/${org}/${trip}/${gone.uid}/` }))[0].length, 0);
   ok(!Object.values((await val(`passport_family/${org}/${trip}`)) || {}).some(r => r.from_uid === gone.uid || r.to_uid === gone.uid), 'their family rows are gone');
   eq(Object.keys((await val(`passport_family/${org}/${trip}`)) || {}).length, otherRows);
   await refuses(fns.passportGet(P({ session: sD })), 'unauthenticated', 'session');
   ok(!!(await val(`passport_link_index/${trip}/${rA.uid}`)) && (await bucket.file(`passport_docs/${org}/${trip}/${p1.uid}/passport.png`).exists())[0], 'other people are untouched');
-  console.log(`PASS: ${checks} passport checks: rights, link expiry and revocation, code tries, sessions, validation, uploads, family privacy, rules and retention.`);
+  console.log(`PASS: ${checks} passport checks: rights, link expiry and revocation, code tries, sessions, validation, uploads, family privacy, passkeys, rules and retention.`);
 }
 main().then(() => process.exit(process.exitCode || 0), error => { console.error(error); process.exit(1); });
