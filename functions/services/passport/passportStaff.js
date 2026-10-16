@@ -227,7 +227,7 @@ async function remind({ orgId, tripId, uids, by, ip, push = defaultPush, now = D
     // Claim the 24 hours first so two clicks at once mail once.
     const claim = await store.statusRef(orgId, tripId, uid).child('last_reminded_at').transaction(cur => (Number.isFinite(cur) && now - cur < REMIND_GAP_MS ? undefined : now));
     if (!claim.committed) { reasons[uid] = 'recent'; return; }
-    const lang = (await links.indexRef(tripId, uid).child('lang').get()).val() || settings.lang || 'en';
+    const lang = await send.languageFor(uid, { indexLang: (await links.indexRef(tripId, uid).child('lang').get()).val(), settings });
     const link = await links.createLink({ orgId, tripId, uid, by, lang, now });
     try {
       const built = mail.buildReminderMail({ lang, org, trip, token: link.token });

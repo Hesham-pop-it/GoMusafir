@@ -55,6 +55,15 @@ async function enqueueJoin({ orgId, tripId, uid, now = Date.now() }) {
   return due;
 }
 
+// Language for one person: the one asked for, the link's own, their app language (users/{uid}/language), the organisation's setting, then English.
+async function languageFor(uid, { explicit, indexLang, settings } = {}) {
+  const known = v => (typeof v === 'string' && LANGS.includes(v) ? v : null);
+  if (known(explicit)) return explicit;
+  if (known(indexLang)) return indexLang;
+  const own = known((await db.ref(`users/${uid}/language`).get()).val());
+  return own || known(settings?.lang) || 'en';
+}
+
 async function orgName(orgId) { return (await db.ref(`orgs/${orgId}/metadata/name`).get()).val() || ''; }
 
 // Mails a fresh link to each person; a new link withdraws the earlier one.
@@ -70,7 +79,6 @@ async function sendLinks({ orgId, tripId, uids, onlyNew = !uids, by = null, lang
   ]);
   const everyone = Object.keys(members).filter(uid => !staff[uid]);
   const targets = uids || everyone;
-  const language = lang || settings.lang || 'en';
   const skipped = {}, ready = [];
   for (const uid of [...new Set(targets)]) {
     if (!members[uid] || staff[uid]) { skipped[uid] = 'not_participant'; continue; }
@@ -80,17 +88,17 @@ async function sendLinks({ orgId, tripId, uids, onlyNew = !uids, by = null, lang
     if (!onlyNew && index?.sent_at && now - index.sent_at < RESEND_GAP_MS) { skipped[uid] = 'recent'; continue; }
     const contact = await store.accountContact(uid);
     if (!contact.email) { skipped[uid] = 'no_email'; continue; }
-    ready.push({ uid, email: contact.email });
+    ready.push({ uid, email: contact.email, language: await languageFor(uid, { explicit: lang, indexLang: index?.lang, settings }) });
   }
   if (ready.length) { await inv.takeMailBudget(orgId, ready.length, now); await store.registerRetention(orgId, tripId, now); }
   const org = await orgName(orgId);
   const { sendEmail } = require('../emailService');
   let sent = 0, failed = 0, fallback = false;
-  await inv.mapLimit(ready, 10, async ({ uid, email }) => {
+  await inv.mapLimit(ready, 10, async ({ uid, email, language }) => {
     const link = await links.createLink({ orgId, tripId, uid, by, lang: language, now });
     try {
       const built = mail.buildLinkMail({ lang: language, org, trip, token: link.token });
-      fallback = built.fallback;
+      fallback = fallback || built.fallback;
       await sendEmail({ to: email, subject: built.subject, html: built.html, customArgs: { org_id: orgId, trip_id: tripId, kind: 'passport_link' } });
     } catch (error) {
       failed++;
@@ -104,7 +112,7 @@ async function sendLinks({ orgId, tripId, uids, onlyNew = !uids, by = null, lang
     sent++;
   });
   await writeAuditLog(orgId, { action: 'PASSPORT_LINKS_SENT', byUid: by, targetId: tripId, ipAddress: ip,
-    extra: { sent, failed, skipped: Object.keys(skipped).length - failed, source, lang: language } });
+    extra: { sent, failed, skipped: Object.keys(skipped).length - failed, source, lang: lang || null } });
   return { sent, skipped: Object.keys(skipped).length - failed, failed, reasons: skipped, lang_fallback: fallback };
 }
 
@@ -135,4 +143,4 @@ async function processDue({ now = Date.now(), limit = 100 } = {}) {
   return result;
 }
 
-module.exports = { MODES, DEFAULT_SETTINGS, RESEND_GAP_MS, QUEUE_MAX_TRIES, getSettings, cleanSettings, dueAt, queueKey, enqueueJoin, sendLinks, processDue, settingsRef, orgName };
+module.exports = { MODES, DEFAULT_SETTINGS, RESEND_GAP_MS, QUEUE_MAX_TRIES, getSettings, cleanSettings, dueAt, queueKey, enqueueJoin, sendLinks, languageFor, processDue, settingsRef, orgName };

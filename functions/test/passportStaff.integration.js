@@ -267,6 +267,23 @@ async function main() {
   const audit = await logsOf('PASSPORT_REMINDERS_SENT');
   eq(audit.length, 4, 'one audit entry per reminder call');
   ok(JSON.stringify(audit).indexOf('@') === -1, 'no addresses in the audit');
+  // Language fallback: the link's own, the person's app language, the organisation setting, English.
+  const mailLib = require('../services/passport/passportMail'), send = require('../services/passport/passportSend');
+  const subjectIn = lang => mailLib.buildReminderMail({ lang, org: 'Noor Travel', trip: { title: `Umrah ${trip}` }, token: 'x'.repeat(43) }).subject;
+  for (const person of [p3, p4]) await rewind(`passport_status/${org}/${trip}/${person.uid}/last_reminded_at`, 25 * HOURMS);
+  await db.ref(`passport_link_index/${trip}/${p3.uid}`).remove();
+  await db.ref(`passport_link_index/${trip}/${p4.uid}`).remove();
+  await db.ref(`users/${p3.uid}/language`).set('nl');
+  await send.settingsRef(org).set({ mode: 'manual', amount: 0, lang: 'ar' });
+  const beforeLang = (await reminders()).length;
+  eq(plain(await fns.remindMissing(A({ ...base1, uids: [p3.uid, p4.uid] }))).reminded, 2);
+  const newest = (await reminders()).slice(beforeLang);
+  eq(newest.find(m => m.to === p3.email).subject, subjectIn('nl'), 'no link yet: the app language of the person');
+  eq(newest.find(m => m.to === p4.email).subject, subjectIn('ar'), 'no link and no app language: the organisation setting');
+  ok(subjectIn('nl') !== subjectIn('ar') && subjectIn('ar') !== subjectIn('en'), 'the three subjects differ');
+  eq(await send.languageFor(p4.uid, { settings: { lang: 'xx' } }), 'en', 'unknown values end in English');
+  eq(await send.languageFor(p3.uid, { indexLang: 'ar', settings: { lang: 'tr' } }), 'ar', 'the link language wins over the app language');
+  eq(await send.languageFor(p3.uid, { explicit: 'tr', indexLang: 'ar' }), 'tr', 'a chosen language wins');
   eq(await val(`passport_status/${org}/${trip}/${p1.uid}/complete`), true);
   eq(sendgridCalls.length, 0, 'SendGrid was never reached');
   console.log(`PASS: ${checks} passport staff checks: roles, forged claims, overview, dossier, approval gate, signed downloads, audit, reminders.`);
