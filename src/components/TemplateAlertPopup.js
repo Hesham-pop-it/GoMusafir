@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, query, limitToLast } from 'firebase/database';
 import { auth, database } from '../config/firebase';
+import { isViewingConversation, isGroupChatRoute } from '../utils/messagingNotificationTarget';
 import { onAuthStateChanged } from 'firebase/auth';
 import { Colors } from '../constants/Colors';
 import { Typography } from '../constants/Typography';
@@ -26,10 +27,25 @@ import GradientBorderButton from './GradientBorderButton';
 import { navigationRef } from '../navigation/RootNavigator';
 import { navigateToNotificationTarget, extractNotificationTimestamp } from '../utils/notificationNavigation';
 
+import { notificationSound, SOS } from '../../functions/services/notificationSoundConfig';
 import { playNotificationSound, stopNotificationSound } from '../services/notificationAudio';
 import { subscribeForegroundNotifications, claimNotification, resetNotificationPresentation } from '../services/notificationPresentation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// The banner always shows, but a chat sound would talk over the user's live voice channel.
+// SOS keeps its sound.
+function playSoundUnlessInVoice(notif) {
+    const uid = auth.currentUser?.uid;
+    if (!uid || !notif.tripId || !notif.orgId || notificationSound(notif).sound === SOS.sound) {
+        playNotificationSound(notif);
+        return;
+    }
+    get(ref(database, `trips_active/${notif.orgId}/${notif.tripId}/voice_channel/presence/${uid}`))
+        .then((snap) => snap.val() === true)
+        .catch(() => false)
+        .then((inVoice) => { if (!inVoice) playNotificationSound(notif); });
+}
 
 export default function TemplateAlertPopup() {
     const insets = useSafeAreaInsets();
@@ -122,11 +138,13 @@ export default function TemplateAlertPopup() {
 
         if (!claimNotification(notif, notif._source || 'database')) return;
         if (AppState.currentState !== 'active') return;
-        playNotificationSound(notif);
+        playSoundUnlessInVoice(notif);
         if (notif.type === 'voice_inactivity') return;
         const route = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-        if (['chat', 'chat_message'].includes(notif.type) && route?.name === 'TripChat' &&
+        if (['chat', 'chat_message'].includes(notif.type) && isGroupChatRoute(route) &&
             (route.params?.tripId || route.params?.trip?.id) === notif.tripId) return;
+        if (route?.name === 'TripChat' && (route.params?.tripId || route.params?.trip?.id) === notif.tripId &&
+            isViewingConversation(notif.type, notif, route, auth.currentUser?.uid)) return;
 
         // Haptic / vibration feedback
         try {
@@ -467,7 +485,7 @@ export default function TemplateAlertPopup() {
                         // If this is a chat message, check if user is already actively viewing that TripChat screen
                         if (formattedNotif.type === 'chat_message') {
                             const currentRoute = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-                            if (currentRoute?.name === 'TripChat' && currentRoute?.params?.tripId === tripId) {
+                            if (isGroupChatRoute(currentRoute) && currentRoute?.params?.tripId === tripId) {
                                 continue;
                             }
                         }
@@ -508,19 +526,20 @@ export default function TemplateAlertPopup() {
 
                     for (const [msgId, msg] of Object.entries(chatData)) {
                         if (!msg || typeof msg !== 'object') continue;
+                        const isSystem = msg.type === 'system';
                         const uniqueKey = `chat_${msgId}`;
                         const isAlreadySeen = seenIdsRef.current.has(uniqueKey);
                         seenIdsRef.current.add(uniqueKey);
 
                         const isFromMe = (msg.sender_id && msg.sender_id === uid) || (msg.senderUid && msg.senderUid === uid);
-                        if (isAlreadySeen || isFromMe) continue;
+                        if (isAlreadySeen || isFromMe || isSystem) continue;
 
                         const msgTimestamp = extractNotificationTimestamp(msg, msgId);
                         const isRealTime = msgTimestamp >= mountTimeRef.current - 1000;
                         if (!isRealTime) continue;
 
                         const currentRoute = navigationRef.isReady() ? navigationRef.getCurrentRoute() : null;
-                        if (currentRoute?.name === 'TripChat' && currentRoute?.params?.tripId === tripId) {
+                        if (isGroupChatRoute(currentRoute) && currentRoute?.params?.tripId === tripId) {
                             // Suppress popup if user is actively in the chat screen
                             continue;
                         }

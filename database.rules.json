@@ -184,7 +184,8 @@
               "timestamp"
             ],
             "$messageId": {
-              ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && (newData.hasChild('text') || newData.hasChild('type')) && (newData.child('sender_id').val() == auth.uid || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host')"
+              ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || (((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && !data.exists()))",
+              ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && (newData.hasChild('text') || newData.hasChild('type')) && (newData.child('sender_id').val() == auth.uid || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host') && newData.child('type').val() !== 'system' && newData.child('sender_id').val() !== 'system'"
             }
           },
           "read_pointers": {
@@ -279,6 +280,107 @@
           "safety_point": {
             ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())))",
             ".write": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((auth.token.orgId != null && (auth.token.role === 'admin' || auth.token.role === 'co-host' || auth.token.role === 'manager') && (root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'manager')) || root.child('app_access').child(auth.uid).child('expires_at').val() > now)) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+          },
+          "dm_threads": {
+            "$threadId": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && root.child('trips_active').child($orgId).child($tripId).child('dm_threads').child($threadId).child('members').child(auth.uid).val() === true"
+            }
+          },
+          "dm_messages": {
+            "$threadId": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && root.child('trips_active').child($orgId).child($tripId).child('dm_threads').child($threadId).child('members').child(auth.uid).val() === true",
+              ".indexOn": [
+                "timestamp"
+              ],
+              "$msgId": {
+                ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && !data.exists() && root.child('trips_active').child($orgId).child($tripId).child('dm_threads').child($threadId).child('members').child(auth.uid).val() === true && root.child('trips_active').child($orgId).child($tripId).child('dm_threads').child($threadId).child('status').val() === 'accepted' && !root.child('trips_active').child($orgId).child($tripId).child('blocks').child(auth.uid).child(($threadId.beginsWith(auth.uid + '_') ? $threadId.replace(auth.uid + '_', '') : $threadId.replace('_' + auth.uid, ''))).exists() && !root.child('trips_active').child($orgId).child($tripId).child('blocks').child(($threadId.beginsWith(auth.uid + '_') ? $threadId.replace(auth.uid + '_', '') : $threadId.replace('_' + auth.uid, ''))).child(auth.uid).exists()",
+                ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && newData.child('sender_id').val() === auth.uid && (newData.hasChild('text') || newData.hasChild('type'))",
+                "text": {
+                  ".validate": "newData.isString() && newData.val().length <= 2000"
+                },
+                "type": {
+                  ".validate": "newData.isString() && (newData.val() === 'text' || newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'voice' || newData.val() === 'location')"
+                }
+              }
+            }
+          },
+          "dm_private": {
+            "$uid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $uid === auth.uid"
+            }
+          },
+          "team": {
+            "$pilgrimUid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || (((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $pilgrimUid === auth.uid))",
+              ".indexOn": [
+                "timestamp"
+              ],
+              "$msgId": {
+                ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || (((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $pilgrimUid === auth.uid)) && !data.exists()",
+                ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && newData.child('sender_id').val() === auth.uid && (newData.hasChild('text') || newData.hasChild('type'))",
+                "text": {
+                  ".validate": "newData.isString() && newData.val().length <= 2000"
+                },
+                "type": {
+                  ".validate": "newData.isString() && (newData.val() === 'text' || newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'voice' || newData.val() === 'location')"
+                }
+              }
+            }
+          },
+          "team_meta": {
+            ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')",
+            "$pilgrimUid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $pilgrimUid === auth.uid"
+            }
+          },
+          "team_read": {
+            "$staffUid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') && $staffUid === auth.uid",
+              "$pilgrimUid": {
+                ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') && $staffUid === auth.uid"
+              }
+            }
+          },
+          "staff_chat": {
+            ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')",
+            ".indexOn": [
+              "timestamp"
+            ],
+            "$msgId": {
+              ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') && !data.exists()",
+              ".validate": "newData.hasChildren(['sender_id', 'timestamp']) && newData.child('sender_id').val() === auth.uid && (newData.hasChild('text') || newData.hasChild('type'))",
+              "text": {
+                ".validate": "newData.isString() && newData.val().length <= 2000"
+              },
+              "type": {
+                ".validate": "newData.isString() && (newData.val() === 'text' || newData.val() === 'image' || newData.val() === 'video' || newData.val() === 'voice' || newData.val() === 'location')"
+              }
+            }
+          },
+          "inbox": {
+            "$uid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString()))) && $uid === auth.uid",
+              "$threadId": {
+                "unread": {
+                  ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString()))) && $uid === auth.uid && data.exists() && newData.val() === 0"
+                }
+              }
+            }
+          },
+          "blocks": {
+            "$uid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $uid === auth.uid"
+            }
+          },
+          "reports": {
+            ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')"
+          },
+          "message_settings": {
+            "$uid": {
+              ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $uid === auth.uid",
+              ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())) && $uid === auth.uid",
+              ".validate": "newData.hasChild('requests') && (newData.child('requests').val() === 'members' || newData.child('requests').val() === 'nobody')"
+            }
           }
         }
       }

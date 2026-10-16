@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
+import useMessagesData from '../hooks/useMessagesData';
 
 const LocationIcon = ({ color, size = 24 }) => (
     <Svg width={size} height={(size * 32) / 24} viewBox="0 0 24 32" fill="none">
@@ -42,10 +43,11 @@ const SettingIcon = ({ color, size = 24 }) => (
     </Svg>
 );
 
-const TRIP_ROUTES = ['LiveLocation', 'VoiceChat', 'TripOverview', 'TripChat', 'TripSettings'];
+const TRIP_ROUTES = ['LiveLocation', 'VoiceChat', 'TripOverview', 'Messages', 'TripSettings'];
 
 const TripBottomTabBar = ({ activeRoute, tripData }) => {
     const navigation = useNavigation();
+    const { total: unreadTotal } = useMessagesData(tripData?.orgId || tripData?.org_id, tripData?.tripId || tripData?.id);
 
     const isActive = (route) => activeRoute === route;
     const getColor = (route) => isActive(route) ? "#B99A4A" : "#9BA1A6";
@@ -113,10 +115,15 @@ const TripBottomTabBar = ({ activeRoute, tripData }) => {
                             Alert.alert("Trip Expired", "Chat is not available for this trip as it has expired.");
                             return;
                         }
-                        navigation.navigate('TripChat', { ...getTransitionParams('TripChat'), trip: tripData });
+                        navigation.navigate('Messages', { ...getTransitionParams('Messages'), trip: tripData });
                     }}
                 >
-                    <MessageIcon color={getColor('TripChat')} />
+                    <MessageIcon color={getColor('Messages')} />
+                    {unreadTotal > 0 && (
+                        <View style={styles.badge}>
+                            <Text style={styles.badgeText}>{unreadTotal > 99 ? '99+' : unreadTotal}</Text>
+                        </View>
+                    )}
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -146,6 +153,23 @@ const styles = StyleSheet.create({
         justifyContent: 'space-around',
         alignItems: 'center',
         paddingHorizontal: 10
+    },
+    badge: {
+        position: 'absolute',
+        top: 2,
+        right: 0,
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        paddingHorizontal: 4,
+        backgroundColor: '#B99A4A',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    badgeText: {
+        color: '#1A1E21',
+        fontSize: 11,
+        fontWeight: '700',
     },
     navItem: {
         padding: 10,

@@ -3,6 +3,7 @@ import { ref, update, get, set } from 'firebase/database';
 import { signOut } from 'firebase/auth';
 import { database, auth } from '../config/firebase';
 import { navigationRef } from '../navigation/RootNavigator';
+import { messagingNotificationTarget } from './messagingNotificationTarget';
 
 /**
  * Resolves the destination screen and parameters for any notification payload,
@@ -137,6 +138,19 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
                 }
                 break;
 
+            case 'dm_request':
+            case 'dm_message':
+            case 'team_message':
+            case 'staff_chat':
+            case 'message_report': {
+                const target = tripId ? messagingNotificationTarget(type, item, auth.currentUser?.uid) : null;
+                if (target) {
+                    performNav(target.route, { ...baseParams, ...target.params });
+                } else {
+                    performNav('Home');
+                }
+                break;
+            }
             case 'location_response':
             case 'location_request':
                 if (tripId) {

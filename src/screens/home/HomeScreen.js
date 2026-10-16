@@ -690,7 +690,7 @@ const HomeScreen = ({ navigation }) => {
 
     useEffect(() => {
         if (Platform.OS === 'android') {
-            NavigationBar.setButtonStyleAsync('light');
+            NavigationBar.setStyle('light');
         }
     }, []);
 

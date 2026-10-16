@@ -40,10 +40,14 @@ import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
+import { subscribeInbox } from '../../services/messaging';
+import { openConversation } from '../../utils/openConversation';
+import { detailButtonFor, threadIdFor } from '../../utils/messagingRules';
 import { updatePrayerWidget } from '../../utils/widgetHelper';
 import { useVoice } from '../../context/VoiceContext';
 import { useTracks, useParticipants } from '@livekit/react-native';
 import { isVoiceMember } from '../../utils/voiceMembership';
+import { useLanguage } from '../../context/LanguageContext';
 import { Track, RoomEvent } from 'livekit-client';
 import SpeakerGlow from '../../components/SpeakerGlow';
 import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
@@ -144,6 +148,7 @@ const TripOverviewScreen = () => {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute();
+    const { t } = useLanguage();
     const { trip, tripId: passedTripId, orgId: passedOrgId, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
 
     const invitationCode = directCode || trip?.invitationCode;
@@ -208,6 +213,7 @@ const TripOverviewScreen = () => {
     const [participantsList, setParticipantsList] = useState([]);
     const [participantUids, setParticipantUids] = useState([]);
     const [staffData, setStaffData] = useState({});
+    const [messageInbox, setMessageInbox] = useState({});
     const [notificationsList, setNotificationsList] = useState([]);
     const [lastChatMessage, setLastChatMessage] = useState(null);
     const [liveLocations, setLiveLocations] = useState({});
@@ -268,6 +274,13 @@ const TripOverviewScreen = () => {
         setSelectedParticipant(null);
     }, [visibilityRevision]);
     const orgId = resolvedOrgId || passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
+
+    // My inbox rows decide whether a participant's message icon starts a request, opens a chat or reviews a request.
+    useEffect(() => {
+        const myUid = auth.currentUser?.uid;
+        if (!orgId || !tripId || !myUid) return;
+        return subscribeInbox(orgId, tripId, myUid, setMessageInbox);
+    }, [orgId, tripId]);
 
     useEffect(() => {
         if (!tripId || !orgId) return;
@@ -1296,6 +1309,38 @@ const TripOverviewScreen = () => {
             });
         } catch (error) {
         }
+    };
+
+    const messageTargetFor = (p) => ({
+        id: p.id,
+        name: p.name,
+        image: p.image,
+        isStaff: Boolean(isStaffMember(p.id, staffData, organizerId, p.status)),
+        nameVisible: Boolean(p.canSeeFirstName),
+    });
+    const viewerIsStaffForMessages = () => Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+
+    // Same rule as the detail modal: no button for staff to staff or a hidden name.
+    const hasMessageButton = (p) => {
+        const myUid = auth.currentUser?.uid;
+        if (!myUid) return false;
+        const target = messageTargetFor(p);
+        return detailButtonFor({
+            viewerIsStaff: viewerIsStaffForMessages(),
+            targetIsStaff: target.isStaff,
+            isSelf: p.id === myUid,
+            inboxRow: (messageInbox || {})[threadIdFor(myUid, p.id)],
+            nameVisible: target.nameVisible,
+        }) !== null;
+    };
+
+    const handleParticipantMessage = (p) => {
+        openConversation(navigation, tripData, {
+            viewerUid: auth.currentUser?.uid,
+            viewerIsStaff: viewerIsStaffForMessages(),
+            target: messageTargetFor(p),
+            inbox: messageInbox,
+        });
     };
 
     const handleParticipantPress = async (participant) => {
@@ -2473,6 +2518,15 @@ const TripOverviewScreen = () => {
                                                         {p.voiceStatus ? p.voiceStatus : p.status}
                                                     </Text>
                                                 </View>
+                                                {hasMessageButton(p) && (
+                                                    <TouchableOpacity
+                                                        style={styles.participantMessageButton}
+                                                        onPress={() => handleParticipantMessage(p)}
+                                                        accessibilityLabel={t('msg_message')}
+                                                    >
+                                                        <Ionicons name="chatbubble-ellipses-outline" size={20} color="#B99A4A" />
+                                                    </TouchableOpacity>
+                                                )}
                                             </TouchableOpacity>
                                         ))
                                     ) : (
@@ -2635,6 +2689,8 @@ const TripOverviewScreen = () => {
                 staffData={staffData}
                 organizerId={organizerId}
                 userRole={userRole}
+                trip={tripData}
+                inbox={messageInbox}
             />
 
             {/* Delete Confirmation Modal */}
@@ -3189,6 +3245,15 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 16,
+    },
+    participantMessageButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#2F3337',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
     },
     participantsScrollContainer: {
         maxHeight: 210,
