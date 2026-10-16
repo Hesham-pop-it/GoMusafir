@@ -5,6 +5,10 @@ const { invitationRef, SAFE_ID, normalizeEmail } = require('./invitationService'
 
 const SIGNATURE = 'x-twilio-email-event-webhook-signature';
 const TIMESTAMP = 'x-twilio-email-event-webhook-timestamp';
+// The timestamp is signed with the body, so a captured request could be replayed for ever. SendGrid retries a failed
+// delivery for up to 24 hours, so a request up to 24 hours old is accepted; 10 minutes ahead covers clock skew.
+const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_FUTURE_MS = 10 * 60 * 1000;
 const BAD_EVENTS = new Set(['bounce', 'dropped', 'blocked']);
 
 // publicKey: the base64 (DER, SPKI) key shown in the SendGrid settings. The signed text is timestamp + raw body.
@@ -18,6 +22,13 @@ function verifySignature({ publicKey, signature, timestamp, rawBody }) {
   } catch (_) {
     return false;
   }
+}
+
+// timestamp: epoch seconds as SendGrid sends it; nowMs: the current time in milliseconds.
+function timestampIsFresh(timestamp, nowMs) {
+  if (!/^\d{1,13}$/.test(String(timestamp))) return false;
+  const age = nowMs - Number(timestamp) * 1000;
+  return age <= MAX_AGE_MS && age >= -MAX_FUTURE_MS;
 }
 
 async function applyEvents(events, now = Date.now()) {
@@ -47,6 +58,7 @@ function createWebhookHandler({ getPublicKey, now = Date.now }) {
     if (!verifySignature({ publicKey, signature: req.get(SIGNATURE), timestamp: req.get(TIMESTAMP), rawBody })) {
       return res.status(401).send('Invalid signature');
     }
+    if (!timestampIsFresh(req.get(TIMESTAMP), now())) return res.status(401).send('Stale timestamp');
     let events;
     try { events = JSON.parse(Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody); } catch (_) { return res.status(400).send('Invalid body'); }
     const marked = await applyEvents(events, now());
@@ -54,4 +66,4 @@ function createWebhookHandler({ getPublicKey, now = Date.now }) {
   };
 }
 
-module.exports = { verifySignature, applyEvents, createWebhookHandler };
+module.exports = { verifySignature, timestampIsFresh, MAX_AGE_MS, MAX_FUTURE_MS, applyEvents, createWebhookHandler };

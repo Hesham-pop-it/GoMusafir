@@ -172,7 +172,7 @@ async function main() {
   const key = pair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
   const hook = createWebhookHandler({ getPublicKey: () => key });
   const post = async events => {
-    const body = JSON.stringify(events), ts = String(Date.now()), signer = crypto.createSign('sha256'); signer.update(ts + body);
+    const body = JSON.stringify(events), ts = String(Math.floor(Date.now() / 1000)), signer = crypto.createSign('sha256'); signer.update(ts + body);
     const res = { status(c) { this.code = c; return this; }, send(b) { this.body = b; return this; }, json(b) { this.body = b; return this; } };
     const headers = { 'x-twilio-email-event-webhook-signature': signer.sign(pair.privateKey).toString('base64'), 'x-twilio-email-event-webhook-timestamp': ts };
     await hook({ method: 'POST', rawBody: Buffer.from(body), get: n => headers[n.toLowerCase()] }, res);

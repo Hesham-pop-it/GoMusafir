@@ -47,7 +47,23 @@ test('the handler refuses other methods, a missing key and bad signatures before
 });
 test('a signed body that is not JSON is a bad request', async () => {
   const handler = createWebhookHandler({ getPublicKey: () => publicKey });
-  const body = 'nope', timestamp = '5', res = response();
+  const body = 'nope', timestamp = String(Math.floor(Date.now() / 1000)), res = response();
   await handler(request('POST', body, { 'x-twilio-email-event-webhook-signature': sign(timestamp, body), 'x-twilio-email-event-webhook-timestamp': timestamp }), res);
   assert.equal(res.code, 400);
+});
+
+test('a signed but old or far-future timestamp is refused, a fresh one accepted', async () => {
+  const nowMs = 1760000000000, sec = nowMs / 1000, body = '[]';
+  const handler = createWebhookHandler({ getPublicKey: () => publicKey, now: () => nowMs });
+  const status = async seconds => {
+    const timestamp = String(seconds), res = response();
+    await handler(request('POST', body, { 'x-twilio-email-event-webhook-signature': sign(timestamp, body), 'x-twilio-email-event-webhook-timestamp': timestamp }), res);
+    return res.code;
+  };
+  assert.equal(await status(sec), 200);
+  assert.equal(await status(sec - 23 * 3600), 200, 'a retry from a few hours ago');
+  assert.equal(await status(sec + 5 * 60), 200, 'a little clock skew');
+  assert.equal(await status(sec - 25 * 3600), 401, 'older than a day');
+  assert.equal(await status(sec + 11 * 60), 401, 'more than ten minutes ahead');
+  assert.equal(await status('abc'), 401);
 });
