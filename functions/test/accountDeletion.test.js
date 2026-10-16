@@ -6,8 +6,8 @@ const path = require('node:path');
 class HttpsError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
-function fixture({ cleanupFails = false } = {}) {
-  const calls = []; const logs = []; let options; let updates;
+function fixture({ cleanupFails = false, purgeFails = false } = {}) {
+  const calls = []; const logs = []; const purged = []; let options; let updates;
   const noop = async () => {};
   const dependencies = {
     '../services/participantAccessService': {},
@@ -33,6 +33,7 @@ function fixture({ cleanupFails = false } = {}) {
     } },
     '../services/emailService': {}, '../services/notificationService': {},
     '../services/stripeService': { deleteStripeCustomer: noop },
+    '../services/passport/passportRetention': { purgePerson: async (uid, joined) => { purged.push([uid, Object.keys(joined)]); if (purgeFails) throw new Error('storage unavailable'); } },
     crypto: require('node:crypto'),
   };
   const module = { exports: {} };
@@ -43,7 +44,7 @@ function fixture({ cleanupFails = false } = {}) {
     }, console: { error: (...args) => logs.push(args), warn: (...args) => logs.push(args) },
   });
   return { run: (request = { auth: { uid: 'self', token: {} } }) => module.exports.deleteMyAccount(request),
-    calls, logs, options, updates: () => updates };
+    calls, logs, purged, options, updates: () => updates };
 }
 test('self deletion uses the fresh identity gate without requiring a current trip', async () => {
   const f = fixture(); assert.equal(f.options.enrollment, true);
@@ -52,6 +53,13 @@ test('self deletion uses the fresh identity gate without requiring a current tri
   assert.equal(f.updates()['users/self'], null);
   assert.equal(f.updates()['app_access/self'], null);
   assert.equal(f.updates()['trips_active/org/trip/locations/self'], null);
+  assert.deepEqual(f.purged, [['self', ['trip', 'legacy']]], 'the passport data goes with the account');
+});
+test('a failed passport purge is logged and never blocks the account deletion', async () => {
+  const f = fixture({ purgeFails: true });
+  assert.equal((await f.run()).success, true);
+  assert.deepEqual(f.calls, ['profile', 'auth:self']);
+  assert.equal(f.logs[0][0], 'Passport purge failed during account deletion');
 });
 test('RTDB cleanup failure stops Auth deletion and produces an actionable error', async () => {
   const f = fixture({ cleanupFails: true });

@@ -282,6 +282,15 @@ exports.checkUserExistence = onCall({ enrollment: true, region: "europe-west1" }
   }
 });
 
+// Account deletion removes the passport data of the person too (non-fatal: logged, the deletion carries on).
+async function purgePassportData(uid, joinedTrips) {
+  try {
+    await require("../services/passport/passportRetention").purgePerson(uid, joinedTrips);
+  } catch (error) {
+    console.error("Passport purge failed during account deletion", { uid, message: error.message });
+  }
+}
+
 // ── Delete User Globally (Admin only) ─────────────────────────────────────────
 exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
@@ -348,6 +357,9 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
     }
   }
   await deleteStripeCustomer(stripeCustomerId, targetEmail, orgId);
+
+  // Passport data of the person goes first, while joined_trips can still be read. A failure here never blocks the deletion.
+  await purgePassportData(targetUid, joinedTrips);
 
   // 3. Delete from Auth (Admin SDK)
   await db.ref(`app_access/${targetUid}`).remove();
@@ -422,6 +434,7 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
     }
 
     stage = "profile-cleanup";
+    await purgePassportData(uid, joinedTripsSnap.val() || {});
     updates[`app_access/${uid}`] = null;
     await db.ref().update(updates);
 
