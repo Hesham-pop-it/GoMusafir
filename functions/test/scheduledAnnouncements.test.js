@@ -44,9 +44,10 @@ test('selectDue returns due entries oldest first and honours the limit', () => {
 
 test('the chat message has the shape of a staff template message in the app', () => {
   assert.deepEqual(chatMessageFor(item(), 'Saif', 'TS'), {
-    type: 'text', text: 'Bus leaves at 8', sender_id: 'u1', sender_name: 'Saif', timestamp: 'TS',
+    type: 'text', text: 'Bus leaves at 8', sender_id: 'u1', sender_name: 'Saif', avatar: 'https://ui-avatars.com/api/?name=Saif&background=B99A4A&color=fff', timestamp: 'TS',
   });
   assert.equal(chatMessageFor(item(), undefined, 1).sender_name, 'Admin');
+  assert.equal(chatMessageFor(item(), 'Saif', 1, 'https://x.test/p.jpg').avatar, 'https://x.test/p.jpg');
 });
 
 test('queue keys include org, trip and item so the same item id in two trips never collides', () => {

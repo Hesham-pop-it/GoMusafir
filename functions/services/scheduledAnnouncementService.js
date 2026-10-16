@@ -34,11 +34,16 @@ function selectDue(queue, now, limit = BATCH_SIZE) {
 }
 
 // Same shape the app writes for a staff template message (TripChatScreen).
-const chatMessageFor = (item, senderName, timestamp) => ({
+// The avatar is the sender's profile photo, else the app's initials fallback.
+const avatarFor = (senderName, photoUrl) => (typeof photoUrl === 'string' && photoUrl
+  ? photoUrl : `https://ui-avatars.com/api/?name=${encodeURIComponent(senderName || 'User')}&background=B99A4A&color=fff`);
+
+const chatMessageFor = (item, senderName, timestamp, photoUrl) => ({
   type: 'text',
   text: item.text,
   sender_id: item.created_by,
   sender_name: senderName || 'Admin',
+  avatar: avatarFor(senderName, photoUrl),
   timestamp,
 });
 
@@ -98,8 +103,9 @@ async function sendScheduled({ db, orgId, tripId, id, now = Date.now(), timestam
     return 'skipped';
   }
   const name = (await db.ref(`users/${item.created_by}/full_name`).get()).val();
+  const photo = (await db.ref(`users/${item.created_by}/profile/photoURL`).get()).val();
   await db.ref(`trips_active/${orgId}/${tripId}/chat/${item.chat_key}`).transaction(
-    cur => (cur ? undefined : chatMessageFor(item, name, timestamp)));
+    cur => (cur ? undefined : chatMessageFor(item, name, timestamp, photo)));
   await notifyParticipants({ db, orgId, tripId, id, item, name, now });
   await itemRef.transaction(cur => (cur === null ? cur : cur.status === 'pending' ? { ...cur, status: 'sent', sent_at: now } : undefined));
   await queueRef.remove();

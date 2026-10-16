@@ -111,7 +111,7 @@ async function main() {
   const chat = Object.values((await db.ref('trips_active/o/t/chat').get()).val() || {});
   assert.deepEqual(chat.map(m => m.text).sort(), ['Due now', 'Older'], 'each due item posts exactly once');
   const message = chat.find(m => m.text === 'Due now');
-  assert.deepEqual(Object.keys(message).sort(), ['sender_id', 'sender_name', 'text', 'timestamp', 'type']);
+  assert.deepEqual(Object.keys(message).sort(), ['avatar', 'sender_id', 'sender_name', 'text', 'timestamp', 'type']);
   assert.equal(message.type, 'text'); assert.equal(message.sender_id, uid); assert.equal(message.sender_name, 'Saif');
   assert.equal(typeof message.timestamp, 'number');
   const after = (await db.ref('trips_active/o/t/scheduled').get()).val();
