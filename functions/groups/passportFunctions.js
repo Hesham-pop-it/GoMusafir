@@ -32,6 +32,7 @@ const svc = {
   valid: () => require('../services/passport/passportValidation'),
   inv: () => require('../services/invitations/invitationService'),
   staff: () => require('../services/passport/passportStaff'),
+  passkeys: () => require('../services/passport/passportPasskeys'),
 };
 const ip = request => request.rawRequest?.ip;
 
@@ -69,9 +70,10 @@ async function mailCode({ link, uid, code }) {
 const PILGRIM = { region: 'europe-west1', secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY] };
 const DATA = { region: 'europe-west1', secrets: [ENCRYPTION_KEY] };
 
-// -> { email_masked, needs_code, org_name, trip_title, lang? }. Sends the first code when none is waiting.
+// -> { email_masked, needs_code, has_passkey, org_name, trip_title, lang? }. Sends the first code when none is waiting,
+// except when the page asks for the passkey first ({ prefer: 'passkey' }) and this person has one: the code then waits for passportResend.
 exports.passportOpen = onCall(PILGRIM, async request => {
-  const { t } = parse(z.object({ t: TOKEN }), request.data);
+  const { t, prefer } = parse(z.object({ t: TOKEN, prefer: z.enum(['passkey', 'code']).optional() }), request.data);
   const { hash, link } = await svc.links().resolveLink(t);
   const [member, trip, orgName, contact] = await Promise.all([
     db.ref(`trips_participants/${link.trip_id}/${link.uid}`).get().then(s => s.val()),
@@ -80,11 +82,14 @@ exports.passportOpen = onCall(PILGRIM, async request => {
   ]);
   if (!member || !trip) throw new HttpsError('not-found', 'This link is not valid.', { reason: 'invalid' });
   if (!contact.email) throw new HttpsError('failed-precondition', 'There is no email address on this account.', { reason: 'no_email' });
-  const issued = await svc.links().issueCode(hash, { auto: true });
-  if (issued.code) {
-    try { await mailCode({ link, uid: link.uid, code: issued.code }); } catch (error) { console.warn('Passport code mail failed', { message: error.message }); }
+  const hasPasskey = await svc.passkeys().hasPasskey(link.trip_id, link.uid);
+  if (!(prefer === 'passkey' && hasPasskey)) {
+    const issued = await svc.links().issueCode(hash, { auto: true });
+    if (issued.code) {
+      try { await mailCode({ link, uid: link.uid, code: issued.code }); } catch (error) { console.warn('Passport code mail failed', { message: error.message }); }
+    }
   }
-  return { email_masked: require('../services/passport/passportTokens').maskEmail(contact.email), needs_code: true, org_name: orgName, trip_title: trip.title || '', ...(link.lang ? { lang: link.lang } : {}) };
+  return { email_masked: require('../services/passport/passportTokens').maskEmail(contact.email), needs_code: true, has_passkey: hasPasskey, org_name: orgName, trip_title: trip.title || '', ...(link.lang ? { lang: link.lang } : {}) };
 });
 
 // -> { session, expires_at }
@@ -94,6 +99,44 @@ exports.passportVerify = onCall({ region: 'europe-west1' }, async request => {
   await svc.links().verifyCode(hash, code);
   const out = await svc.links().createSession({ hash, link });
   await audit({ org: link.org_id, trip: link.trip_id, uid: link.uid }, 'PASSPORT_SESSION_STARTED', request);
+  return out;
+});
+
+// Passkeys (P13). The link rules (invalid, expired, revoked, locked) apply before any option is handed out.
+// -> { options } for navigator.credentials.create; the session names the person.
+exports.passkeyRegisterOptions = onCall(DATA, async request => {
+  const ctx = await sessionContext(request);
+  const contact = await svc.store().accountContact(ctx.uid);
+  return { options: await svc.passkeys().registerOptions({ trip: ctx.trip, uid: ctx.uid, name: contact.email || contact.name }) };
+});
+
+// -> { ok: true, credential_id }
+exports.passkeyRegister = onCall(DATA, async request => {
+  const ctx = await sessionContext(request);
+  const { response } = parse(z.object({ session: TOKEN, response: z.any() }), request.data);
+  const credentialId = await svc.passkeys().register({ trip: ctx.trip, uid: ctx.uid, response });
+  await audit(ctx, 'PASSPORT_PASSKEY_REGISTERED', request);
+  return { ok: true, credential_id: credentialId };
+});
+
+// -> { options } for navigator.credentials.get; refused with reason no_passkey when the person has none.
+exports.passkeyLoginOptions = onCall(DATA, async request => {
+  const { t } = parse(z.object({ t: TOKEN }), request.data);
+  const { link } = await svc.links().resolveLink(t);
+  const member = (await db.ref(`trips_participants/${link.trip_id}/${link.uid}`).get()).val();
+  if (!member) throw new HttpsError('not-found', 'This link is not valid.', { reason: 'invalid' });
+  return { options: await svc.passkeys().loginOptions({ trip: link.trip_id, uid: link.uid }) };
+});
+
+// -> { session, expires_at }, the same session passportVerify gives.
+exports.passkeyLogin = onCall(DATA, async request => {
+  const { t, response } = parse(z.object({ t: TOKEN, response: z.any() }), request.data);
+  const { hash, link } = await svc.links().resolveLink(t);
+  const member = (await db.ref(`trips_participants/${link.trip_id}/${link.uid}`).get()).val();
+  if (!member) throw new HttpsError('not-found', 'This link is not valid.', { reason: 'invalid' });
+  await svc.passkeys().login({ trip: link.trip_id, uid: link.uid, response });
+  const out = await svc.links().createSession({ hash, link });
+  await audit({ org: link.org_id, trip: link.trip_id, uid: link.uid }, 'PASSPORT_PASSKEY_LOGIN', request);
   return out;
 });
 

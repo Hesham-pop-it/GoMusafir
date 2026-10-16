@@ -11,7 +11,7 @@ async function purgeTrip(orgId, tripId, now = Date.now()) {
   const uids = [...new Set([...Object.keys(data), ...Object.keys(index), ...Object.keys(status)])];
   const updates = {
     [`passport/${orgId}/${tripId}`]: null, [`passport_family/${orgId}/${tripId}`]: null,
-    [`passport_link_index/${tripId}`]: null, [`passport_retention/${tripId}`]: null,
+    [`passport_link_index/${tripId}`]: null, [`passport_retention/${tripId}`]: null, [`passport_passkeys/${tripId}`]: null,
   };
   for (const entry of Object.values(index)) {
     if (!entry?.hash) continue;
@@ -44,6 +44,7 @@ async function purgePerson(uid, joined) {
     updates[`passport/${orgId}/${tripId}/${uid}`] = null;
     updates[`passport_status/${orgId}/${tripId}/${uid}`] = null;
     updates[`passport_link_index/${tripId}/${uid}`] = null;
+    updates[`passport_passkeys/${tripId}/${uid}`] = null;
     updates[`passport_queue/${tripId}_${uid}`] = null;
     await admin.storage().bucket().deleteFiles({ prefix: `passport_docs/${orgId}/${tripId}/${uid}/`, force: true });
   }
@@ -85,6 +86,8 @@ async function dropExpiredSessions(now = Date.now()) {
   const old = (await db.ref('passport_sessions').orderByChild('expires_at').endAt(now).limitToFirst(500).get()).val() || {};
   const updates = {};
   for (const hash of Object.keys(old)) updates[`passport_sessions/${hash}`] = null;
+  const stale = (await db.ref('passport_passkey_challenges').orderByChild('expires_at').endAt(now).limitToFirst(500).get()).val() || {};
+  for (const hash of Object.keys(stale)) updates[`passport_passkey_challenges/${hash}`] = null;
   if (Object.keys(updates).length) await db.ref().update(updates);
   return Object.keys(updates).length;
 }

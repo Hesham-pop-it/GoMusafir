@@ -386,6 +386,17 @@
         "expires_at"
       ]
     },
+    "passport_passkeys": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_passkey_challenges": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "expires_at"
+      ]
+    },
     "passport_queue": {
       ".read": false,
       ".write": false,
