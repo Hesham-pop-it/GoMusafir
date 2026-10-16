@@ -15,7 +15,6 @@ const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
 const { deleteStripeCustomer } = require("../services/stripeService");
-const { SENSITIVE_PURPOSES, AUDIT_ACTIONS, markApproved, auditOrgId } = require("../services/sensitiveApprovalService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -254,7 +253,8 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
 
   // Email-code fallback for re-confirming sensitive data (F1); counts like a phone approval.
   const { purpose } = request.data;
-  if (SENSITIVE_PURPOSES.includes(purpose)) {
+  const { SENSITIVE_PURPOSES, AUDIT_ACTIONS, markApproved, auditOrgId } = purpose ? require("../services/sensitiveApprovalService") : {};
+  if (purpose && SENSITIVE_PURPOSES.includes(purpose)) {
     await markApproved(db, uid, { purpose, method: 'email_code' });
     const orgId = await auditOrgId(db, uid, request.auth.token.orgId);
     if (orgId) {

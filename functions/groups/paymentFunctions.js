@@ -14,7 +14,6 @@ const { startJourneyCheckout, completeJourneyCheckout, releaseJourneyCheckout } 
 const { topupUsage, changeTripSeats, requireOrgStaff } = require('../services/tripSeatService');
 
 const { PRICING_PLANS, COUNTRY_TO_CURRENCY, getPlanPricing } = require('../services/pricingService');
-const { creditDeenSeats } = require('../services/deen/deenService');
 
 const ALLOWED_SHIPPING_COUNTRIES = [
   "NL", "PK", "TR", "AR", "SA", "AE", "GB", "DE", "FR", "BE",
@@ -422,6 +421,7 @@ async function processPaidCheckoutSession(session) {
 
   } else if (action === "DEEN_SEATS") {
     // Seats bought in the middle of a Deen conversation: credit the balance once, the conversation continues.
+    const { creditDeenSeats } = require('../services/deen/deenService');
     await creditDeenSeats({ orgId, uid, operationId: `deen-seats:${session.id}`, seats: Number(metadata.seats), source: "stripe" });
   } else if (action === "SEAT_TOPUP") {
     let resolvedTripId = tripId;
