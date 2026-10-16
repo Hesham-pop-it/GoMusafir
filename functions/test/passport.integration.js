@@ -210,6 +210,11 @@ async function main() {
   await db.ref(`passport_codes/${h1}/window_start`).set(Date.now() - 61 * MIN);
   await fns.passportResend(P({ t: t1 }));
   code = await lastCode(p1);
+  // A new code starts at zero tries: four wrong answers leave the fifth one, and the right code still works on it.
+  const wrong2 = code === '000000' ? '000001' : '000000';
+  for (let left = 4; left >= 1; left--) {
+    await assert.rejects(fns.passportVerify(P({ t: t1, code: wrong2 })), e => e.details.reason === 'wrong_code' && e.details.tries_left === left); checks++;
+  }
   const session1 = plain(await fns.passportVerify(P({ t: t1, code })));
   ok(tokens.isTokenShape(session1.session) && session1.expires_at - Date.now() > 59 * MIN && session1.expires_at - Date.now() <= 60 * MIN, 'session of 60 minutes');
   ok(!(await val(`passport_codes/${h1}`)), 'a code is used up by the right answer');
