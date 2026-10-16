@@ -105,6 +105,10 @@
         "seat_operations": {
           ".read": false,
           ".write": false
+        },
+        "participants": {
+          ".read": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((auth.token.orgId != null && (auth.token.role === 'admin' || auth.token.role === 'co-host' || auth.token.role === 'manager') && (root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'manager')) || root.child('app_access').child(auth.uid).child('expires_at').val() > now)) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId))",
+          ".write": false
         }
       }
     },
@@ -328,6 +332,20 @@
       ".indexOn": [
         "send_at"
       ]
+    },
+    "trip_invitations": {
+      "$tripId": {
+        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'manager')",
+        ".write": false
+      }
+    },
+    "dev_outbox": {
+      ".read": false,
+      ".write": false
+    },
+    "invitation_limits": {
+      ".read": false,
+      ".write": false
     }
   }
 }
