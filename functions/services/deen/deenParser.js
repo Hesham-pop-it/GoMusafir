@@ -108,9 +108,21 @@ function findMentions(text) {
 }
 
 // Returns up to two ISO days: [start] or [start, end] (both inclusive days of the trip).
-function parseDates(text, { now = Date.now() } = {}) {
+function parseDates(text, opts) {
+  return parseDatesAt(text, opts).days;
+}
+
+// Same, plus the word index where the first date mention starts in the text.
+function parseDatesAt(text, { now = Date.now() } = {}) {
   const t = normalizeText(text);
   const mentions = findMentions(t);
+  const days = resolveDays(mentions, now);
+  return { days, at: days.length ? wordIndex(t, mentions[0].start) : -1 };
+}
+
+const wordIndex = (text, pos) => text.slice(0, pos).trim().split(/\s+/).filter(Boolean).length;
+
+function resolveDays(mentions, now) {
   if (!mentions.length) return [];
   const today = todayIso(now);
   const year0 = +today.slice(0, 4);
@@ -214,6 +226,54 @@ function parseSkip(text) {
   return hasWord(SKIP, toks, joined) || hasWord(NO, toks, joined);
 }
 
+// ── First message ────────────────────────────────────────────────────────────
+// The organiser may answer the name question with a whole plan ("Umrah in maart 2027 met 40 mensen, vertrek
+// 10 maart, terug 20 maart, naar Mekka en Medina"). Only clear signals are picked up: two dates, a number
+// followed by a word for people, and a destination after a word like "naar" or "to".
+const PEOPLE = ['mensen', 'personen', 'persoon', 'deelnemer', 'pelgrim', 'reiziger', 'gasten', 'people', 'person', 'participant', 'pilgrim', 'traveler', 'traveller',
+  'guest', 'pax', 'leute', 'teilnehmer', 'pilger', 'gäste', 'reisende', 'personne', 'pèlerin', 'voyageur', 'invité', 'persona', 'participante', 'peregrino',
+  'viajero', 'pessoa', 'человек', 'участник', 'паломник', 'شخص', 'أشخاص', 'اشخاص', 'معتمر', 'حاج', 'مشارك', 'زائر', 'مسافر', 'kişi', 'katılımcı', 'hacı', 'yolcu',
+  'orang', 'peserta', 'jemaah', 'jamaah', 'نفر', 'حاجی', 'لوگ', 'افراد', 'लोग', 'यात्री', 'তীর্থযাত্রী', 'জন', 'যাত্রী', 'হাজি'].map(normalizeText);
+const PEOPLE_RE = new RegExp(`(?<![\\d])(\\d{1,6})(?![\\d])\\s+(?:[\\p{L}\\p{M}]+\\s+)?(?:${PEOPLE.map(escapeRe).join('|')})[\\p{L}\\p{M}]*`, 'u');
+const DEST_KEYS = ['naar', 'bestemming', 'to', 'destination', 'nach', 'ziel', 'vers', 'destino', 'hacia', 'para', 'a', 'в', 'إلى', 'الى', 'وجهة', 'به', 'مقصد',
+  'ke', 'tujuan', 'hedef', 'मंजिल'];
+const DEST_RE = new RegExp(`(?<![\\p{L}\\p{M}])(?:${DEST_KEYS.map(escapeRe).join('|')})(?![\\p{L}\\p{M}])[\\s:]+`, 'giu');
+// Words that only introduce a value; they are not part of a trip name.
+const FILLER = new Set(['we', 'wij', 'ik', 'i', 'our', 'gaan', 'go', 'going', 'leave', 'leaving', 'leaves', 'depart', 'departure', 'vertrek', 'vertrekken', 'vertrekt',
+  'from', 'van', 'vanaf', 'tot', 'until', 'till', 'met', 'with', 'for', 'voor', 'naar', 'to', 'bestemming', 'destination', 'en', 'and', 'of', 'op', 'on', 'at',
+  'de', 'het', 'the', 'een', 'zijn', 'are', 'is', 'terug', 'back', 'return', 'returning', 'return,', 'mit', 'avec', 'con', 'com', 'nach', 'ab', 'wir', 'nous', 'nosotros',
+  'с', 'и', 'für', 'pour', 'para', 'por', 'und', 'et', 'y', 'e', 'dan', 've', 'ile', 'dengan', 'untuk', 'ke', 'bij', 'ongeveer', 'about', 'around', 'ca']);
+
+// { days, daysAt, count, countAt, destinations: [{ at, tails }], words } on the cleaned text; `at` are word indexes.
+function parseFirstMessage(text, { now = Date.now() } = {}) {
+  const clean = String(text ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').trim();
+  const norm = normalizeText(clean);
+  const people = norm.match(PEOPLE_RE);
+  // The head count must not be read as a day ("with 25 people, leaving 10 March").
+  const dates = parseDatesAt(people ? norm.slice(0, people.index) + ' '.repeat(people[0].length) + norm.slice(people.index + people[0].length) : clean, { now });
+  const destinations = [];
+  for (const m of clean.matchAll(DEST_RE)) {
+    const tail = clean.slice(m.index + m[0].length).replace(/[.!?؟]+$/u, '').trim();
+    if (!tail) continue;
+    const tails = [tail];
+    for (let i = tail.lastIndexOf(','); i > 0; i = tail.lastIndexOf(',', i - 1)) tails.push(tail.slice(0, i).trim());
+    destinations.push({ at: wordIndex(clean, m.index), tails: tails.filter(Boolean) });
+  }
+  destinations.reverse(); // the last keyword is the most likely destination
+  return {
+    days: dates.days, daysAt: dates.at, count: people ? +people[1] : null, countAt: people ? wordIndex(norm, people.index) : -1,
+    destinations, words: clean.split(' ').filter(Boolean),
+  };
+}
+
+// The trip name: the words before the first picked-up value, without trailing introducing words.
+function nameBefore(words, at) {
+  let end = at < 0 ? words.length : Math.min(at, words.length);
+  while (end > 0 && FILLER.has(normalizeText(words[end - 1]).replace(/[^\p{L}\p{M}\p{N}']/gu, ''))) end--;
+  const name = words.slice(0, end).join(' ').replace(/[\s,;:\-–]+$/u, '').trim();
+  return name.length >= 2 && !words.slice(0, end).every(w => FILLER.has(normalizeText(w))) ? name : null;
+}
+
 // Destination candidates: the whole text, then the text without its first one to four words.
 function destinationCandidates(text) {
   const clean = String(text ?? '').replace(/[\u0000-\u001f<>]/g, ' ').replace(/\s+/g, ' ').replace(/[.!?؟]+$/u, '').trim().slice(0, 200);
@@ -224,5 +284,5 @@ function destinationCandidates(text) {
 }
 
 module.exports = {
-  LANGS, DAY_MS, normalizeText, parseDates, parseCount, parseYesNo, parseSkip, destinationCandidates, dayToMs, validDay, toDay,
+  LANGS, DAY_MS, normalizeText, parseDates, parseFirstMessage, nameBefore, parseCount, parseYesNo, parseSkip, destinationCandidates, dayToMs, validDay, toDay,
 };

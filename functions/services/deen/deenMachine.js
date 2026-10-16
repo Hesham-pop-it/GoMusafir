@@ -1,7 +1,8 @@
 // Deen's state machine (T1). The server owns the 8 steps and the trip fields; the interpreter
 // (local parser or model) only turns the organiser's words into candidate values, and every value is
 // validated here before it is stored. Pure apart from the injected collaborators, so it is unit tested.
-const { dayToMs, validDay, DAY_MS, destinationCandidates, parseDates, parseCount, parseYesNo, parseSkip } = require('./deenParser');
+const { dayToMs, validDay, DAY_MS, destinationCandidates, parseDates, parseCount, parseYesNo, parseSkip, parseFirstMessage, nameBefore } = require('./deenParser');
+const { splitDestinations } = require('../destinationList');
 
 const STEPS = ['name', 'banner', 'destination', 'dates', 'participants', 'seats', 'overview', 'created'];
 const STEPS_TOTAL = STEPS.length;
@@ -105,18 +106,34 @@ function applyDays(draft, days, now) {
   return null;
 }
 
+const isValidDestination = (value, ctx) => { try { ctx.validateDestination(value); return true; } catch (_) { return false; } };
+
+// "Mekka en Medina" is kept whole when every place in it is valid; otherwise the next candidate is tried.
 function applyDestination(draft, candidates, ctx) {
   for (const candidate of candidates) {
-    try {
-      ctx.validateDestination(candidate);
+    const places = splitDestinations(candidate);
+    if (isValidDestination(candidate, ctx) || (places.length > 1 && places.every(place => isValidDestination(place, ctx)))) {
       draft.fields.destination = candidate;
       return null;
-    } catch (_) { /* try the next candidate */ }
+    }
   }
   return { key: 'destination_invalid', params: {} };
 }
 
 const validParticipants = n => Number.isSafeInteger(n) && n >= 1 && n <= MAX_PARTICIPANTS;
+
+// A first answer that holds more than a name: pick up two dates, a head count and a destination, and
+// return the word index where the name ends (-1 when nothing was found). Refused values are left out.
+function applyFirstMessage(draft, text, ctx) {
+  const found = parseFirstMessage(text, { now: ctx.now });
+  const cuts = [];
+  if (found.days.length >= 2 && applyDays(draft, found.days, ctx.now) === null) cuts.push(found.daysAt);
+  if (validParticipants(found.count)) { draft.fields.participants = found.count; cuts.push(found.countAt); }
+  for (const place of found.destinations) {
+    if (applyDestination(draft, place.tails, ctx) === null) { cuts.push(place.at); break; }
+  }
+  return { cut: cuts.length ? Math.min(...cuts) : -1, words: found.words };
+}
 
 // What the organiser said, as candidate values. The interpreter may be the model; its output is only a hint.
 async function understand(draft, text, ctx) {
@@ -174,7 +191,12 @@ async function handleText(draft, text, ctx) {
   const wasEditing = draft.editing;
   if (step === 'name') {
     if (heard.title.length < 2) return { reply: await advance(draft, ctx, { key: 'ask_name', params: {} }), heard };
-    draft.fields.title = heard.title;
+    let title = heard.title;
+    if (!wasEditing) {
+      const first = applyFirstMessage(draft, text, ctx);
+      if (first.cut >= 0) title = cleanLine(nameBefore(first.words, first.cut), 120);
+    }
+    if (title) draft.fields.title = title; // without a usable name Deen asks for it again, with the other values kept
     draft.editing = null;
   } else if (step === 'banner') {
     return { reply: await advance(draft, ctx, { key: 'ask_banner', params: {} }), heard }; // only an upload completes it
@@ -216,18 +238,19 @@ const RETRY = { destination_invalid: 'retry_destination', dates_invalid: 'retry_
 const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
 function ackFor(draft, before) {
   const f = draft.fields, b = before.fields;
-  if (f.title && f.title !== b.title) return { key: 'ack_name', params: { title: f.title } };
-  if (f.destination && f.destination !== b.destination) return { key: 'ack_destination', params: { destination: f.destination } };
-  if (f.start_day && (f.start_day !== b.start_day || f.end_day !== b.end_day)) return { key: 'ack_dates', params: { start: f.start_day, end: f.end_day } };
-  if (f.participants && f.participants !== b.participants) return { key: 'ack_participants', params: { count: f.participants } };
-  return null;
+  const acks = [];
+  if (f.title && f.title !== b.title) acks.push({ key: 'ack_name', params: { title: f.title } });
+  if (f.destination && f.destination !== b.destination) acks.push({ key: 'ack_destination', params: { destination: f.destination } });
+  if (f.start_day && (f.start_day !== b.start_day || f.end_day !== b.end_day)) acks.push({ key: 'ack_dates', params: { start: f.start_day, end: f.end_day } });
+  if (f.participants && f.participants !== b.participants) acks.push({ key: 'ack_participants', params: { count: f.participants } });
+  return acks; // one per turn, except when the first answer held several values
 }
 function clientReplies(reply, draft, before, isAction) {
   const out = [];
-  const ack = !isAction && !RETRY[reply.key] && reply.key !== 'not_understood' && reply.key !== 'overview_change_what' ? ackFor(draft, before) : null;
-  if (ack) out.push(ack);
+  const acks = !isAction && !RETRY[reply.key] && reply.key !== 'not_understood' && reply.key !== 'overview_change_what' ? ackFor(draft, before) : [];
+  out.push(...acks);
   if (RETRY[reply.key]) return [{ ...reply, key: RETRY[reply.key], params: { ...reply.params, reason: reply.key } }];
-  if (reply.key === 'overview' && ack && before.step !== 'overview' && before.step !== 'seats') {
+  if (reply.key === 'overview' && acks.length && before.step !== 'overview' && before.step !== 'seats') {
     out.push({ key: 'seats_ok', params: { required: reply.params.required, available: reply.params.available } });
   }
   if (reply.key === 'ready' || reply.key === 'already_created' || reply.key === 'saved_later') { out.push(reply); return out; }
