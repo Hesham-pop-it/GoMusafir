@@ -12,4 +12,15 @@ function decodeTripPhoto(dataUrl) {
   }
   return bytes;
 }
-module.exports = { decodeTripPhoto };
+
+// Stores a decoded banner as trips/{uuid}.jpg (public read by the storage rules) and returns its download URL.
+async function saveTripPhoto(bytes) {
+  const { admin } = require('../admin');
+  const { v4: uuidv4 } = require('uuid');
+  const { getDownloadURL } = require('firebase-admin/storage');
+  const file = admin.storage().bucket().file(`trips/${uuidv4()}.jpg`);
+  await file.save(bytes, { resumable: false, metadata: { contentType: 'image/jpeg',
+    metadata: { firebaseStorageDownloadTokens: uuidv4() } } });
+  return getDownloadURL(file);
+}
+module.exports = { decodeTripPhoto, saveTripPhoto };
