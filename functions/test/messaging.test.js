@@ -250,6 +250,80 @@ test('unblock removes the block', async () => {
   assert.equal(f.db.read(`${B}/blocks/bob/alice`), null);
 });
 
+const open = (f, uid, targetUid) => call(f.fns.openStaffChat, uid, { tripId: 'trip', targetUid });
+const privateChat = { [`${B}/dm_threads/alice_staff1`]: { members: { alice: true, staff1: true }, requester: 'alice', status: 'accepted', staff: 'staff1' } };
+
+test('a pilgrim opens a private chat with a staff member: accepted thread and both inbox rows, names never masked', async () => {
+  const f = load_({ data: world() });
+  assert.equal((await open(f, 'alice', 'staff1')).threadId, 'alice_staff1');
+  const thread = f.db.read(`${B}/dm_threads/alice_staff1`);
+  assert.equal(thread.status, 'accepted'); assert.equal(thread.staff, 'staff1'); assert.equal(thread.requester, 'alice');
+  assert.equal(Object.keys(thread.members).sort().join(), 'alice,staff1');
+  const mine = f.db.read(`${B}/inbox/alice/alice_staff1`);
+  assert.equal(mine.kind, 'dm'); assert.equal(mine.staff, true); assert.equal(mine.peer, 'staff1'); assert.equal(mine.peer_name, 'Sam S'); assert.equal(mine.unread, 0);
+  const theirs = f.db.read(`${B}/inbox/staff1/alice_staff1`);
+  assert.equal(theirs.kind, 'dm'); assert.equal(theirs.staff, true); assert.equal(theirs.peer, 'alice'); assert.equal(theirs.peer_name, 'Alice A');
+  assert.equal(f.pushes.length, 0);
+});
+
+test('a staff member opens a private chat with a pilgrim, and opening again returns the same thread untouched', async () => {
+  const f = load_({ data: world() });
+  assert.equal((await open(f, 'staff2', 'bob')).threadId, 'bob_staff2');
+  assert.equal(f.db.read(`${B}/dm_threads/bob_staff2`).staff, 'staff2');
+  f.db.ref(`${B}/inbox/bob/bob_staff2/unread`).set(4);
+  assert.equal((await open(f, 'bob', 'staff2')).threadId, 'bob_staff2');
+  assert.equal(f.db.read(`${B}/inbox/bob/bob_staff2/unread`), 4);
+  assert.equal(f.db.read(`${B}/dm_threads/bob_staff2`).requester, 'staff2');
+});
+
+test('opening a private staff chat is refused for anything but pilgrim and staff', async () => {
+  const f = load_({ data: world({ 'trips_participants/trip/carol': true }) });
+  await reject(open(f, 'alice', 'bob'), 'failed-precondition', 'not-eligible');
+  await reject(open(f, 'alice', 'alice'), 'failed-precondition', 'not-eligible');
+  await reject(open(f, 'staff1', 'staff2'), 'failed-precondition', 'not-eligible');
+  await reject(open(f, 'staff1', 'stranger'), 'failed-precondition', 'not-eligible');
+  await reject(call(f.fns.openStaffChat, 'alice', { tripId: 'trip' }), 'invalid-argument');
+  assert.equal(f.db.read(`${B}/dm_threads`), null);
+});
+
+test('pilgrims still cannot send a message request to staff', async () => {
+  const f = load_({ data: world() });
+  await reject(send(f, 'alice', { targetUid: 'staff1' }), 'failed-precondition', 'not-eligible');
+});
+
+test('block is refused on a private staff chat, even for the staff side', async () => {
+  const f = load_({ data: world(privateChat) });
+  await reject(call(f.fns.respondToMessageRequest, 'staff1', { tripId: 'trip', threadId: 'alice_staff1', action: 'block' }), 'failed-precondition', 'not-eligible');
+  assert.equal(f.db.read(`${B}/blocks`), null); assert.equal(f.db.read(`${B}/reports`), null);
+});
+
+const report = (f, uid = 'alice', threadId = 'alice_staff1') => call(f.fns.reportStaffChat, uid, { tripId: 'trip', threadId });
+
+test('the pilgrim reports a private staff chat: report, report access and a push to the other Admins only', async () => {
+  const f = load_({ data: world({ ...privateChat, 'orgs/org/staff/staff3': 'admin', 'orgs/org/staff/staff4': 'manager', 'users/staff3/profile/firstName': 'Tom' }) });
+  assert.equal((await report(f)).ok, true);
+  assert.equal(f.db.read(`${B}/report_access/alice_staff1`), true);
+  const [entry] = Object.values(f.db.read(`${B}/reports`));
+  assert.equal(entry.reporter, 'alice'); assert.equal(entry.reported, 'staff1'); assert.equal(entry.threadId, 'alice_staff1'); assert.equal(entry.staffThread, true);
+  assert.equal(f.pushes.map(p => p.uid).join(), 'staff3');
+  assert.equal(f.pushes[0].body, 'Alice A reported a private chat with Sam S'); assert.equal(f.pushes[0].payload.type, 'message_report');
+  assert.equal(Object.values(f.db.read(`${B}/notifications/staff3`))[0].type, 'message_report');
+  assert.equal(f.db.read(`${B}/notifications/staff1`), null);
+});
+
+test('reporting twice is idempotent and only the pilgrim of a private staff chat can report', async () => {
+  const f = load_({ data: world({ ...privateChat, 'orgs/org/staff/staff3': 'admin' }) });
+  await report(f); f.pushes.length = 0;
+  assert.equal((await report(f)).ok, true);
+  assert.equal(f.pushes.length, 0); assert.equal(Object.keys(f.db.read(`${B}/reports`)).length, 1);
+  const g = load_({ data: world({ ...privateChat, ...acceptedThread }) });
+  await reject(report(g, 'staff1'), 'failed-precondition', 'not-eligible');
+  await reject(report(g, 'bob'), 'failed-precondition', 'not-eligible');
+  await reject(report(g, 'alice', 'alice_bob'), 'failed-precondition', 'not-eligible');
+  await reject(report(g, 'alice', 'missing'), 'failed-precondition', 'not-eligible');
+  assert.equal(g.db.read(`${B}/report_access`), null);
+});
+
 const event = (params, data) => ({ params: { orgId: 'org', tripId: 'trip', ...params }, data: { val: () => data } });
 const acceptedThread = { [`${B}/dm_threads/alice_bob`]: { members: { alice: true, bob: true }, requester: 'alice', status: 'accepted' } };
 
@@ -283,6 +357,18 @@ test('dm push title is built server-side from the masked name, not the message s
     'orgs/org/trips/trip/visibility_config/lastname': 'Show to everyone' }) });
   await full.fns.onDirectMessageCreated(event({ threadId: 'alice_bob', messageId: 'm1' }, { sender_id: 'alice', text: 'hi' }));
   assert.equal(full.pushes[0].title, 'Alice A');
+});
+
+test('private staff chat push shows full names, the staff role and the photo whatever the visibility settings say', async () => {
+  const photos = { 'users/alice/profile/photoURL': 'a.jpg', 'users/staff1/profile/photoURL': 's.jpg' };
+  const f = load_({ data: world({ ...privateChat, ...photos, [`${B}/inbox/alice/alice_staff1/staff`]: true }) });
+  await f.fns.onDirectMessageCreated(event({ threadId: 'alice_staff1', messageId: 'm1' }, { sender_id: 'staff1', sender_name: 'x', text: 'salaam' }));
+  assert.equal(f.pushes[0].uid, 'alice'); assert.equal(f.pushes[0].title, 'Sam S (Admin)');
+  assert.equal(f.pushes[0].payload.name, 'Sam S'); assert.equal(f.pushes[0].payload.senderImage, 's.jpg');
+  assert.equal(f.db.read(`${B}/inbox/alice/alice_staff1`).staff, true); assert.equal(f.db.read(`${B}/inbox/alice/alice_staff1`).unread, 1);
+  f.pushes.length = 0;
+  await f.fns.onDirectMessageCreated(event({ threadId: 'alice_staff1', messageId: 'm2' }, { sender_id: 'alice', text: 'thanks' }));
+  assert.equal(f.pushes[0].uid, 'staff1'); assert.equal(f.pushes[0].title, 'Alice A'); assert.equal(f.pushes[0].payload.senderImage, 'a.jpg');
 });
 
 test('quiet when the recipient is in the voice channel', async () => {

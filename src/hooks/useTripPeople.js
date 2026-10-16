@@ -57,6 +57,9 @@ export default function useTripPeople(orgId, tripId, staff) {
         const isTargetStaff = isStaffMember(uid, staff, organizerId, staff?.[uid]);
         const common = { targetUid: uid, viewerUid, isViewerStaff, isTargetStaff, globalConfig, personalVisibility: visibility };
         const name = getParticipantDisplayName({ profile, fullName, ...common });
+        // Private staff chats always show the staff member by name and photo, whatever the visibility settings say.
+        const open = { ...common, globalConfig: {}, personalVisibility: {} };
+        const staffName = isTargetStaff ? getParticipantDisplayName({ profile, fullName, ...open }) : null;
         return {
             id: uid,
             name,
@@ -64,6 +67,7 @@ export default function useTripPeople(orgId, tripId, staff) {
             isStaff: isTargetStaff,
             role: staff?.[uid] || null,
             nameVisible: checkPIIVisibility({ field: 'name', ...common }),
+            ...(isTargetStaff ? { staffName, staffImage: getParticipantDisplayPhoto({ profile, displayName: staffName, ...open }) } : {}),
         };
     });
     return { people, loaded: allUids.length === 0 || people.length >= allUids.length };

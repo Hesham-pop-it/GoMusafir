@@ -16,7 +16,7 @@ async function main() {
     assert.ok(uid && token);
     return { uid, token };
   };
-  const [a, b, c, staff] = [await signup('a'), await signup('b'), await signup('c'), await signup('staff')];
+  const [a, b, c, staff, mgr, host] = [await signup('a'), await signup('b'), await signup('c'), await signup('staff'), await signup('mgr'), await signup('host')];
   const owner = async (path, value) => {
     const response = await fetch(`${base}/${path}.json?ns=${ns}`, { method: 'PUT',
       headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
@@ -32,17 +32,19 @@ async function main() {
   const msg = (user, text = 'hi') => ({ sender_id: user.uid, sender_name: 'x', timestamp: Date.now(), text, type: 'text' });
   const bc = [b.uid, c.uid].sort().join('_');
   const ab = [a.uid, b.uid].sort().join('_');
+  const am = [a.uid, mgr.uid].sort().join('_');
   const T = 'trips_active/o/t';
   const access = (u) => ({ expires_at: now + 60000, revoked_before: 0 });
   await owner('', {
     users: { [a.uid]: { current_trip: 't' }, [b.uid]: { current_trip: 't' }, [c.uid]: { current_trip: 't' } },
-    app_access: { [a.uid]: access(), [b.uid]: access(), [c.uid]: access(), [staff.uid]: access() },
-    orgs: { o: { staff: { [staff.uid]: 'admin' }, trips: { t: { status: 'active', end_date: now + 60000 } } } },
+    app_access: { [a.uid]: access(), [b.uid]: access(), [c.uid]: access(), [staff.uid]: access(), [mgr.uid]: access(), [host.uid]: access() },
+    orgs: { o: { staff: { [staff.uid]: 'admin', [mgr.uid]: 'manager', [host.uid]: 'co-host' }, trips: { t: { status: 'active', end_date: now + 60000 } } } },
     trips_orgs: { t: 'o' }, trips_participants: { t: { [a.uid]: true, [b.uid]: true, [c.uid]: true } },
     trips_active: { o: { t: {
       dm_threads: {
         [bc]: { members: { [b.uid]: true, [c.uid]: true }, requester: b.uid, status: 'accepted' },
         [ab]: { members: { [a.uid]: true, [b.uid]: true }, requester: a.uid, status: 'pending' },
+        [am]: { members: { [a.uid]: true, [mgr.uid]: true }, requester: a.uid, status: 'accepted', staff: mgr.uid },
       },
       dm_messages: { [bc]: { m1: msg(b, 'secret') } },
       team: { [b.uid]: { m1: msg(b, 'team b') } },
@@ -93,6 +95,34 @@ async function main() {
   await allow(staff, `${T}/reports`);
   await deny(a, `${T}/reports`);
   await deny(staff, `${T}/reports/r2`, 'PUT', { reporter: 'x' });
+
+  // Private staff chat: both members read and write; other staff and Admins only after a report.
+  await allow(a, `${T}/dm_threads/${am}`);
+  await allow(mgr, `${T}/dm_threads/${am}`);
+  await allow(a, `${T}/dm_messages/${am}/m1`, 'PUT', msg(a));
+  await allow(mgr, `${T}/dm_messages/${am}/m2`, 'PUT', msg(mgr));
+  await allow(mgr, `${T}/dm_messages/${am}`);
+  await deny(b, `${T}/dm_messages/${am}`);
+  await deny(host, `${T}/dm_threads/${am}`);
+  await deny(host, `${T}/dm_messages/${am}`);
+  await deny(staff, `${T}/dm_threads/${am}`);
+  await deny(staff, `${T}/dm_messages/${am}`);
+  await deny(host, `${T}/dm_messages/${am}/m3`, 'PUT', msg(host));
+  await deny(staff, `${T}/dm_messages/${am}/m3`, 'PUT', msg(staff));
+  await deny(a, `${T}/dm_threads/${am}`, 'PUT', { members: { [a.uid]: true, [host.uid]: true }, status: 'accepted', staff: host.uid });
+  await deny(mgr, `${T}/dm_threads/${a.uid}_${host.uid}`, 'PUT', { members: { [a.uid]: true, [mgr.uid]: true }, status: 'accepted' });
+  await deny(a, `${T}/report_access/${am}`, 'PUT', true);
+  await deny(staff, `${T}/report_access/${am}`, 'PUT', true);
+  await deny(a, `${T}/report_access/${am}`);
+  await deny(staff, `${T}/report_access/${am}`);
+  await owner(`${T}/report_access/${am}`, true);
+  await allow(staff, `${T}/dm_threads/${am}`);
+  await allow(staff, `${T}/dm_messages/${am}`);
+  await deny(staff, `${T}/dm_messages/${am}/m3`, 'PUT', msg(staff));
+  await deny(host, `${T}/dm_threads/${am}`);
+  await deny(host, `${T}/dm_messages/${am}`);
+  await deny(b, `${T}/dm_messages/${am}`);
+  await deny(staff, `${T}/dm_messages/${bc}`);
 
   // Journey team thread.
   await deny(a, `${T}/team/${b.uid}`);
@@ -156,6 +186,9 @@ async function main() {
   await deny(a, `${T}/message_settings/${a.uid}`, 'PUT', { requests: 'members' });
   await allow(staff, `${T}/team/${a.uid}/m9`, 'PUT', msg(staff));
   await allow(staff, `${T}/staff_chat/s3`, 'PUT', msg(staff));
+  await deny(a, `${T}/dm_messages/${am}/m9`, 'PUT', msg(a));
+  await allow(mgr, `${T}/dm_messages/${am}`);
+  await allow(staff, `${T}/dm_messages/${am}`);
   console.log(`PASS: ${checks} direct RTDB checks for messaging rules.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

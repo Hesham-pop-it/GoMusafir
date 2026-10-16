@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../src/utils/messagingRules.js'), 'utf8');
 const context = {};
-vm.runInNewContext(source.replace(/export function/g, 'function') + '\nthis.api = { threadIdFor, canRequest, detailButtonFor, inboxSort, totalUnread, teamRowState };', context);
-const { threadIdFor, canRequest, detailButtonFor, inboxSort, totalUnread, teamRowState } = context.api;
+vm.runInNewContext(source.replace(/export function/g, 'function') + '\nthis.api = { threadIdFor, canRequest, detailButtonFor, detailButtonsFor, inboxSort, totalUnread, teamRowState };', context);
+const { threadIdFor, canRequest, detailButtonFor, detailButtonsFor, inboxSort, totalUnread, teamRowState } = context.api;
 
 // Results come from another vm realm, so compare plain copies.
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -50,6 +50,18 @@ test('detailButtonFor follows the inbox row kind', () => {
 test('detailButtonFor offers a request when there is no row', () => {
     assert.equal(detailButtonFor({ ...pilgrim, inboxRow: null }), 'request');
     assert.equal(detailButtonFor({ ...pilgrim }), 'request');
+});
+
+test('detailButtonsFor adds the private chat for a pilgrim viewing staff and for staff viewing a pilgrim', () => {
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, targetIsStaff: true })), ['team', 'staff_private']);
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, viewerIsStaff: true })), ['message_staff', 'staff_private']);
+});
+test('detailButtonsFor keeps one button for pilgrims and none for self, hidden names or staff to staff', () => {
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim })), ['request']);
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, inboxRow: { kind: 'dm' } })), ['open_chat']);
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, isSelf: true, targetIsStaff: true })), []);
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, nameVisible: false })), []);
+    assert.deepEqual(plain(detailButtonsFor({ ...pilgrim, viewerIsStaff: true, targetIsStaff: true })), []);
 });
 
 test('inboxSort puts newest first', () => {

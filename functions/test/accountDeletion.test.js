@@ -22,7 +22,9 @@ function fixture({ cleanupFails = false } = {}) {
       admin: { database: { ServerValue: { TIMESTAMP: 0 } } },
       auth: { deleteUser: async uid => calls.push(`auth:${uid}`) },
       db: { ref: key => ({
-        get: async () => ({ exists: () => key.endsWith('joined_trips'), val: () => ({ trip: { org_id: 'org' }, legacy: null }) }),
+        get: async () => (key.endsWith('/inbox/self')
+          ? { exists: () => true, val: () => ({ pilgrim_staff: { kind: 'dm' } }) }
+          : { exists: () => key.endsWith('joined_trips'), val: () => ({ trip: { org_id: 'org' }, legacy: null }) }),
         update: async value => { calls.push('profile'); if (cleanupFails) throw new Error('RTDB unavailable'); updates = value; },
         set: noop,
       }) },
@@ -58,6 +60,7 @@ test('self deletion uses the fresh identity gate without requiring a current tri
   for (const node of ['inbox', 'dm_private', 'blocks', 'message_settings', 'team_read', 'team', 'team_meta']) {
     assert.equal(f.updates()[`trips_active/org/trip/${node}/self`], null);
   }
+  assert.equal(f.updates()['trips_active/org/trip/report_access/pilgrim_staff'], null);
 });
 test('RTDB cleanup failure stops Auth deletion and produces an actionable error', async () => {
   const f = fixture({ cleanupFails: true });

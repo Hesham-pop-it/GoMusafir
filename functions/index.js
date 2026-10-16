@@ -154,6 +154,6 @@ exports.getOwnAccount = authFunctions.getOwnAccount;
 
 // Direct messaging: message requests, Journey team thread and staff chat.
 const messagingFunctions = require('./groups/messagingFunctions');
-for (const name of ['sendMessageRequest', 'respondToMessageRequest', 'unblockParticipant', 'onDirectMessageCreated', 'onTeamMessageCreated', 'onStaffChatCreated']) {
+for (const name of ['sendMessageRequest', 'respondToMessageRequest', 'unblockParticipant', 'openStaffChat', 'reportStaffChat', 'onDirectMessageCreated', 'onTeamMessageCreated', 'onStaffChatCreated']) {
   exports[name] = messagingFunctions[name];
 }

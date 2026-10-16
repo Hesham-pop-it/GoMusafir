@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const path = require('node:path');
 const source = fs.readFileSync(path.join(__dirname, '../../src/utils/messagesInbox.js'), 'utf8');
 const context = {};
-vm.runInNewContext(source.replace(/export function/g, 'function').replace(/export const/g, 'const') + '\nthis.api = { initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, splitInbox, fill, previewMessages };', context);
+vm.runInNewContext(source.replace(/export function/g, 'function').replace(/export const/g, 'const') + '\nthis.api = { peerShown, initialsOf, formatInboxTime, teamUnreadCount, buildStaffRows, filterStaffRows, sortReports, reportsFor, filterStaffChats, splitInbox, fill, previewMessages };', context);
 const api = context.api;
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
@@ -71,4 +71,26 @@ test('previewMessages skips system lines and falls back to one only when nothing
     assert.deepEqual(plain(api.previewMessages([a, sys, b, sys], 1)), [b]);
     assert.deepEqual(plain(api.previewMessages([sys], 2)), [sys]);
     assert.deepEqual(plain(api.previewMessages([], 2)), []);
+});
+
+test('reportsFor hides a reported private staff chat from non-Admins and from the staff member it names', () => {
+    const reports = [{ id: 'a', reporter: 'p1', reported: 'p2' }, { id: 'b', reporter: 'p1', reported: 's1', staffThread: true }];
+    // The role passed in is the label from getChatStaffRole ('Admin', 'Manager', 'Co-Host').
+    assert.deepEqual(api.reportsFor(reports, 'admin1', 'Admin').map((r) => r.id), ['a', 'b']);
+    assert.deepEqual(api.reportsFor(reports, 's1', 'Admin').map((r) => r.id), ['a']);
+    assert.deepEqual(api.reportsFor(reports, 'm1', 'Manager').map((r) => r.id), ['a']);
+    assert.deepEqual(api.reportsFor(reports, 'c1', 'Co-Host').map((r) => r.id), ['a']);
+});
+
+test('filterStaffChats lists a staff member private chats under all and unread only', () => {
+    const rows = [{ threadId: 'x', staff: true, unread: 0 }, { threadId: 'y', staff: true, unread: 2 }, { threadId: 'z', unread: 5 }];
+    assert.deepEqual(api.filterStaffChats(rows, 'all').map((r) => r.threadId), ['x', 'y']);
+    assert.deepEqual(api.filterStaffChats(rows, 'unread').map((r) => r.threadId), ['y']);
+    assert.deepEqual(plain(api.filterStaffChats(rows, 'reports')), []);
+});
+
+test('peerShown names the staff member in a private staff chat, even when their name is hidden elsewhere', () => {
+    const people = [{ id: 's1', name: 'Staff Member', image: '', isStaff: true, staffName: 'Amina Yusuf', staffImage: 'a.jpg' }];
+    assert.deepEqual(plain(api.peerShown({ peer: 's1', staff: true }, people)), { name: 'Amina Yusuf', image: 'a.jpg' });
+    assert.deepEqual(plain(api.peerShown({ peer: 's1' }, people)), { name: 'Staff Member', image: '' });
 });
