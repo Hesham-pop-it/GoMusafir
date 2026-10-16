@@ -170,6 +170,6 @@ exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;
 // Phase 5: passport links, codes, sessions, data and retention.
 const passportFunctions = require('./groups/passportFunctions');
 for (const name of ['passportOpen', 'passportVerify', 'passportResend', 'passportGet', 'passportSave', 'passportUpload', 'familyRequest', 'familyAnswer',
-  'getPassportSettings', 'setPassportSettings', 'sendPassportLinks', 'revokePassportLink', 'onPassportParticipantJoined', 'sendDuePassportLinks', 'passportRetention']) {
+  'getPassportSettings', 'setPassportSettings', 'sendPassportLinks', 'revokePassportLink', 'tripPassportOverview', 'participantDossier', 'openPassportDocument', 'remindMissing', 'onPassportParticipantJoined', 'sendDuePassportLinks', 'passportRetention']) {
   exports[name] = passportFunctions[name];
 }

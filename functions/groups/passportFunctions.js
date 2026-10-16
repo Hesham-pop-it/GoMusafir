@@ -1,6 +1,6 @@
 // Phase 5: the passport. Pilgrims are not Firebase users: they open a personal link, prove themselves with a
 // mailed code and then work with a short session token (passport* callables, no auth). Staff create, send and
-// withdraw the links and set the timing; they never read the data here (the staff read screens are phase 5 part 2).
+// withdraw the links and set the timing; the staff read side (overview, dossier, documents, reminders) sits at the end of the staff section.
 const { HttpsError } = require('firebase-functions/v2/https');
 const { onValueCreated } = require('firebase-functions/v2/database');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
@@ -31,6 +31,7 @@ const svc = {
   mail: () => require('../services/passport/passportMail'),
   valid: () => require('../services/passport/passportValidation'),
   inv: () => require('../services/invitations/invitationService'),
+  staff: () => require('../services/passport/passportStaff'),
 };
 const ip = request => request.rawRequest?.ip;
 
@@ -236,6 +237,35 @@ exports.revokePassportLink = onCall({ region: 'europe-west1' }, async request =>
   const revoked = await svc.links().revokeLink({ tripId: input.tripId, uid: input.uid });
   await writeAuditLog(input.orgId, { action: 'PASSPORT_LINK_REVOKED', byUid: uid, targetId: input.uid, ipAddress: ip(request), extra: { trip: input.tripId, revoked } });
   return { revoked };
+});
+
+// Staff read side. Managers see the overview and the masked dossier; opening a document or a hidden value is Admin / Co-Host only.
+// -> { needs_copy, meter{total, ready, passport, visa, emergency}, rows[{uid, send, sent_at, send_at, status, last_reminded_at}], families[{id, members, links}] }
+exports.tripPassportOverview = onCall({ region: 'europe-west1' }, async request => {
+  const { orgId, tripId } = parse(z.object({ orgId: ID, tripId: ID }), request.data);
+  await staffContext(request, orgId, ['admin', 'co-host', 'manager']);
+  return svc.staff().overview({ orgId, tripId });
+});
+
+// -> { trip_id, trip_title, needs_copy, contact, status, passport, has_visa, documents, allergies, has_medical_notes, emergency_contacts, family }
+exports.participantDossier = onCall(DATA, async request => {
+  const { orgId, uid, tripId } = parse(z.object({ orgId: ID, uid: ID, tripId: ID.optional() }), request.data);
+  const ctx = await staffContext(request, orgId, ['admin', 'co-host', 'manager']);
+  return svc.staff().dossier({ orgId, uid, tripId, by: ctx.uid, ip: ip(request) });
+});
+
+// kind: passport | visa -> { url } (5 minutes, download); passport_number | medical -> { value }. Needs a fresh phone approval.
+exports.openPassportDocument = onCall(DATA, async request => {
+  const input = parse(z.object({ orgId: ID, tripId: ID, uid: ID, kind: z.string().max(20) }), request.data);
+  const ctx = await staffContext(request, input.orgId);
+  return svc.staff().openDocument({ ...input, by: ctx.uid, ip: ip(request) });
+});
+
+// -> { reminded, skipped, reasons{ uid: reason } }
+exports.remindMissing = onCall({ region: 'europe-west1', secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY], timeoutSeconds: 300 }, async request => {
+  const input = parse(z.object({ orgId: ID, tripId: ID, uids: z.array(ID).min(1).max(500).optional() }), request.data);
+  const ctx = await staffContext(request, input.orgId);
+  return svc.staff().remind({ ...input, by: ctx.uid, ip: ip(request) });
 });
 
 // ── Triggers and schedules ─────────────────────────────────────────────────────────
