@@ -351,12 +351,13 @@ export default function TemplateAlertPopup() {
         });
 
         // 2. Trip-level Notifications & Chat Listeners Management
-        const tripListenersMap = new Map(); // key: tripId, val: { unsubNotif, unsubChat, orgId }
+        const tripListenersMap = new Map();
+        let disposed = false;
+        let revision = 0;
 
         const userRefPath = ref(database, `users/${uid}`);
         const unsubUserData = onVisibleValue(userRefPath, null, async (snapshot) => {
-            if (!snapshot.exists()) return;
-
+            const currentRevision = ++revision;
             const userData = snapshot.val() || {};
             const joinedTrips = userData.joined_trips || {};
 
@@ -392,11 +393,12 @@ export default function TemplateAlertPopup() {
                 }
             }
 
+            if (disposed || currentRevision !== revision) return;
+
             // Remove listeners for trips that are no longer active
             for (const [tId, listenerObj] of tripListenersMap.entries()) {
-                if (!activeTrips.has(tId)) {
-                    listenerObj.unsubNotif?.();
-                    listenerObj.unsubChat?.();
+                if (activeTrips.get(tId) !== listenerObj.orgId) {
+                    listenerObj.stop();
                     tripListenersMap.delete(tId);
                 }
             }
@@ -405,6 +407,24 @@ export default function TemplateAlertPopup() {
             for (const [tripId, orgId] of activeTrips.entries()) {
                 if (tripListenersMap.has(tripId)) continue;
 
+                let stopMessages = null;
+                let expiryTimer = null;
+                let stopped = false;
+                const stopChat = () => {
+                    clearTimeout(expiryTimer);
+                    expiryTimer = null;
+                    stopMessages?.();
+                    stopMessages = null;
+                };
+                const handleError = (source, err) => {
+                    if (['functions/permission-denied', 'functions/unauthenticated'].includes(err?.code)) {
+                        stopChat();
+                    }
+                    console.log(`[TemplateAlertPopup] ${source} error:`, {
+                        tripId, orgId, code: err?.code, message: err?.message,
+                    });
+                };
+                const startMessages = () => {
                 let isTripNotifInitialLoad = true;
                 let isTripChatInitialLoad = true;
 
@@ -502,7 +522,7 @@ export default function TemplateAlertPopup() {
                         showBanner(newestTripNotif);
                     }
                 }, (err) => {
-                    console.log("[TemplateAlertPopup] trip notif error:", { code: err?.code, message: err?.message });
+                    handleError("trip notif", err);
                 });
 
                 // Direct Trip Chat Listener (ensures instant in-app popups even if cloud functions are delayed)
@@ -570,21 +590,51 @@ export default function TemplateAlertPopup() {
                         showBanner(newestChatMsg);
                     }
                 }, (err) => {
-                    console.log("[TemplateAlertPopup] chat listener error:", { code: err?.code, message: err?.message });
+                    handleError("chat listener", err);
                 });
 
-                tripListenersMap.set(tripId, { unsubNotif, unsubChat, orgId });
+                return () => { unsubNotif(); unsubChat(); };
+                };
+                // Watch eligibility separately: old memberships are retained after a trip ends.
+                const unsubscribeTrip = onValue(ref(database, `orgs/${orgId}/trips/${tripId}`), snap => {
+                    if (stopped || disposed) return;
+                    const trip = snap.val();
+                    clearTimeout(expiryTimer);
+                    if (trip?.status !== 'active' || !Number.isFinite(trip.end_date) || trip.end_date <= Date.now()) {
+                        stopChat();
+                        return;
+                    }
+                    if (!stopMessages) stopMessages = startMessages();
+                    const checkExpiry = () => {
+                        if (stopped || disposed) return;
+                        const remaining = trip.end_date - Date.now();
+                        if (remaining <= 0) stopChat();
+                        else expiryTimer = setTimeout(checkExpiry, Math.min(remaining, 2147483647));
+                    };
+                    checkExpiry();
+                }, err => {
+                    stopChat();
+                    console.log('[TemplateAlertPopup] trip eligibility unavailable:', {
+                        tripId, orgId, code: err?.code,
+                    });
+                });
+                tripListenersMap.set(tripId, { orgId, stop: () => {
+                    stopped = true;
+                    unsubscribeTrip();
+                    stopChat();
+                } });
             }
         }, (err) => {
             console.log("[TemplateAlertPopup] user listener error:", { code: err?.code, message: err?.message });
         });
 
         return () => {
+            disposed = true;
+            revision++;
             unsubUserNotifs();
             unsubUserData();
             for (const [, listenerObj] of tripListenersMap.entries()) {
-                listenerObj.unsubNotif?.();
-                listenerObj.unsubChat?.();
+                listenerObj.stop();
             }
             tripListenersMap.clear();
         };

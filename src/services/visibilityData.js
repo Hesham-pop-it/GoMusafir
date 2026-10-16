@@ -61,7 +61,7 @@ export async function getVisibleSnapshot(target, tripId) {
 }
 // iOS/Android can suspend networking in the background. Screen-data polling
 // follows app visibility; location tracking is managed by its own native service.
-function startForegroundPolling(task) {
+function startForegroundPolling(task, intervalMs = 4000) {
     let stopped = false, timer = null, revision = 0;
     let state = AppState.currentState;
     const active = () => !state || state === 'active';
@@ -70,7 +70,7 @@ function startForegroundPolling(task) {
         const started = revision;
         const isCurrent = () => !stopped && active() && revision === started;
         try { await task(isCurrent); }
-        finally { if (isCurrent()) timer = setTimeout(poll, 4000); }
+        finally { if (isCurrent()) timer = setTimeout(poll, intervalMs); }
     };
     const subscription = AppState.addEventListener('change', next => {
         if (next === state) return;
@@ -113,7 +113,7 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
                 }
             }
         };
-        group.stopPolling = startForegroundPolling(poll);
+        group.stopPolling = startForegroundPolling(poll, request.section === 'chat' ? 1000 : 4000);
     }
     const client = { request, callback, onError };
     group.clients.add(client);

@@ -10,11 +10,13 @@ const { beforeUserCreated, beforeUserSignedIn } = require("firebase-functions/v2
 const { admin, db, auth } = require("../admin");
 const { encrypt } = require("../services/kmsService");
 const { writeAuditLog } = require("../services/auditService");
-const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddleware");
+const { verifyAppCheck, requireAuth, requireRole } = require("../middleware/appCheckMiddleware");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
-const { deleteStripeCustomer } = require("../services/stripeService");
+const { createEmailOtpService, generateCode } = require("../services/emailOtpService");
+const emailOtp = createEmailOtpService(db);
+const { getAccountCleanup } = require("../services/accountCleanupService");
 
 // Per-user direct messaging nodes under trips_active/{org}/{trip}/ cleared on account deletion.
 const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read", "team", "team_meta"];
@@ -169,24 +171,28 @@ exports.sendCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1", 
   const uid = request.auth.uid;
   const email = request.auth.token.email;
 
-  // Rate Limiting check (prevent spamming emails)
-  const rateLimitRef = db.ref(`otp_codes/${uid}/lastSent`);
-  const snapshot = await rateLimitRef.get();
+  // Per-user cooldown (also refuses while the user is locked out after wrong attempts)
   const isEmulator = process.env.FUNCTIONS_EMULATOR === 'true';
-  const limitTime = isEmulator ? 5000 : 60000;
-  if (snapshot.exists() && Date.now() - snapshot.val() < limitTime) {
-    throw new HttpsError("resource-exhausted", "auth/too-many-requests");
+  const claim = await emailOtp.claimSend(uid, isEmulator ? 5000 : 60000);
+  if (!claim.ok) {
+    throw new HttpsError("resource-exhausted", claim.locked
+      ? `Too many incorrect attempts. Try again in ${claim.retryAfterSeconds} seconds.`
+      : `Please wait ${claim.retryAfterSeconds} seconds before requesting another code.`,
+    { reason: claim.locked ? "locked" : "cooldown", retryAfterSeconds: claim.retryAfterSeconds });
+  }
+  // Per-email hourly limit
+  // The App Review account is exempt so reviewers can never be throttled out.
+  const emailRate = email === 'apple@popitnl.nl' ? { ok: true } : await emailOtp.countEmailSend(email);
+  if (!emailRate.ok) {
+    throw new HttpsError("resource-exhausted", "Too many codes requested for this email. Try again later.",
+      { reason: "email-limit", retryAfterSeconds: emailRate.retryAfterSeconds });
   }
 
-  // Generate ultra-secure 6-digit code
-  const code = email === 'apple@popitnl.nl' ? '123456' : Math.floor(100000 + Math.random() * 900000).toString();
+  // Cryptographically random 6-digit code (fixed code only for the App Review account)
+  const code = email === 'apple@popitnl.nl' ? '123456' : generateCode();
 
-  // Store code in RTDB securely with an expiration timestamp
-  await db.ref(`otp_codes/${uid}`).set({
-    code: code,
-    expiresAt: Date.now() + 10 * 60 * 1000, // Valid for 10 minutes
-    lastSent: Date.now()
-  });
+  // Only a salted hash of the code is stored
+  await emailOtp.storeCode(uid, code);
 
   if (email === 'apple@popitnl.nl') {
       return { success: true };
@@ -236,20 +242,21 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
   }
   // ─────────────────────────────────────────────────────────────────────────────
 
-  const otpRef = db.ref(`otp_codes/${uid}`);
-  const snapshot = await otpRef.get();
+  const check = await emailOtp.checkCode(uid, String(otp));
 
-  if (!snapshot.exists()) {
+  if (check.outcome === "not-found") {
     throw new HttpsError("not-found", "No pending OTP request found.");
   }
-
-  const data = snapshot.val();
-  if (Date.now() > data.expiresAt) {
+  if (check.outcome === "expired") {
     throw new HttpsError("deadline-exceeded", "OTP has expired. Please request a new one.");
   }
-
-  if (data.code !== otp) {
-    throw new HttpsError("permission-denied", "Incorrect OTP code.");
+  if (check.outcome === "locked") {
+    throw new HttpsError("resource-exhausted",
+      `Too many incorrect attempts. Try again in ${check.retryAfterSeconds} seconds.`,
+      { reason: "locked", retryAfterSeconds: check.retryAfterSeconds });
+  }
+  if (check.outcome === "wrong") {
+    throw new HttpsError("permission-denied", "Incorrect OTP code.", { attemptsLeft: check.attemptsLeft });
   }
 
   // OTP Matches! Authenticate the user cryptographically via Firebase Admin SDK
@@ -257,8 +264,7 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
     emailVerified: true
   });
 
-  // Cleanup the used code to prevent multi-use attacks
-  await otpRef.remove();
+  // The matching transaction already deleted the used code (no multi-use).
 
   return { verified: true };
 });
@@ -280,89 +286,58 @@ exports.checkUserExistence = onCall({ enrollment: true, region: "europe-west1" }
   }
 });
 
-// ── Delete User Globally (Admin only) ─────────────────────────────────────────
+// ── Delete User (Admin only) ──────────────────────────────────────────────────
+// An admin may only remove a user from their own organisation's data. The account is
+// deleted platform-wide only when the user has no memberships (trips or staff roles)
+// in any other organisation. Stripe and payment records are never touched.
 exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin"]);
 
-  const { targetUid } = request.data;
+  const { targetUid } = request.data || {};
   const orgId = request.auth.token.orgId;
 
-  if (!targetUid) throw new HttpsError("invalid-argument", "targetUid is required.");
+  if (!targetUid || typeof targetUid !== "string") throw new HttpsError("invalid-argument", "targetUid is required.");
+  if (targetUid === request.auth.uid) {
+    throw new HttpsError("failed-precondition", "Use account deletion to delete your own account.");
+  }
+
+  const cleanup = getAccountCleanup();
 
   // Verify target user belongs to caller's org for data isolation
-  const joinedTripsSnap = await db.ref(`users/${targetUid}/joined_trips`).get();
-  let belongsToOrg = false;
-  if (joinedTripsSnap.exists()) {
-    for (const tid of Object.keys(joinedTripsSnap.val())) {
-      const tOrgSnap = await db.ref(`trips_orgs/${tid}`).get();
-      if (tOrgSnap.exists() && tOrgSnap.val() === orgId) {
-        belongsToOrg = true;
-        break;
-      }
-    }
-  }
-
-  // Also check if they are staff of this org
-  const staffOrgSnap = await db.ref(`users/${targetUid}/staff_org_id`).get();
-  if (staffOrgSnap.exists() && staffOrgSnap.val() === orgId) {
-    belongsToOrg = true;
-  }
-
-  if (!belongsToOrg) {
+  if (!(await cleanup.userBelongsToOrg(targetUid, orgId))) {
     throw new HttpsError("permission-denied", "You can only delete users who belong to your organization.");
   }
-
-  // 1. Find all trips the user joined to clean up trips_participants
-  const joinedTrips = joinedTripsSnap.val() || {};
-  const updates = {
-    [`users/${targetUid}`]: null,
-    [`otp_codes/${targetUid}`]: null,
-  };
-
-  for (const tid of Object.keys(joinedTrips)) {
-    updates[`trips_participants/${tid}/${targetUid}`] = null;
-    const tripOrgId = joinedTrips[tid].org_id || joinedTrips[tid].orgId;
-    if (tripOrgId) {
-      updates[`trips_active/${tripOrgId}/${tid}/locations/${targetUid}`] = null;
-      for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${targetUid}`] = null;
-      await clearReportAccess(updates, tripOrgId, tid, targetUid);
-    }
+  // The owner of the organisation is removed by deleting the organisation, not here.
+  const targetStaffRole = (await db.ref(`orgs/${orgId}/staff/${targetUid}`).get()).val();
+  if (targetStaffRole === "admin") {
+    throw new HttpsError("failed-precondition", "The organization owner cannot be removed. Delete the organization instead.");
   }
 
-  // 2. Delete Stripe Customer (if any)
-  let targetEmail = null;
-  try {
-    const targetUser = await auth.getUser(targetUid);
-    targetEmail = targetUser.email;
-  } catch (e) {}
-
-  let stripeCustomerId = null;
-  const userStripeSnap = await db.ref(`users/${targetUid}/stripe_customer_id`).get();
-  if (userStripeSnap.exists()) {
-    stripeCustomerId = userStripeSnap.val();
-  } else if (orgId) {
-    const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
-    if (orgStripeSnap.exists()) {
-      stripeCustomerId = orgStripeSnap.val();
+  const otherMemberships = await cleanup.hasMembershipsOutsideOrg(targetUid, orgId);
+  let scope;
+  if (otherMemberships) {
+    // Shared user: only this organisation's data goes; the account and other orgs stay.
+    scope = "org_only";
+    await cleanup.removeUserFromOrg(targetUid, orgId);
+  } else {
+    scope = "account";
+    await cleanup.removeUserCompletely(targetUid, { staffOrgId: orgId });
+    try {
+      await auth.deleteUser(targetUid);
+    } catch (error) {
+      if (error.code !== "auth/user-not-found") throw error;
     }
   }
-  await deleteStripeCustomer(stripeCustomerId, targetEmail, orgId);
-
-  // 3. Delete from Auth (Admin SDK)
-  await db.ref(`app_access/${targetUid}`).remove();
-  await auth.deleteUser(targetUid);
-
-  // 4. Delete from DB
-  await db.ref().update(updates);
 
   await writeAuditLog(orgId, {
-    action: "USER_DELETED_GLOBALLY",
+    action: scope === "account" ? "USER_DELETED_GLOBALLY" : "USER_REMOVED_FROM_ORG",
     byUid: request.auth.uid,
     targetId: targetUid,
+    extra: { scope },
   });
 
-  return { success: true };
+  return { success: true, scope };
 });
 
 // ── Delete My Account (Bypasses recent login requirement by using Admin SDK) ───
@@ -374,13 +349,13 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
   const uid = request.auth.uid;
   const role = request.auth.token.role;
   const orgId = request.auth.token.orgId;
-  const userEmail = request.auth.token.email;
 
   let stage = "organization";
   try {
-    // 1. If admin, mark org for deletion (soft delete)
+    const cleanup = getAccountCleanup();
+    // 1. If admin, mark org for deletion (soft delete; purged after the grace period)
     if (role === 'admin' && orgId) {
-      await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+      await cleanup.markOrganizationDeleted(orgId, admin.database.ServerValue.TIMESTAMP);
       await writeAuditLog(orgId, {
         action: "ORG_DELETED_BY_OWNER",
         byUid: uid,
@@ -388,44 +363,10 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
       });
     }
 
-    stage = "billing";
-    // 2. Cleanup Stripe Customer
-    let stripeCustomerId = null;
-    const userStripeSnap = await db.ref(`users/${uid}/stripe_customer_id`).get();
-    if (userStripeSnap.exists()) {
-      stripeCustomerId = userStripeSnap.val();
-    } else if (orgId) {
-      const orgStripeSnap = await db.ref(`orgs/${orgId}/stripe_customer_id`).get();
-      if (orgStripeSnap.exists()) {
-        stripeCustomerId = orgStripeSnap.val();
-      }
-    }
-    await deleteStripeCustomer(stripeCustomerId, userEmail, orgId);
-
-    stage = "profile-read";
-    // 3. Cleanup user data
-    const joinedTripsSnap = await db.ref(`users/${uid}/joined_trips`).get();
-    const updates = {
-      [`users/${uid}`]: null,
-      [`otp_codes/${uid}`]: null,
-    };
-
-    if (joinedTripsSnap.exists()) {
-      const joinedTrips = joinedTripsSnap.val();
-      for (const tid of Object.keys(joinedTrips)) {
-        updates[`trips_participants/${tid}/${uid}`] = null;
-        const tripOrgId = joinedTrips[tid]?.org_id || joinedTrips[tid]?.orgId;
-        if (tripOrgId) {
-          updates[`trips_active/${tripOrgId}/${tid}/locations/${uid}`] = null;
-          for (const node of MESSAGING_NODES) updates[`trips_active/${tripOrgId}/${tid}/${node}/${uid}`] = null;
-          await clearReportAccess(updates, tripOrgId, tid, uid);
-        }
-      }
-    }
-
+    // 2. Cleanup user data (chat anonymised, media/presence/notifications wiped;
+    //    Stripe customers and payment records are retained)
     stage = "profile-cleanup";
-    updates[`app_access/${uid}`] = null;
-    await db.ref().update(updates);
+    await cleanup.removeUserCompletely(uid, { staffOrgId: orgId });
 
     stage = "auth-delete";
     await auth.deleteUser(uid);

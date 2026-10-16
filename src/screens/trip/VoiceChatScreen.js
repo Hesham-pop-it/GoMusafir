@@ -39,6 +39,7 @@ setLogLevel('error');
 import * as Network from 'expo-network';
 import { database, functions, auth } from '../../config/firebase';
 import { ref, onValue, off, update, get } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import PreTripVoiceAllowance from '../../components/PreTripVoiceAllowance';
@@ -179,10 +180,9 @@ const VoiceChatContent = ({
         uids.forEach(async (uid) => {
             {
                 try {
+                    const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
                     const profileRef = ref(database, `users/${uid}/profile`);
                     const fullNameRef = ref(database, `users/${uid}/full_name`);
-                    const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
-
                     const [profileSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
                         getVisibleSnapshot(profileRef, tripId),
                         getVisibleSnapshot(fullNameRef, tripId),
@@ -196,8 +196,7 @@ const VoiceChatContent = ({
                         ...rawProfile,
                         photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                     };
-                    const fullName = nameSnap.val();
-                    const visibility = visSnap.val() || {};
+                    const fullName = nameSnap.val();                    const visibility = visSnap.val() || {};
                     const targetRole = staffData?.[uid];
                     const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
                     const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
@@ -763,10 +762,10 @@ const VoiceChatScreen = () => {
         // Fetch profiles for these combined UIDs
         const promises = combinedUids.map(async (uid) => {
             try {
-                const profileRef = ref(database, `users/${uid}/profile`);
-                const fullNameRef = ref(database, `users/${uid}/full_name`);
                 const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
+                const profileRef = ref(database, `users/${uid}/profile`);
+                const fullNameRef = ref(database, `users/${uid}/full_name`);
                 const [profileSnap, nameSnap, visSnap, photoSnap] = await Promise.all([
                     getVisibleSnapshot(profileRef, tripId),
                     getVisibleSnapshot(fullNameRef, tripId),
@@ -776,11 +775,11 @@ const VoiceChatScreen = () => {
 
                 const rawProfile = profileSnap.val() || {};
                 const photoUrl = photoSnap?.val();
+                const fullName = nameSnap.val();
                 const profile = {
                     ...rawProfile,
                     photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                 };
-                const fullName = nameSnap.val();
                 const visibility = visSnap.val() || {};
                 const targetRole = staffData[uid];
                 const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);

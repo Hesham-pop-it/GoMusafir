@@ -16,6 +16,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { ref, onValue, get } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { database, auth } from '../../config/firebase';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { useLanguage } from '../../context/LanguageContext';

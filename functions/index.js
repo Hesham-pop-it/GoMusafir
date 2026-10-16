@@ -53,6 +53,7 @@ exports.createOrganization    = orgFunctions.createOrganization;
 exports.updateMemberRole      = orgFunctions.updateMemberRole;
 exports.deleteOrganization    = orgFunctions.deleteOrganization;
 exports.inviteTeamMember      = orgFunctions.inviteTeamMember;
+exports.leaveOrganization     = orgFunctions.leaveOrganization;
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
 exports.createTrip            = tripFunctions.createTrip;
@@ -91,7 +92,8 @@ exports.verifyAppleIAPReceipt = paymentFunctions.verifyAppleIAPReceipt;
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
 exports.dataCleanupCron       = systemFunctions.dataCleanupCron;
-exports.secureCleanupPII      = systemFunctions.secureCleanupPII;
+// secureCleanupPII is intentionally not exported: it walks every user on the platform and any org admin could trigger it.
+// It stays in groups/systemFunctions.js for a one-off platform-owner migration (export temporarily, then remove again).
 
 // ── Voice Chat ────────────────────────────────────────────────────────────────
 exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
@@ -130,6 +132,12 @@ exports.dashboardStatsCron    = dashboardStatsFunctions.dashboardStatsCron;
 const participantAccessFunctions = require('./groups/participantAccessFunctions');
 for (const name of ['getAppAccess', 'onTripAccessChanged', 'onMembershipAccessChanged', 'onStaffAccessChanged', 'expireParticipantAccess', 'backfillParticipantAccess', 'beginParticipantEnrollment', 'completeParticipantEnrollment']) {
   exports[name] = participantAccessFunctions[name];
+}
+
+// Org membership index and trip display cards used by the database rules.
+const orgMembersFunctions = require('./groups/orgMembersFunctions');
+for (const name of ['onParticipantIndexChanged', 'onStaffIndexChanged', 'onUserProfileCardChanged', 'onUserNameCardChanged', 'onUserPhotoCardChanged']) {
+  exports[name] = orgMembersFunctions[name];
 }
 
 // Shared all-muted inactivity checks for iOS and Android.

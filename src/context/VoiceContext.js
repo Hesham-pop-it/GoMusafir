@@ -15,6 +15,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { database, functions, auth } from '../config/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ref, onValue, update, get, onDisconnect, push } from 'firebase/database';
+import { fetchParticipantDisplay } from '../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import { setAudioModeAsync } from 'expo-audio';
 import { 

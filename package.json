@@ -65,7 +65,6 @@
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-calendars": "^1.1314.0",
-    "react-native-callkeep": "^4.3.16",
     "react-native-gesture-handler": "~2.31.1",
     "react-native-iap": "^15.6.2",
     "react-native-maps": "^1.29.0",

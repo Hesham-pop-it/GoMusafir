@@ -25,6 +25,7 @@ import Modal from '../../components/CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 
 import { database, auth, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';

@@ -53,9 +53,14 @@ exports.checkTripVoiceAccess = onTaskDispatched({ region,
 exports.reconcileTripVoiceAccess = onSchedule({ region, schedule: 'every 1 minutes', retryCount: 3 }, async () => {
   const mapping = (await db.ref('trips_orgs').get()).val() || {};
   for (const [tripId, orgId] of Object.entries(mapping)) {
-    const state = (await accessRef(orgId, tripId).get()).val();
-    if (!state || state.nextCheckAt && state.nextCheckAt <= Date.now() || state.session) {
-      await reconcileSession(orgId, tripId);
+    try {
+      const state = (await accessRef(orgId, tripId).get()).val();
+      if (!state || state.nextCheckAt && state.nextCheckAt <= Date.now() || state.session) {
+        await reconcileSession(orgId, tripId);
+      }
+    } catch (error) {
+      // One bad trip must not abort the rest; the next minute run retries it.
+      console.error('Voice reconcile failed', { tripId, orgId, code: error.code, message: error.message });
     }
   }
 });

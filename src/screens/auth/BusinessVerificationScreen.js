@@ -295,8 +295,12 @@ const BusinessVerificationScreen = ({ route }) => {
             console.warn("OTP Resend Error:", error);
             const errMsg = error.message || "";
             if (error.code?.replace(/^functions\//, '') === 'resource-exhausted' || errMsg.includes('too-many-requests') || errMsg.includes('resource-exhausted')) {
-                Alert.alert("Rate Limit Exceeded", "Please wait a minute before requesting another code.");
-                setResendTimer(60);
+                // The server reports the exact wait (cooldown, lockout or hourly limit).
+                const wait = Number(error.details?.retryAfterSeconds) || 60;
+                Alert.alert("Rate Limit Exceeded", error.details?.retryAfterSeconds
+                    ? error.message
+                    : "Please wait a minute before requesting another code.");
+                setResendTimer(wait);
             } else {
                 Alert.alert("Error", error.message || "Failed to resend code. Please check your internet connection.");
             }

@@ -916,6 +916,7 @@ const HomeScreen = ({ navigation }) => {
                         contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }, filteredData.length === 0 && { flexGrow: 1, justifyContent: 'center' }]}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={renderEmptyComponent}
+                        keyboardShouldPersistTaps="handled"
                     />
                 </View>
 

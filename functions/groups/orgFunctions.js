@@ -14,7 +14,8 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
-const { createStripeCustomer, deleteStripeCustomer } = require("../services/stripeService");
+const { createStripeCustomer } = require("../services/stripeService");
+const { getAccountCleanup } = require("../services/accountCleanupService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -209,15 +210,8 @@ exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) 
     );
   }
 
-  // Delete associated Stripe customer
-  const orgSnap = await db.ref(`orgs/${callerOrgId}`).get();
-  const orgData = orgSnap.val() || {};
-  const stripeCustomerId = orgData.stripe_customer_id;
-  const adminEmail = orgData.email || request.auth.token.email;
-  await deleteStripeCustomer(stripeCustomerId, adminEmail, callerOrgId);
-
-  // Soft-delete: mark org as deleted, clean-up scheduled by dataCleanupCron
-  await db.ref(`orgs/${callerOrgId}/metadata/deleted_at`).set(admin.database.ServerValue.TIMESTAMP);
+  // Soft-delete: mark org as deleted. Data is purged by purgeDeletedOrganizations only after the 30 day grace period (not enabled by default).
+  await getAccountCleanup().markOrganizationDeleted(callerOrgId, admin.database.ServerValue.TIMESTAMP);
 
   await writeAuditLog(callerOrgId, {
     action: "ORG_DELETED",
@@ -288,36 +282,54 @@ exports.inviteTeamMember = onCall({ region: "europe-west1", secrets: ["SENDGRID_
   return { success: true };
 });
 
-// ── Leave Organization (Staff only, not Admin) ────────────────────────────────
+// ── Leave Organization (co-host and manager only; the owner cannot leave) ─────
+// The account itself is kept; only the staff membership and claims are removed.
 exports.leaveOrganization = onCall({ region: "europe-west1" }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
   const uid = request.auth.uid;
   const orgId = request.auth.token.orgId;
-  const role = request.auth.token.role;
+  const tokenRole = request.auth.token.role;
 
-  if (!orgId || !role) {
+  if (!orgId || !tokenRole) {
     throw new HttpsError("failed-precondition", "You are not part of an organization.");
   }
-
-  if (role === "admin") {
-    throw new HttpsError("failed-precondition", "Admins cannot leave. They must delete the organization instead.");
+  if (tokenRole === "admin") {
+    throw new HttpsError("failed-precondition", "The organization owner cannot leave. Delete the organization instead.");
   }
 
-  // 1. Remove from staff list
-  await db.ref(`orgs/${orgId}/staff/${uid}`).remove();
+  // The staff record is the source of truth; a stale token must not decide who may leave.
+  const staffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).get();
+  const staffRole = staffSnap.exists() ? staffSnap.val() : null;
+  if (staffRole === "admin") {
+    throw new HttpsError("failed-precondition", "The organization owner cannot leave. Delete the organization instead.");
+  }
+  if (staffRole !== "co-host" && staffRole !== "manager") {
+    throw new HttpsError("failed-precondition", "You are not a team member of this organization.");
+  }
 
-  // 2. Clear staff_org_id from user
-  await db.ref(`users/${uid}/staff_org_id`).remove();
+  // 1 + 2. Remove from the staff list and clear staff_org_id in one write.
+  await db.ref().update({
+    [`orgs/${orgId}/staff/${uid}`]: null,
+    [`users/${uid}/staff_org_id`]: null,
+  });
 
-  // 3. Clear custom claims
-  await auth.setCustomUserClaims(uid, { role: null, orgId: null });
+  // 3. Clear the org claims but keep any unrelated claims.
+  const userRecord = await auth.getUser(uid);
+  const claims = { ...(userRecord.customClaims || {}) };
+  delete claims.role;
+  delete claims.orgId;
+  await auth.setCustomUserClaims(uid, claims);
+
+  // 4. Revoke refresh tokens so the old org claims cannot be refreshed back in.
+  await auth.revokeRefreshTokens(uid);
 
   await writeAuditLog(orgId, {
     action: "STAFF_LEFT",
     byUid: uid,
     targetId: uid,
+    extra: { role: staffRole },
   });
 
   return { success: true };

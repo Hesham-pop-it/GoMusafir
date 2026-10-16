@@ -1,4 +1,4 @@
-import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, offVisible } from '../../services/visibilityData';
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue } from '../../services/visibilityData';
 import React, { useState, useRef, useEffect } from 'react';
 import {
     View,
@@ -28,7 +28,8 @@ import TripBottomTabBar from '../../components/TripBottomTabBar';
 import Logo from '../../components/Logo';
 import { Typography } from '../../constants/Typography';
 import { database, auth } from '../../config/firebase';
-import { ref, onChildAdded, push, serverTimestamp, off, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
+import { ref, push, serverTimestamp, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { uploadTripMedia } from '../../utils/uploadTripMedia';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -82,47 +83,9 @@ const TemplateIconSvg = ({ size = 40, color = "#FFFFFF" }) => (
     </Svg>
 );
 
-const MOCK_MESSAGES = [
-    {
-        id: '1',
-        text: '1912. Again...',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '08:55',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-    },
-    {
-        id: '2',
-        text: 'Anyway... Group trip? Any era’s fine, just not 2020. 😐',
-        sender: 'me',
-        time: '09:34',
-        read: true,
-    },
-    {
-        id: '3',
-        text: 'You’ll all laugh...',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '10:01',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-        replyTo: {
-            sender: 'You',
-            text: 'Anyway... Group trip? Any era’s fine, just not 2020. 😐',
-            color: '#D32F2F' // Pinkish line color from screenshot
-        }
-    },
-    {
-        id: '4',
-        text: '...until the clock hits 2:17 AM, March 14th, 2036.',
-        sender: 'other',
-        senderName: 'Titor',
-        time: '10:01',
-        avatar: 'https://randomuser.me/api/portraits/men/32.jpg',
-    }
-];
-
 const QUICK_OPTIONS = [
     { id: 'photo', label: 'Photo', icon: 'custom', color: '#007BFC', bg: '#1A2733' },
+    { id: 'video', label: 'Video', icon: 'custom', color: '#8B77FF', bg: '#262337' },
     { id: 'location', label: 'Location', icon: 'custom', color: '#06CF9C', bg: '#1A2927' },
     { id: 'camera', label: 'Camera', icon: 'custom', color: '#FFFFFF', bg: '#26292E' },
     { id: 'add_template', label: 'Add Template', icon: 'custom', color: '#B99A4A', bg: '#23272A' },
@@ -540,8 +503,6 @@ const TripChatScreen = () => {
     const isGroup = kind === 'group';
     const voiceLive = useVoiceLive(isGroup ? orgId : null, tripId);
     const convId = conversation?.id;
-    // Non-group conversations keep their own local cache rows; the group chat stays keyed by the trip.
-    const cacheKey = isGroup ? tripId : `${tripId}:${kind}:${convId}`;
     const messagesPath = () => conversationPaths(orgId, tripId, conversation, auth.currentUser?.uid).messages;
     const invitationCode = directCode || trip?.invitationCode;
     const isAdmin = passedIsAdmin !== undefined ? passedIsAdmin : (trip?.isAdmin !== undefined ? trip.isAdmin : !invitationCode);
@@ -551,7 +512,7 @@ const TripChatScreen = () => {
     const [options, setOptions] = useState(
         isAdmin && isGroup
             ? QUICK_OPTIONS
-            : QUICK_OPTIONS.filter(opt => ['photo', 'location', 'camera'].includes(opt.id))
+            : QUICK_OPTIONS.filter(opt => ['photo', 'video', 'location', 'camera'].includes(opt.id))
     );
     const [messages, setMessages] = useState([]);
     const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -661,8 +622,12 @@ const TripChatScreen = () => {
             inputRef.current?.focus();
         }, 500);
 
-        const keyboardDidShowListener = Keyboard.addListener('keyboardDidShow', () => setIsKeyboardVisible(true));
-        const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => setIsKeyboardVisible(false));
+        // iOS: use the Will events so the bottom safe-area edge changes in step with
+        // KeyboardAvoidingView instead of jumping after the keyboard animation.
+        const kbShowEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const kbHideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const keyboardDidShowListener = Keyboard.addListener(kbShowEvent, () => setIsKeyboardVisible(true));
+        const keyboardDidHideListener = Keyboard.addListener(kbHideEvent, () => setIsKeyboardVisible(false));
 
         // dm: clear my inbox unread; team: staff read pointer (the pilgrim's own thread has no pointer)
         const scheduleMarkRead = () => {
@@ -683,52 +648,32 @@ const TripChatScreen = () => {
                 limitToLast(50)
             );
 
-            onChildAdded(chatRef, (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    // S18: Ensure rawTimestamp is ALWAYS a number for comparison
-                    let rawTs = data.timestamp;
-                    if (typeof rawTs !== 'number') rawTs = Date.now();
-
-                    const msg = {
-                        id: snapshot.key,
-                        ...data, // Include all fields (type, image_url, etc.)
+            const unsubscribeChat = onVisibleValue(chatRef, tripId, snapshot => {
+                const messages = Object.entries(snapshot.val() || {}).map(([id, data]) => {
+                    const rawTimestamp = Number(data.timestamp) || 0;
+                    return {
+                        ...data, id,
                         sender: data.sender_id === auth.currentUser?.uid ? 'me' : 'other',
                         senderName: data.sender_name || 'Participant',
-                        time: new Date(rawTs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-                        rawTimestamp: rawTs,
-                        avatar: data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.sender_name || 'User')}&background=B99A4A&color=fff`,
+                        rawTimestamp,
+                        time: new Date(rawTimestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                        avatar: data.avatar || 'https://ui-avatars.com/api/?name=U&background=B99A4A&color=fff',
                     };
-
-                    setMessages((prev) => {
-                        const existingIndex = prev.findIndex(m => m.id === msg.id);
-                        if (existingIndex >= 0) {
-                            const updated = [...prev];
-                            updated[existingIndex] = { ...updated[existingIndex], ...msg };
-                            return updated;
-                        }
-                        // Prepend for inverted list (newest first in array)
-                        return [msg, ...prev];
-                    });
-
-                    // S24: Save to local encrypted database for offline access
-                    ChatDatabase.saveMessage(cacheKey, {
-                        id: snapshot.key,
-                        ...data,
-                        timestamp: rawTs,
-                        sender_name: data.sender_name || 'Participant',
-                        avatar: data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.sender_name || 'User')}&background=B99A4A&color=fff`
-                    });
-
-                    // Update our read pointer since we just "saw" a new message
-                    if (isGroup) {
-                        if (auth.currentUser?.uid) {
-                            set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp());
-                        }
-                    } else {
-                        scheduleMarkRead();
-                    }
+                }).sort((a, b) => b.rawTimestamp - a.rawTimestamp);
+                // Replace, rather than merge, so removed/redacted data disappears.
+                setMessages(messages);
+                if (isGroup && messages.length && auth.currentUser?.uid) {
+                    set(ref(database, `trips_active/${orgId}/${tripId}/read_pointers/${auth.currentUser.uid}`), serverTimestamp())
+                        .catch(error => console.warn('[TripChatScreen] Read pointer failed', { kind, tripId, code: error.code }));
+                } else if (!isGroup) {
+                    scheduleMarkRead();
                 }
+            }, error => {
+                setMessages([]);
+                console.warn('[TripChatScreen] Message listener failed', {
+                    kind, orgId, tripId, conversationId: convId || null,
+                    code: error.code, message: error.message,
+                });
             });
 
             // Listen to trip data (organizer & visibility config)
@@ -825,7 +770,7 @@ const TripChatScreen = () => {
 
             return () => {
                 clearTimeout(markReadTimer.current);
-                off(chatRef);
+                unsubscribeChat();
                 unsubTrip();
                 unsubP();
                 unsubStaff();
@@ -1102,6 +1047,8 @@ const TripChatScreen = () => {
 
         } else if (item.id === 'photo') {
             handlePickMedia();
+        } else if (item.id === 'video') {
+            handlePickMedia(['videos']);
         } else if (item.id === 'camera') {
             handleTakePhoto();
         } else if (item.id === 'location') {
@@ -1111,7 +1058,7 @@ const TripChatScreen = () => {
     };
 
 
-    const handlePickMedia = async () => {
+    const handlePickMedia = async (mediaTypes = ['images', 'videos']) => {
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (status !== 'granted') {
             alert('Sorry, we need camera roll permissions to make this work!');
@@ -1119,7 +1066,7 @@ const TripChatScreen = () => {
         }
 
         let result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images', 'videos'],
+            mediaTypes,
             allowsEditing: false,
             quality: 0.8,
         });
@@ -1137,20 +1084,30 @@ const TripChatScreen = () => {
     };
 
     const handleTakePhoto = async () => {
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') {
-            alert('Sorry, we need camera permissions to make this work!');
-            return;
-        }
-
-        let result = await ImagePicker.launchCameraAsync({
-            allowsEditing: false,
-            quality: 0.8,
-        });
-
-        if (!result.canceled && result.assets && result.assets.length > 0) {
-            setPendingImageUri(result.assets[0].uri);
-            setImageCaption('');
+        try {
+            const { status } = await ImagePicker.requestCameraPermissionsAsync();
+            if (status !== 'granted') {
+                alert('Camera permission is required to capture photos or videos.');
+                return;
+            }
+            const microphone = await requestRecordingPermissionsAsync();
+            // Photos remain available when microphone access is declined.
+            const mediaTypes = microphone.status === 'granted' ? ['images', 'videos'] : ['images'];
+            const result = await ImagePicker.launchCameraAsync({
+                mediaTypes,
+                allowsEditing: false,
+                quality: 0.8,
+            });
+            if (result.canceled || !result.assets?.length) return;
+            const asset = result.assets[0];
+            if (asset.type === 'video') {
+                await uploadAndSendMedia(asset.uri, 'video');
+            } else {
+                setPendingImageUri(asset.uri);
+                setImageCaption('');
+            }
+        } catch (error) {
+            Alert.alert('Camera unavailable', error.message || 'Could not open the camera. Please try again.');
         }
     };
 
@@ -1219,7 +1176,7 @@ const TripChatScreen = () => {
 
         } catch (error) {
             console.error("[TripChatScreen] Failed to upload/send media:", error);
-            alert("Failed to send media. Please try again.");
+            alert(`Failed to send ${type}: ${error.message || 'Please try again.'}`);
         } finally {
             setIsUploading(false);
         }
@@ -1438,6 +1395,7 @@ const TripChatScreen = () => {
         let IconComponent = null;
 
         if (item.id === 'photo') IconComponent = <PhotoIcon size={40} />;
+        else if (item.id === 'video') IconComponent = <Ionicons name="videocam" size={36} color={item.color} />;
         else if (item.id === 'location') IconComponent = <LocationIconSvg size={40} />;
         else if (item.id === '5min') IconComponent = <FiveMinIcon size={40} />;
         else if (item.id === 'camera') IconComponent = <CameraIconSvg size={40} />;
@@ -1594,6 +1552,7 @@ const TripChatScreen = () => {
                         contentContainerStyle={{ paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 }}
                         onScrollBeginDrag={dismissAll}
                         keyboardDismissMode="interactive"
+                        keyboardShouldPersistTaps="handled"
                         initialNumToRender={15}
                         maxToRenderPerBatch={10}
                         windowSize={10}
@@ -1674,9 +1633,12 @@ const TripChatScreen = () => {
                                     styles.sendButton,
                                     isRecording && { backgroundColor: '#FF3B30', transform: [{ scale: 1.2 }] }
                                 ]}
-                                onPress={inputText.trim().length > 0 ? handleSendMessage : null}
                                 onPressIn={inputText.trim().length === 0 ? startRecording : null}
                                 onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                onPress={handleSendMessage}
+                                // onPressIn={inputText.trim().length === 0 ? startRecording : null}
+                                // onPressOut={inputText.trim().length === 0 ? stopRecording : null}
+                                // handleSendMessage ignores empty text; do not gate on inputText here so paste/dictation never leaves it dead
                                 disabled={isUploading}
                             >
                                 {isUploading ? (
@@ -2512,48 +2474,38 @@ const VoicePlayer = ({ uri, isMe }) => {
     const [duration, setDuration] = useState(0);
 
     useEffect(() => {
-        return () => {
-            if (player) {
-                player.remove();
-            }
+        setPosition(0);
+        setDuration(0);
+        setIsPlaying(false);
+        if (!uri) return;
+        // Load metadata before Play is pressed; creating a player does not autoplay.
+        const audio = createAudioPlayer(uri, { keepAudioSessionActive: true });
+        let active = true;
+        const updateStatus = status => {
+            if (!active || !status.isLoaded) return;
+            setPosition(status.didJustFinish ? 0 : status.currentTime);
+            setDuration(Number.isFinite(status.duration) ? status.duration : 0);
+            setIsPlaying(status.didJustFinish ? false : status.playing);
         };
-    }, [player]);
-
-    useEffect(() => {
-        if (!player) return;
-
-        const subscription = player.addListener('playbackStatusUpdate', (status) => {
-            if (status.isLoaded) {
-                setPosition(status.currentTime);
-                setDuration(status.duration);
-                setIsPlaying(status.playing);
-                if (status.didJustFinish) {
-                    setPosition(0);
-                    setIsPlaying(false);
-                }
-            }
-        });
-
+        const subscription = audio.addListener('playbackStatusUpdate', updateStatus);
+        updateStatus(audio.currentStatus);
+        setPlayer(audio);
         return () => {
+            active = false;
             subscription.remove();
+            audio.remove();
         };
-    }, [player]);
+    }, [uri]);
 
     const handlePlayPause = async () => {
-        if (player) {
-            if (isPlaying) {
-                player.pause();
-                setIsPlaying(false);
-            } else {
-                player.play();
-                setIsPlaying(true);
-            }
+        if (!player) return;
+        if (isPlaying) {
+            player.pause();
         } else {
-            // LiveKit may still be using the shared audio session when playback ends.
-            const newPlayer = createAudioPlayer(uri, { keepAudioSessionActive: true });
-            newPlayer.play();
-            setPlayer(newPlayer);
-            setIsPlaying(true);
+            if (player.duration > 0 && player.currentTime >= player.duration) {
+                await player.seekTo(0);
+            }
+            player.play();
         }
     };
 
@@ -2570,10 +2522,11 @@ const VoicePlayer = ({ uri, isMe }) => {
                 <Ionicons name={isPlaying ? "pause" : "play"} size={24} color={isMe ? "#FFF" : "#B99A4A"} />
             </TouchableOpacity>
             <View style={voiceStyles.progressCard}>
-                <View style={voiceStyles.progressBar} />
-                <View style={[voiceStyles.progressActive, { width: `${(position / (duration || 1)) * 100}%`, backgroundColor: isMe ? '#FFF' : '#B99A4A' }]} />
+                <View style={voiceStyles.progressBar}>
+                    <View style={[voiceStyles.progressActive, { width: `${Math.min(100, Math.max(0, (position / (duration || 1)) * 100))}%`, backgroundColor: isMe ? '#FFF' : '#B99A4A' }]} />
+                </View>
                 <Text style={[voiceStyles.durationText, isMe && { color: 'rgba(255,255,255,0.8)' }]}>
-                    {formatTime(isPlaying ? position : (duration || 0))}
+                    {duration > 0 ? formatTime(isPlaying ? position : duration) : '–:––'}
                 </Text>
             </View>
         </View>
@@ -2600,11 +2553,13 @@ const voiceStyles = StyleSheet.create({
         borderRadius: 1.5,
         backgroundColor: 'rgba(255,255,255,0.2)',
         width: '100%',
+        overflow: 'hidden',
     },
     progressActive: {
         height: 3,
         borderRadius: 1.5,
         position: 'absolute',
+        top: 0,
         left: 0,
     },
     durationText: {

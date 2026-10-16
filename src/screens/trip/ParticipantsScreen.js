@@ -32,6 +32,7 @@ import { Track, RoomEvent } from 'livekit-client';
 import { useVoice } from '../../context/VoiceContext';
 import { database, auth, functions } from '../../config/firebase';
 import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
@@ -259,10 +260,10 @@ const ParticipantsScreen = () => {
         let isMounted = true;
 
         const promises = combinedUids.map((uid) => {
-            const profileRef = ref(database, `users/${uid}/profile`);
-            const nameRef = ref(database, `users/${uid}/full_name`);
             const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
+            const profileRef = ref(database, `users/${uid}/profile`);
+            const nameRef = ref(database, `users/${uid}/full_name`);
             return Promise.all([
                 getVisibleSnapshot(profileRef, tripId),
                 getVisibleSnapshot(nameRef, tripId),
@@ -276,8 +277,7 @@ const ParticipantsScreen = () => {
                     ...rawProfile,
                     photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                 };
-                const fullName = nameSnap.val();
-                const visibility = visSnap.val() || {};
+                const fullName = nameSnap.val();                const visibility = visSnap.val() || {};
                 const targetRole = staffData[uid];
                 const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
                 const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
@@ -675,6 +675,7 @@ const ParticipantsScreen = () => {
                 ]}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={renderEmptyComponent}
+                keyboardShouldPersistTaps="handled"
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}

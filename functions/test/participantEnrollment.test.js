@@ -25,8 +25,8 @@ function signInFixture(access, refreshFailure = null) {
     '../middleware/participantAccessMiddleware': { onCall: (_, handler) => handler },
     'firebase-functions/v2/identity': { beforeUserCreated: (_,handler)=>handler, beforeUserSignedIn: (_,handler)=>handler },
     '../admin': { admin:{ database:{ServerValue:{TIMESTAMP:0}}},db:{ref:()=>({push:noop,get:async()=>({val:()=>({})}),update:noop})} },
-    '../services/kmsService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
-    '../services/emailService': {}, '../services/notificationService': { sendPushNotification: noop }, '../services/stripeService': {},
+    '../services/kmsService': {}, '../services/accountCleanupService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
+    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': { sendPushNotification: noop }, '../services/stripeService': {},
   }).onSignIn;
 }
 test('ordinary backend sign-in rejects participants with no eligible trip', async () => {
