@@ -182,3 +182,73 @@ test('a created draft does not change any more', async () => {
   const r = await talk(d, 'hallo');
   assert.equal(r.reply.key, 'already_created'); assert.equal(d.messages.length, 0);
 });
+
+// Places the validator knows, in the spellings people type.
+const PLACES = /^(mekka|makkah|mecca|medina|madinah|medine|jeddah)(,|$)/i;
+const places = { validateDestination: value => { if (!PLACES.test(value)) throw new Error('unknown'); } };
+const atDestination = async () => { const d = start(); await talk(d, 'Umrah'); await banner(d); return d; };
+
+test('several destinations joined by en, and, und, et, y, ve, dan are kept whole', async () => {
+  for (const text of ['Mekka en Medina', 'we gaan naar Mekka en Medina', 'Mecca and Medina', 'Mekka und Medina', 'Mecca et Medine', 'Mecca y Medina',
+    'Mekka ve Medina', 'Mekka dan Medina', 'Mekka & Medina']) {
+    const d = await atDestination();
+    const r = await talk(d, text, places);
+    assert.equal(d.fields.destination, text.replace(/^we gaan naar /, ''), text);
+    assert.equal(r.reply.key, 'ask_dates');
+  }
+});
+
+test('a list is refused when one of its places is unknown, and a single place still wins on its own', async () => {
+  let d = await atDestination();
+  let r = await talk(d, 'Atlantis en Medina', places);
+  assert.equal(d.fields.destination, 'Medina'); assert.equal(r.reply.key, 'ask_dates');
+  d = await atDestination();
+  r = await talk(d, 'Medina', places);
+  assert.equal(d.fields.destination, 'Medina');
+});
+
+test('a first answer with dates, head count and destination fills those fields and asks only what is missing (nl)', async () => {
+  const d = start();
+  const r = await talk(d, 'Umrah in maart 2027 met 40 mensen, vertrek 10 maart, terug 20 maart, naar Mekka en Medina', places);
+  assert.equal(d.fields.title, 'Umrah in maart 2027');
+  assert.equal(d.fields.destination, 'Mekka en Medina');
+  assert.equal(d.fields.start_day, '2027-03-10'); assert.equal(d.fields.end_day, '2027-03-20');
+  assert.equal(d.fields.participants, 40);
+  assert.deepEqual(d.messages.filter(m => m.role === 'deen').map(m => m.key), ['ack_name', 'ack_destination', 'ack_dates', 'ack_participants', 'ask_banner']);
+  assert.equal(r.reply.key, 'ask_banner'); assert.equal(d.step, 'banner');
+  const next = await banner(d);
+  assert.equal(next.reply.key, 'overview'); // the remaining steps follow in their fixed order
+});
+
+test('a first answer with dates, head count and destination fills those fields (en)', async () => {
+  const d = start();
+  await talk(d, 'Umrah March 2027 with 25 people, leaving 10 March, back 20 March, to Makkah and Madinah', places);
+  assert.equal(d.fields.title, 'Umrah March 2027');
+  assert.equal(d.fields.destination, 'Makkah and Madinah');
+  assert.equal(d.fields.start_day, '2027-03-10'); assert.equal(d.fields.end_day, '2027-03-20');
+  assert.equal(d.fields.participants, 25);
+});
+
+test('a first answer with only some values asks for the rest in order', async () => {
+  const d = start();
+  await talk(d, 'Umrah, 12 juni tot 25 juni', places);
+  assert.equal(d.fields.title, 'Umrah'); assert.equal(d.fields.start_day, '2027-06-12'); assert.equal(d.fields.end_day, '2027-06-25');
+  assert.equal(d.fields.destination, null); assert.equal(d.fields.participants, null);
+  await banner(d);
+  assert.equal(d.step, 'destination');
+});
+
+test('a plain name stays a plain name, and a year in it is not a head count', async () => {
+  const d = start();
+  const r = await talk(d, 'Umrah Ramadan 2027', places);
+  assert.equal(d.fields.title, 'Umrah Ramadan 2027');
+  assert.equal(d.fields.participants, null); assert.equal(d.fields.start_day, null); assert.equal(d.fields.destination, null);
+  assert.equal(r.reply.key, 'ask_banner');
+});
+
+test('a first answer without a name part keeps the values and asks for the name', async () => {
+  const d = start();
+  const r = await talk(d, 'we vertrekken 18 februari en zijn 3 maart terug', places);
+  assert.equal(d.fields.title, null); assert.equal(d.fields.start_day, '2027-02-18');
+  assert.equal(r.reply.key, 'ask_name'); assert.equal(d.step, 'name');
+});
