@@ -346,6 +346,59 @@
     "invitation_limits": {
       ".read": false,
       ".write": false
+    },
+    "passport": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_status": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_links": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_link_index": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_codes": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_family": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_settings": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_trip_settings": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_sessions": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "expires_at"
+      ]
+    },
+    "passport_queue": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "send_at"
+      ]
+    },
+    "passport_retention": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "delete_after"
+      ]
     }
   }
 }
