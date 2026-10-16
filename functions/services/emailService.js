@@ -26,8 +26,10 @@ const FROM_EMAIL = "noreply@join.gomusafir.app";
  * @param {Object} options - { to, subject, html, templateId }
  */
 async function sendEmail({ to, subject, html, templateId = DEFAULT_TEMPLATE_ID, customArgs }) {
-  // Emulator only: the mail is parked in the server-only dev_outbox and SendGrid is never reached.
+  // Emulator only: the mail is parked in the server-only dev_outbox and SendGrid is never reached. The outbox needs
+  // the database emulator too, so an emulator pointed at the real database can neither fill it nor send real mail.
   if (process.env.FUNCTIONS_EMULATOR === "true") {
+    if (!process.env.FIREBASE_DATABASE_EMULATOR_HOST) throw new Error("Mail is not sent from the emulator without the database emulator.");
     const { db } = require("../admin");
     const ref = db.ref("dev_outbox").push();
     await ref.set({

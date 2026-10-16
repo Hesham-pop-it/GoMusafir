@@ -17,7 +17,7 @@ function load(env) {
   return { sendEmail: module.exports.sendEmail, pushed, sent };
 }
 test('the emulator parks the mail in dev_outbox and never reaches SendGrid', async () => {
-  const f = load({ FUNCTIONS_EMULATOR: 'true' });
+  const f = load({ FUNCTIONS_EMULATOR: 'true', FIREBASE_DATABASE_EMULATOR_HOST: '127.0.0.1:19610' });
   const result = await f.sendEmail({ to: 'a@b.test', subject: 'S', html: '<p>x</p>', customArgs: { trip_id: 't' } });
   assert.equal(f.sent.length, 0);
   assert.equal(f.pushed.length, 1);
@@ -34,4 +34,10 @@ test('outside the emulator the SendGrid path is unchanged and carries the custom
   assert.deepEqual(JSON.parse(JSON.stringify(f.sent[0].customArgs)), { org_id: 'o' });
   assert.equal('customArgs' in f.sent[1], false);
   assert.deepEqual(JSON.parse(JSON.stringify(f.sent[1].dynamicTemplateData)), { subject: 'S', html: 'h' });
+});
+test('the emulator without the database emulator sends nothing: no outbox, no SendGrid', async () => {
+  const f = load({ FUNCTIONS_EMULATOR: 'true' });
+  await assert.rejects(f.sendEmail({ to: 'a@b.test', subject: 'S', html: 'h' }), /database emulator/);
+  assert.equal(f.pushed.length, 0);
+  assert.equal(f.sent.length, 0);
 });
