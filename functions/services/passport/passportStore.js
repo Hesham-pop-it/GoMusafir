@@ -68,10 +68,12 @@ async function refreshStatus(org, trip, uid, loaded, now = Date.now()) {
   return status;
 }
 
-// The day the data must be gone: 30 days after the trip's end (rechecked against the real end by the job).
+// The day the data must be gone: 30 days after the trip's end. It is only ever brought forward here; the job also
+// rechecks it against the trip's current end date (see passportRetention.effectiveDeadline).
 async function registerRetention(org, trip, now = Date.now()) {
   const end = (await db.ref(`orgs/${org}/trips/${trip}/end_date`).get()).val();
-  await db.ref(`passport_retention/${trip}`).set({ org_id: org, delete_after: (Number.isFinite(end) ? end : now) + RETENTION_MS });
+  const due = (Number.isFinite(end) ? end : now) + RETENTION_MS;
+  await db.ref(`passport_retention/${trip}`).transaction(cur => ({ org_id: org, delete_after: Number.isFinite(cur?.delete_after) ? Math.min(cur.delete_after, due) : due }), undefined, false);
 }
 
 async function saveStep(org, trip, uid, step, data, { now = Date.now(), consentAt } = {}) {
