@@ -455,14 +455,12 @@ async function main() {
   // The seeded person works through the real callables with the seeded session.
   eq(plain((await fns.passportGet(P({ session: seeded.links[oldTimer.uid].session }))).steps.paspoort.data.number), 'NX4•••••8');
   // Two weeks short of the deadline nothing goes; past it everything sensitive does.
-  eq(plain(await retention.runRetention({ now: oldDue - 1 })), { trips: 0, people: 0, postponed: 0 });
+  eq(plain(await retention.runRetention({ now: oldDue - 1 })), { trips: 0, people: 0, advanced: 0 });
   ok(!!(await val(`passport/${org}/${oldTrip}`)), 'not yet due');
-  await db.ref(`orgs/${org}/trips/${oldTrip}/end_date`).set(now - 10 * DAY); // extended trip: postponed, not deleted
-  eq(plain(await retention.runRetention({ now: oldDue + 1 })), { trips: 0, people: 0, postponed: 1 });
-  ok(!!(await val(`passport/${org}/${oldTrip}`)), 'an extended trip keeps its data');
-  eq((await val(`passport_retention/${oldTrip}/delete_after`)), now - 10 * DAY + 30 * DAY);
-  await db.ref(`orgs/${org}/trips/${oldTrip}/end_date`).set(now - 50 * DAY);
-  await db.ref(`passport_retention/${oldTrip}/delete_after`).set(now - 20 * DAY);
+  // A stored deadline later than 30 days after the trip's current end (a shortened trip) is brought forward, not kept.
+  await db.ref(`passport_retention/${oldTrip}/delete_after`).set(now + 40 * DAY);
+  eq(plain(await retention.runRetention({ now: oldDue - 1 })), { trips: 0, people: 0, advanced: 1 });
+  eq(await val(`passport_retention/${oldTrip}/delete_after`), oldDue);
   const doneRun = plain(await retention.runRetention({ now: now + 1 }));
   eq([doneRun.trips, doneRun.people], [1, 1]);
   for (const path of [`passport/${org}/${oldTrip}`, `passport_family/${org}/${oldTrip}`, `passport_link_index/${oldTrip}`, `passport_retention/${oldTrip}`,
@@ -486,6 +484,110 @@ async function main() {
   await refuses(fns.passportOpen(P({ t: demo.links[oldTimer.uid].token })), 'permission-denied', 'revoked');
   eq(demo.links[p7.uid].code, '123456');
   ok(tokens.isTokenShape((await fns.passportVerify(P({ t: demo.links[p7.uid].token, code: '123456' }))).session), 'the seeded code opens a session');
+  // ── Review fixes: link replacement, locking, queue tries, retention, family by address, account purge ────────────
+  const store = require('../services/passport/passportStore');
+  const emailModule = require('../services/emailService');
+  const realSend = emailModule.sendEmail;
+  const mailFails = async work => { emailModule.sendEmail = async () => { throw new Error('mail down'); }; try { return await work(); } finally { emailModule.sendEmail = realSend; } };
+  const [rA, rB, rC, rD, rE, rX] = await Promise.all(['ra', 'rb', 'rc', 'rd', 're', 'rx'].map(n => mk(n)));
+  await db.ref().update(Object.fromEntries([rA, rB, rC, rD, rE].map(u => [`trips_participants/${trip}/${u.uid}`, true])));
+  const sessionFor = async (person, tripId = trip) => {
+    const made = await links.createLink({ orgId: org, tripId, uid: person.uid });
+    return (await links.createSession({ hash: made.hash, link: (await links.resolveLink(made.token)).link })).session;
+  };
+
+  // A new link replaces the earlier one only once its mail is out; a failed mail leaves the earlier link in place.
+  eq(plain(await fns.sendPassportLinks(A({ ...base1, uids: [rA.uid] }))).sent, 1);
+  const lA1 = await lastLink(rA);
+  await db.ref(`passport_link_index/${trip}/${rA.uid}/sent_at`).set(now - 20 * MIN);
+  const failedResend = plain(await mailFails(() => fns.sendPassportLinks(A({ ...base1, uids: [rA.uid] }))));
+  eq([failedResend.sent, failedResend.failed, failedResend.reasons[rA.uid]], [0, 1, 'send_failed']);
+  eq((await fns.passportOpen(P({ t: lA1 }))).needs_code, true); // the earlier link still works
+  eq((await val(`passport_link_index/${trip}/${rA.uid}`)).hash, hashOf(lA1));
+  eq(Object.values(await val('passport_links')).filter(l => l.uid === rA.uid).length, 1); // the failed link left nothing behind
+  eq(plain(await fns.sendPassportLinks(A({ ...base1, uids: [rA.uid] }))).sent, 1);
+  await refuses(fns.passportOpen(P({ t: lA1 })), 'permission-denied', 'revoked');
+  eq((await fns.passportOpen(P({ t: await lastLink(rA) }))).needs_code, true);
+  // Two swaps at once each get a different earlier link back, so none is left behind unrevoked.
+  const [c1, c2] = await Promise.all([links.createLink({ orgId: org, tripId: trip, uid: rB.uid }), links.createLink({ orgId: org, tripId: trip, uid: rB.uid })]);
+  const chained = [c1, c2].filter(c => c.previous), first = [c1, c2].find(c => !c.previous);
+  ok(chained.length === 1 && chained[0].previous.hash === first.hash && (await val(`passport_link_index/${trip}/${rB.uid}`)).hash === chained[0].hash, 'the swaps chain, the later one is current');
+
+  // 25 wrong codes over the life of one link lock it, whatever codes it was given; a new link replaces it.
+  eq(plain(await fns.sendPassportLinks(A({ ...base1, uids: [rC.uid] }))).sent, 1);
+  const lC = await lastLink(rC), hC = hashOf(lC);
+  await fns.passportOpen(P({ t: lC }));
+  let lockedOn = 0;
+  for (let n = 1; n <= 25; n++) {
+    if (n > 1 && (n - 1) % 5 === 0) { await rewind(`passport_codes/${hC}/sent_at`, 2 * MIN); await fns.passportResend(P({ t: lC })); }
+    const real = await lastCode(rC), bad = real === '000000' ? '000001' : '000000';
+    try { await fns.passportVerify(P({ t: lC, code: bad })); } catch (e) { if (e.details?.reason === 'locked') lockedOn = n; else if (n === 25) throw e; }
+  }
+  eq(lockedOn, 25);
+  await refuses(fns.passportOpen(P({ t: lC })), 'permission-denied', 'locked');
+  await refuses(fns.passportVerify(P({ t: lC, code: await lastCode(rC) })), 'permission-denied', 'locked');
+  ok(!(await val(`passport_codes/${hC}`)) && (await val(`passport_link_index/${trip}/${rC.uid}`)).locked_at > 0, 'a locked link has no code');
+  ok(!(await links.linkIsActive(trip, rC.uid)), 'a locked link is not an active one');
+  const lockedSession = (await links.createSession({ hash: hC, link: (await val(`passport_links/${hC}`)) })).session;
+  await assert.rejects(fns.passportGet(P({ session: lockedSession })), e => e.code === 'unauthenticated' && e.details.reason === 'locked'); checks++;
+  await db.ref(`passport_link_index/${trip}/${rC.uid}/sent_at`).set(now - 20 * MIN);
+  eq(plain(await fns.sendPassportLinks(A({ ...base1, uids: 'all' }))).reasons[rC.uid], undefined); // sending to everyone new replaces a locked link too
+  const lC2 = await lastLink(rC);
+  ok(lC2 !== lC && (await fns.passportOpen(P({ t: lC2 }))).needs_code === true, 'staff send issued a new link');
+  await refuses(fns.passportOpen(P({ t: lC })), 'permission-denied', 'revoked');
+
+  // A queued link whose mail keeps failing is tried 5 times, then dropped.
+  const rF = await mk('rf');
+  const qKey = `${trip}_${rF.uid}`;
+  await db.ref().update({ [`trips_participants/${trip}/${rF.uid}`]: true, [`passport_queue/${qKey}`]: { org_id: org, trip_id: trip, uid: rF.uid, send_at: now - 1000 } });
+  let step = 0;
+  for (; step < 4; step++) {
+    const out = await mailFails(() => send.processDue({ now: now + (step + 1) * 11 * MIN }));
+    eq([out.held, out.dropped], [1, 0]);
+  }
+  eq((await val(`passport_queue/${qKey}`)).attempts, 4);
+  eq(plain(await mailFails(() => send.processDue({ now: now + 5 * 11 * MIN }))).dropped, 1);
+  eq(await val(`passport_queue/${qKey}`), null);
+
+  // Retention is registered by the first send of a trip and by a family request.
+  const tripR = `pptripr${stamp}`;
+  await db.ref().update({ [`orgs/${org}/trips/${tripR}`]: trips(tripR, 'active'), [`trips_orgs/${tripR}`]: org, [`trips_participants/${tripR}/${rE.uid}`]: true });
+  eq(await val(`passport_retention/${tripR}`), null);
+  eq(plain(await fns.sendPassportLinks(A({ orgId: org, tripId: tripR, uids: [rE.uid] }))).sent, 1);
+  eq(await val(`passport_retention/${tripR}`), { org_id: org, delete_after: now + 30 * DAY + 30 * DAY });
+  await store.registerRetention(org, tripR, now + 99 * DAY); // never pushed back by later activity
+  eq((await val(`passport_retention/${tripR}`)).delete_after, now + 60 * DAY);
+  await db.ref(`passport_retention/${trip}`).remove();
+  const sD = await sessionFor(rD);
+  await fns.familyRequest(P({ session: sD, email: rX.email, relation: 'brother' }));
+  eq((await val(`passport_retention/${trip}`)).org_id, org);
+
+  // A family request to an address that joined later reaches that person the first time they look.
+  eq(plain((await fns.passportGet(P({ session: sD }))).family.outgoing.map(o => o.status)), ['sent']);
+  await db.ref(`trips_participants/${trip}/${rX.uid}`).set(true);
+  const sX = await sessionFor(rX);
+  const incomingX = plain((await fns.passportGet(P({ session: sX }))).family.incoming);
+  eq(incomingX.map(i => [i.relation, i.status]), [['brother', 'pending']]);
+  const rowD = Object.values(await val(`passport_family/${org}/${trip}`)).find(r => r.from_uid === rD.uid);
+  eq(rowD.to_uid, rX.uid);
+  eq(plain((await fns.familyAnswer(P({ session: sX, id: incomingX[0].id, relation: 'sister' }))).family.incoming.map(i => i.status)), ['confirmed']);
+
+  // Deleting an account removes that person's passport data and nobody else's.
+  const gone = rD; // has a link, a session, a family row, a queue entry; give them data and a file as well
+  await db.ref().update({ [`users/${gone.uid}/joined_trips/${trip}`]: { org_id: org }, [`passport_queue/${trip}_${gone.uid}`]: { org_id: org, trip_id: trip, uid: gone.uid, send_at: now + DAY } });
+  await store.saveStep(org, trip, gone.uid, 'noodcontact', { contacts: [{ name: 'A', phone: '+31612345678', relation: 'brother' }] });
+  await bucket.file(`passport_docs/${org}/${trip}/${gone.uid}/passport.jpg`).save(Buffer.from([0xff, 0xd8, 0xff, 1]), { contentType: 'image/jpeg' });
+  const goneHash = (await val(`passport_link_index/${trip}/${gone.uid}`)).hash;
+  ok(!!goneHash && !!(await val(`passport/${org}/${trip}/${gone.uid}`)) && !!(await val(`passport_status/${org}/${trip}/${gone.uid}`)), 'data to purge exists');
+  const otherRows = Object.entries(await val(`passport_family/${org}/${trip}`)).filter(([, r]) => r.from_uid !== gone.uid && r.to_uid !== gone.uid).length;
+  eq(await retention.purgePerson(gone.uid), 1);
+  for (const path of [`passport/${org}/${trip}/${gone.uid}`, `passport_status/${org}/${trip}/${gone.uid}`, `passport_link_index/${trip}/${gone.uid}`,
+    `passport_links/${goneHash}`, `passport_codes/${goneHash}`, `passport_queue/${trip}_${gone.uid}`]) eq([path, await val(path)], [path, null]);
+  eq((await bucket.getFiles({ prefix: `passport_docs/${org}/${trip}/${gone.uid}/` }))[0].length, 0);
+  ok(!Object.values((await val(`passport_family/${org}/${trip}`)) || {}).some(r => r.from_uid === gone.uid || r.to_uid === gone.uid), 'their family rows are gone');
+  eq(Object.keys((await val(`passport_family/${org}/${trip}`)) || {}).length, otherRows);
+  await refuses(fns.passportGet(P({ session: sD })), 'unauthenticated', 'session');
+  ok(!!(await val(`passport_link_index/${trip}/${rA.uid}`)) && (await bucket.file(`passport_docs/${org}/${trip}/${p1.uid}/passport.png`).exists())[0], 'other people are untouched');
   console.log(`PASS: ${checks} passport checks: rights, link expiry and revocation, code tries, sessions, validation, uploads, family privacy, rules and retention.`);
 }
 main().then(() => process.exit(process.exitCode || 0), error => { console.error(error); process.exit(1); });
