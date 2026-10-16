@@ -11,6 +11,9 @@ const COPY = {
     cta: 'Open my passport page', fallback: 'If the button does not work, open this link:', ignore: 'Did not expect this mail? You can ignore it.',
     codeSubject: ({ code }) => `Your GoMusafir code: ${code}`,
     codeLead: 'Use this code to open your passport page:', codeNote: ({ minutes }) => `The code works for ${minutes} minutes. Never share it with anyone.`,
+    remindSubject: ({ org }) => `${org}: your passport details are still missing`,
+    remindLead: ({ org, title }) => `${org} is still missing some of your travel details for "${title}". It only takes a few minutes.`,
+    pushTitle: 'Complete your passport details', pushBody: ({ org }) => `${org} is still missing some of your travel details.`,
   },
   nl: {
     dir: 'ltr', hello: 'Assalamu alaikum,',
@@ -20,6 +23,9 @@ const COPY = {
     cta: 'Open mijn paspoortpagina', fallback: 'Werkt de knop niet? Open dan deze link:', ignore: 'Verwachtte je deze mail niet? Dan kun je hem negeren.',
     codeSubject: ({ code }) => `Je GoMusafir-code: ${code}`,
     codeLead: 'Gebruik deze code om je paspoortpagina te openen:', codeNote: ({ minutes }) => `De code werkt ${minutes} minuten. Deel hem met niemand.`,
+    remindSubject: ({ org }) => `${org}: je paspoortgegevens ontbreken nog`,
+    remindLead: ({ org, title }) => `${org} mist nog een deel van je reisgegevens voor "${title}". Het kost maar een paar minuten.`,
+    pushTitle: 'Vul je paspoortgegevens aan', pushBody: ({ org }) => `${org} mist nog een deel van je reisgegevens.`,
   },
   ar: {
     dir: 'rtl', hello: 'السلام عليكم،',
@@ -29,6 +35,9 @@ const COPY = {
     cta: 'فتح صفحة جواز سفري', fallback: 'إذا لم يعمل الزر، افتح هذا الرابط:', ignore: 'لم تتوقع هذه الرسالة؟ يمكنك تجاهلها.',
     codeSubject: ({ code }) => `رمز GoMusafir الخاص بك: ${code}`,
     codeLead: 'استخدم هذا الرمز لفتح صفحة جواز سفرك:', codeNote: ({ minutes }) => `يعمل الرمز ${minutes} دقائق. لا تشاركه مع أحد.`,
+    remindSubject: ({ org }) => `${org}: بيانات جواز سفرك لا تزال ناقصة`,
+    remindLead: ({ org, title }) => `لا تزال ${org} تحتاج بعض بيانات سفرك لرحلة "${title}". يستغرق الأمر دقائق قليلة.`,
+    pushTitle: 'أكمل بيانات جواز سفرك', pushBody: ({ org }) => `لا تزال ${org} تحتاج بعض بيانات سفرك.`,
   },
 };
 // Names go into the mail subject: a line break there could add headers, so any is turned into a space.
@@ -52,6 +61,19 @@ function buildLinkMail({ lang = 'en', org, trip, token, days = 14 }) {
   return { subject: copy.linkSubject(info), html, lang: used, fallback: used !== lang };
 }
 
+// A reminder carries a fresh link: an earlier one cannot be read back from its hash.
+function buildReminderMail({ lang = 'en', org, trip, token, days = 14 }) {
+  const { used, copy } = pick(lang);
+  const info = { org: oneLine(org) || 'GoMusafir', title: oneLine(trip?.title) || 'GoMusafir', days };
+  const link = passportLink(token);
+  const html = wrap(copy, `<p>${escapeHtml(copy.hello)}</p><p>${escapeHtml(copy.remindLead(info))}</p>`
+    + `<p style="margin:24px 0"><a href="${escapeHtml(link)}" style="background:#0f766e;color:#ffffff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">${escapeHtml(copy.cta)}</a></p>`
+    + `<p style="font-size:14px;color:#555">${escapeHtml(copy.linkNote(info))}</p>`
+    + `<p style="font-size:14px;color:#555">${escapeHtml(copy.fallback)}<br><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>`
+    + `<p style="font-size:14px;color:#555">${escapeHtml(copy.ignore)}</p>`);
+  return { subject: copy.remindSubject(info), html, lang: used, fallback: used !== lang, push: { title: copy.pushTitle, body: copy.pushBody(info) } };
+}
+
 function buildCodeMail({ lang = 'en', code, minutes = 10 }) {
   const { used, copy } = pick(lang);
   const html = wrap(copy, `<p>${escapeHtml(copy.hello)}</p><p>${escapeHtml(copy.codeLead)}</p>`
@@ -60,4 +82,4 @@ function buildCodeMail({ lang = 'en', code, minutes = 10 }) {
   return { subject: copy.codeSubject({ code }), html, lang: used, fallback: used !== lang };
 }
 
-module.exports = { buildLinkMail, buildCodeMail, passportLink, TRANSLATED, LINK_BASE };
+module.exports = { buildLinkMail, buildReminderMail, buildCodeMail, passportLink, TRANSLATED, LINK_BASE };
