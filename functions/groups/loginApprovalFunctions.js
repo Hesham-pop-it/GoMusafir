@@ -5,6 +5,10 @@ const { db, auth } = require("../admin");
 const { verifyAppCheck, requireAuth } = require("../middleware/appCheckMiddleware");
 const { sendPushNotification } = require("../services/notificationService");
 const { isStaff, createApproval, answerApproval, sanitizeBrowser } = require("../services/loginApprovalService");
+const { writeAuditLog } = require("../services/auditService");
+const {
+  sensitiveRequestSchema, freshUntil, auditOrgId, AUDIT_ACTIONS, LOGIN_PURPOSE,
+} = require("../services/sensitiveApprovalService");
 
 const KNOWN = ["resource-exhausted", "not-found", "permission-denied"];
 const rethrow = (e) => { throw KNOWN.includes(e.code) ? new HttpsError(e.code, e.message) : e; };
@@ -42,6 +46,57 @@ exports.answerLoginApproval = onCall({ region: "europe-west1" }, async (request)
   const result = await answerApproval({
     db, uid, id, number, deny: deny === true, authTime: request.auth.token.auth_time,
   }).catch(rethrow);
-  if (result.status === "approved") await auth.updateUser(uid, { emailVerified: true });
+  const purpose = (await db.ref(`login_approvals/${uid}/${id}/purpose`).get()).val() || LOGIN_PURPOSE;
+  if (result.status === "approved" && purpose === LOGIN_PURPOSE) await auth.updateUser(uid, { emailVerified: true });
+  if (purpose !== LOGIN_PURPOSE && ["approved", "denied"].includes(result.status)) {
+    const orgId = await auditOrgId(db, uid, request.auth.token.orgId);
+    if (orgId) {
+      await writeAuditLog(orgId, {
+        action: result.status === "approved" ? AUDIT_ACTIONS.granted : AUDIT_ACTIONS.denied,
+        byUid: uid, targetId: id, ipAddress: request.rawRequest?.ip, extra: { purpose, method: "phone" },
+      });
+    }
+  }
   return result;
+});
+
+// Re-confirmation before passport or medical data (F1). Same dialog and answer path as the
+// login approval, with a purpose; the answer stamps the user's last approval.
+exports.requestSensitiveApproval = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+  const uid = request.auth.uid;
+  if (!(await isStaff(db, uid, request.auth.token.role))) {
+    throw new HttpsError("permission-denied", "Staff accounts only.");
+  }
+  const parsed = sensitiveRequestSchema.safeParse(request.data || {});
+  if (!parsed.success) throw new HttpsError("invalid-argument", "A valid purpose is required.");
+  const { purpose } = parsed.data;
+  const browser = sanitizeBrowser(parsed.data.browser);
+  const result = await createApproval({
+    db, uid, browser, purpose, authTime: request.auth.token.auth_time,
+    minGapMs: process.env.FUNCTIONS_EMULATOR === "true" ? 1000 : 10000,
+  }).catch(rethrow);
+  const orgId = await auditOrgId(db, uid, request.auth.token.orgId);
+  if (orgId) {
+    await writeAuditLog(orgId, {
+      action: AUDIT_ACTIONS.requested, byUid: uid, targetId: result.id, ipAddress: request.rawRequest?.ip, extra: { purpose },
+    });
+  }
+  const sent = await sendPushNotification(uid, "Confirm on your phone", `Confirm opening sensitive data. ${browser}`,
+    { type: "login_approval", id: result.id, purpose },
+    { interruptionLevel: "critical", skipDbSave: true });
+  return { ...result, pushed: Boolean(sent) };
+});
+
+// How long the last approval still counts. Null when a new approval is needed.
+exports.sensitiveStatus = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
+  verifyAppCheck(request);
+  requireAuth(request);
+  const uid = request.auth.uid;
+  if (!(await isStaff(db, uid, request.auth.token.role))) {
+    throw new HttpsError("permission-denied", "Staff accounts only.");
+  }
+  const until = await freshUntil(db, uid);
+  return { fresh_until: until, fresh: until !== null };
 });
