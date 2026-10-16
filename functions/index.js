@@ -53,6 +53,14 @@ exports.deenSay               = deenFunctions.deenSay;
 exports.uploadTripBanner      = deenFunctions.uploadTripBanner;
 exports.deenCheckout          = deenFunctions.deenCheckout;
 exports.deenCreate            = deenFunctions.deenCreate;
+
+// ── Invitations (phase 4) ─────────────────────────────────────────────────────
+const invitationFunctions = require("./groups/invitationFunctions");
+exports.previewInvitations    = invitationFunctions.previewInvitations;
+exports.sendInvitations       = invitationFunctions.sendInvitations;
+exports.resendInvitation      = invitationFunctions.resendInvitation;
+exports.backfillOrgParticipants = invitationFunctions.backfillOrgParticipants;
+exports.sendgridEventWebhook  = invitationFunctions.sendgridEventWebhook;
 exports.checkUserExistence    = authFunctions.checkUserExistence;
 exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
 exports.deleteMyAccount       = authFunctions.deleteMyAccount;
