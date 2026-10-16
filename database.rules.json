@@ -314,6 +314,10 @@
       ".read": false,
       ".write": false
     },
+    "sensitive_approval_state": {
+      ".read": false,
+      ".write": false
+    },
     "scheduled_queue": {
       ".indexOn": [
         "send_at"

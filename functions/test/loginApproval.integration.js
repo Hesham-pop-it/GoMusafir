@@ -39,7 +39,7 @@ async function main() {
   assert.equal(made.numbers.length, 3); assert.ok(made.numbers.includes(made.number));
   assert.equal(made.expires_at, now + 120000);
   const pub = (await db.ref(`login_approvals/${uid}/${made.id}`).get()).val();
-  assert.deepEqual(pub, { created_at: now, expires_at: now + 120000, numbers: made.numbers, status: 'pending', client: { browser: 'Chrome on macOS' } });
+  assert.deepEqual(pub, { created_at: now, expires_at: now + 120000, numbers: made.numbers, status: 'pending', purpose: 'login', client: { browser: 'Chrome on macOS' } });
   assert.equal((await db.ref(`login_approval_secrets/${uid}/${made.id}/correct`).get()).val(), made.number);
   await assert.rejects(createApproval({ db, uid, browser: 'x', authTime: 100, now: now + 500 }), { code: 'resource-exhausted' });
 

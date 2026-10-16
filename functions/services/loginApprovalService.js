@@ -2,6 +2,7 @@
 // login_approvals/{uid}/{id} is readable by its owner; the correct number and the
 // requesting session live in login_approval_secrets/{uid}/{id}, which no client reads.
 const crypto = require('crypto');
+const { markApproved, LOGIN_PURPOSE } = require('./sensitiveApprovalService');
 
 const TTL_MS = 120 * 1000;
 const STALE_MS = 10 * 60 * 1000;
@@ -50,7 +51,7 @@ const isStaff = async (db, uid, role) =>
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 // Creates the approval and returns what only the requesting web session may see.
-async function createApproval({ db, uid, browser, authTime, now = Date.now(), minGapMs = 10000, randomInt, newId }) {
+async function createApproval({ db, uid, browser, authTime, purpose = LOGIN_PURPOSE, now = Date.now(), minGapMs = 10000, randomInt, newId }) {
   const gate = await db.ref(`login_approval_secrets/${uid}/last_request`).transaction(
     cur => (Number.isFinite(cur) && now - cur < minGapMs ? undefined : now));
   if (!gate.committed) throw fail('resource-exhausted', 'Please wait before requesting another approval.');
@@ -73,9 +74,9 @@ async function createApproval({ db, uid, browser, authTime, now = Date.now(), mi
   const { numbers, correct } = generateChallenge(randomInt);
   const id = newId || db.ref(`login_approvals/${uid}`).push().key;
   const expires_at = now + TTL_MS;
-  updates[`login_approval_secrets/${uid}/${id}`] = { correct, requester_auth_time: authTime ?? null, created_at: now };
+  updates[`login_approval_secrets/${uid}/${id}`] = { correct, requester_auth_time: authTime ?? null, created_at: now, purpose };
   updates[`login_approvals/${uid}/${id}`] = {
-    created_at: now, expires_at, numbers, status: 'pending', client: { browser: sanitizeBrowser(browser) },
+    created_at: now, expires_at, numbers, status: 'pending', purpose, client: { browser: sanitizeBrowser(browser) },
   };
   await db.ref().update(updates);
   return { id, number: correct, numbers, expires_at };
@@ -98,6 +99,9 @@ async function answerApproval({ db, uid, id, number, deny, authTime, now = Date.
     const latest = (await db.ref(`login_approvals/${uid}/${id}/status`).get()).val();
     if (latest === null) throw fail('not-found', 'This login request no longer exists.');
     return { status: latest };
+  }
+  if (outcome === 'approved') {
+    await markApproved(db, uid, { purpose: approvalSnap.val().purpose || LOGIN_PURPOSE, method: 'phone', now });
   }
   return { status: outcome };
 }
