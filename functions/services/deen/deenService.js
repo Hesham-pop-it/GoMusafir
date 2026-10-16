@@ -29,6 +29,10 @@ async function loadDraft(uid, draftId, orgId, now = Date.now()) {
     throw new HttpsError('not-found', 'This conversation has expired.');
   }
   draft.messages = Array.isArray(draft.messages) ? draft.messages : Object.values(draft.messages || {});
+  // The database drops null values, so give every field back its explicit null.
+  const empty = { title: null, image: null, destination: null, start_date: null, end_date: null, start_day: null, end_day: null, participants: null };
+  draft.fields = { ...empty, ...(draft.fields || {}) };
+  for (const key of ['editing', 'pending_start_day', 'seats']) if (draft[key] === undefined) draft[key] = null;
   return draft;
 }
 
