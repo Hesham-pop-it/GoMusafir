@@ -63,7 +63,7 @@ async function registerRetention(org, trip, now = Date.now()) {
 
 async function saveStep(org, trip, uid, step, data, { now = Date.now(), consentAt } = {}) {
   const updates = { [`passport/${org}/${trip}/${uid}/steps/${step}`]: { enc: encryptStep(data), updated_at: now } };
-  if (step === 'medisch') {
+  if (step === 'medisch' && data.consent === true) {
     updates[`passport_status/${org}/${trip}/${uid}/medical_consent_at`] = consentAt || now;
     updates[`passport_status/${org}/${trip}/${uid}/medical_consent_version`] = MEDICAL_CONSENT_VERSION;
   }
@@ -81,7 +81,7 @@ async function stepsView(org, trip, uid, loaded) {
   for (const step of STEPS) {
     let data = stored[step] ? { ...stored[step] } : {};
     if (step === 'gegevens' && !stored.gegevens) data = await accountContact(uid);
-    if (step === 'paspoort' && data.passport_number) data.passport_number = maskPassportNumber(data.passport_number);
+    if (step === 'paspoort' && data.number) data.number = maskPassportNumber(data.number);
     if (step === 'paspoort') data.uploaded_at = docs.passport?.uploaded_at || null;
     if (step === 'visum') data.uploaded_at = docs.visa?.uploaded_at || null;
     out[step] = { status: status[step], data };

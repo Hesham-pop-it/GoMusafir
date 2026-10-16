@@ -29,19 +29,21 @@ const futureDate = now => z.string({ required_error: 'The expiry date is require
   .refine(v => v > todayIso(now), 'The passport must expire in the future.');
 
 const schemas = now => ({
-  gegevens: z.object({ name: trimmed(2, 100, 'The name'), phone, email }),
+  gegevens: z.object({ confirmed: z.boolean().optional(), name: trimmed(2, 100, 'The name'), phone, email }).transform(v => ({ ...v, confirmed: true })),
   visum: z.object({ has_visa: z.boolean({ required_error: 'Say whether you have a visa.', invalid_type_error: 'Say whether you have a visa.' }) }),
   paspoort: z.object({
-    passport_number: z.string({ required_error: 'The passport number is required.', invalid_type_error: 'The passport number is required.' })
+    number: z.string({ required_error: 'The passport number is required.', invalid_type_error: 'The passport number is required.' })
       .trim().toUpperCase().regex(/^[A-Z0-9]{5,20}$/, 'The passport number needs 5 to 20 letters or digits.'),
     nationality: trimmed(2, 60, 'The nationality'),
     expiry: futureDate(now),
   }),
+  // "none" means nothing to report and needs no consent; anything else is stored only with explicit consent.
   medisch: z.object({
-    consent: z.literal(true, { errorMap: () => ({ message: 'Explicit consent is required to store medical information.' }) }),
-    allergies: optionalText(500, 'Allergies'),
-    notes: optionalText(2000, 'Medical notes'),
-  }),
+    none: z.boolean().optional(), consent: z.boolean().optional(), consent_lang: optionalText(10, 'Consent language'),
+    allergies: optionalText(500, 'Allergies'), notes: optionalText(2000, 'Medical notes'),
+  }).superRefine((v, ctx) => {
+    if (v.none !== true && v.consent !== true) ctx.addIssue({ code: 'custom', path: ['consent'], message: 'Explicit consent is required to store medical information.' });
+  }).transform(v => (v.none === true ? { none: true, allergies: '', notes: '', consent: false } : { none: false, consent: true, consent_lang: v.consent_lang, allergies: v.allergies, notes: v.notes })),
   noodcontact: z.object({
     contacts: z.array(z.object({ name: trimmed(2, 100, 'The contact name'), relation: trimmed(2, 40, 'The relation'), phone }),
       { required_error: 'Add at least one emergency contact.', invalid_type_error: 'Add at least one emergency contact.' })
@@ -76,7 +78,7 @@ function stepStatus(step, stored, { needsCopy = false, docs = {} } = {}) {
   switch (step) {
     case 'visum': return stored.has_visa === true && needsCopy && !docs.visa ? 'todo' : 'done';
     case 'paspoort': return needsCopy && !docs.passport ? 'todo' : 'done';
-    case 'medisch': return stored.consent === true ? 'done' : 'todo';
+    case 'medisch': return stored.none === true || stored.consent === true ? 'done' : 'todo';
     case 'noodcontact': return Array.isArray(stored.contacts) && stored.contacts.length >= 1 ? 'done' : 'todo';
     default: return 'done';
   }

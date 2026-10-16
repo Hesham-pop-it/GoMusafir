@@ -81,7 +81,7 @@ async function issueCode(hash, { auto = false, now = Date.now() } = {}) {
   return code ? { code } : { code: null, ...outcome };
 }
 
-// Counts the try first, then compares; five tries use the code up. -> true, or throws wrong_code / too_many_tries / code_expired.
+// Counts the try first, then compares; five tries use the code up. -> true, or throws wrong_code / too_many / code_expired.
 async function verifyCode(hash, code, now = Date.now()) {
   let state = 'missing', left = 0;
   await codeRef(hash).transaction(cur => {
@@ -95,7 +95,7 @@ async function verifyCode(hash, code, now = Date.now()) {
   if (state === 'ok') return true;
   if (state === 'missing') throw fail('failed-precondition', 'Request a new code first.', 'code_missing');
   if (state === 'expired') throw fail('failed-precondition', 'This code has expired. Request a new one.', 'code_expired');
-  if (state === 'locked' || left === 0) throw fail('resource-exhausted', 'Too many wrong codes. Request a new code.', 'too_many_tries', { tries_left: 0 });
+  if (state === 'locked' || left === 0) throw fail('resource-exhausted', 'Too many wrong codes. Request a new code.', 'too_many', { tries_left: 0 });
   throw fail('permission-denied', 'That code is not correct.', 'wrong_code', { tries_left: left });
 }
 
@@ -108,14 +108,14 @@ async function createSession({ hash, link, now = Date.now() }) {
 
 // session -> { hash (of the session), record, link }; a withdrawn or expired link ends the session with it.
 async function resolveSession(token, now = Date.now()) {
-  if (!t.isTokenShape(token)) throw fail('unauthenticated', 'Start again with your link.', 'session_invalid');
+  if (!t.isTokenShape(token)) throw fail('unauthenticated', 'Start again with your link.', 'session');
   const hash = t.hashToken(token);
   const record = (await sessionRef(hash).get()).val();
-  if (!record) throw fail('unauthenticated', 'Start again with your link.', 'session_invalid');
-  if (record.expires_at <= now) throw fail('unauthenticated', 'Your session has ended. Open your link again.', 'session_expired');
+  if (!record) throw fail('unauthenticated', 'Start again with your link.', 'session');
+  if (record.expires_at <= now) throw fail('unauthenticated', 'Your session has ended. Open your link again.', 'session');
   const link = (await linkRef(record.link).get()).val();
-  if (!link) throw fail('unauthenticated', 'Start again with your link.', 'session_invalid');
-  try { assertLinkUsable(link, now); } catch (error) { throw fail('unauthenticated', error.message, error.details?.reason === 'revoked' ? 'revoked' : 'session_expired'); }
+  if (!link) throw fail('unauthenticated', 'Start again with your link.', 'session');
+  try { assertLinkUsable(link, now); } catch (error) { throw fail('unauthenticated', error.message, error.details?.reason === 'revoked' ? 'revoked' : 'session'); }
   return { hash, record, link };
 }
 

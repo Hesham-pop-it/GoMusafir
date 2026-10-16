@@ -8,7 +8,7 @@ const bad = (step, data, field, now = NOW) => assert.throws(() => v.validateStep
 
 test('gegevens: name, phone digits and email are checked and cleaned', () => {
   assert.deepEqual(v.validateStep('gegevens', { name: '  Fatima Zahra ', phone: '+31 (6) 1234-5678', email: ' Fatima@Example.COM ', extra: 1 }, NOW),
-    { name: 'Fatima Zahra', phone: '+31612345678', email: 'fatima@example.com' });
+    { confirmed: true, name: 'Fatima Zahra', phone: '+31612345678', email: 'fatima@example.com' });
   bad('gegevens', { name: 'F', phone: '0612345678', email: 'a@b.co' }, 'name');
   bad('gegevens', { name: 'Fatima', phone: '06abc', email: 'a@b.co' }, 'phone');
   bad('gegevens', { name: 'Fatima', phone: '12345', email: 'a@b.co' }, 'phone');
@@ -22,23 +22,25 @@ test('visum needs a real yes or no', () => {
   bad('visum', {}, 'has_visa');
 });
 test('paspoort: expiry must be a real date in the future', () => {
-  const ok = { passport_number: ' nx4123458 ', nationality: 'Nederlandse', expiry: '2031-03-14' };
-  assert.deepEqual(v.validateStep('paspoort', ok, NOW), { passport_number: 'NX4123458', nationality: 'Nederlandse', expiry: '2031-03-14' });
+  const ok = { number: ' nx4123458 ', nationality: 'Nederlandse', expiry: '2031-03-14' };
+  assert.deepEqual(v.validateStep('paspoort', ok, NOW), { number: 'NX4123458', nationality: 'Nederlandse', expiry: '2031-03-14' });
   bad('paspoort', { ...ok, expiry: '2026-10-16' }, 'expiry'); // today is not the future
   bad('paspoort', { ...ok, expiry: '2020-01-01' }, 'expiry');
   bad('paspoort', { ...ok, expiry: '2031-02-30' }, 'expiry');
   bad('paspoort', { ...ok, expiry: '14-03-2031' }, 'expiry');
   assert.equal(v.validateStep('paspoort', { ...ok, expiry: '2026-10-17' }, NOW).expiry, '2026-10-17');
-  bad('paspoort', { ...ok, passport_number: 'NX4•••••8' }, 'passport_number');
-  bad('paspoort', { ...ok, passport_number: 'AB1' }, 'passport_number');
+  bad('paspoort', { ...ok, number: 'NX4•••••8' }, 'number');
+  bad('paspoort', { ...ok, number: 'AB1' }, 'number');
   bad('paspoort', { ...ok, nationality: '' }, 'nationality');
 });
 test('medisch: explicit consent is required, texts are optional', () => {
-  assert.deepEqual(v.validateStep('medisch', { consent: true }, NOW), { consent: true, allergies: '', notes: '' });
+  assert.deepEqual(v.validateStep('medisch', { consent: true, consent_lang: 'nl' }, NOW), { none: false, consent: true, consent_lang: 'nl', allergies: '', notes: '' });
+  assert.deepEqual(v.validateStep('medisch', { none: true, allergies: 'x', consent: false }, NOW), { none: true, allergies: '', notes: '', consent: false });
   assert.equal(v.validateStep('medisch', { consent: true, allergies: ' Pinda ', notes: null }, NOW).allergies, 'Pinda');
   bad('medisch', { allergies: 'Pinda' }, 'consent');
   bad('medisch', { consent: false }, 'consent');
   bad('medisch', { consent: 'true' }, 'consent');
+  bad('medisch', { none: false }, 'consent');
   bad('medisch', { consent: true, notes: 'x'.repeat(2001) }, 'notes');
 });
 test('noodcontact: one or two contacts with name, relation and phone', () => {
@@ -61,7 +63,7 @@ test('the passport number shows only its edges', () => {
   assert.equal(v.maskPassportNumber(''), '');
 });
 test('status: done needs the copy only when the trip asks for one', () => {
-  const stored = { gegevens: {}, visum: { has_visa: true }, paspoort: { passport_number: 'X' }, medisch: { consent: true }, noodcontact: { contacts: [{}] } };
+  const stored = { gegevens: {}, visum: { has_visa: true }, paspoort: { number: 'X' }, medisch: { consent: true }, noodcontact: { contacts: [{}] } };
   let s = v.statusMap(stored, { needsCopy: false, docs: {} });
   assert.equal(s.complete, true);
   assert.equal(s.familie, 'todo');

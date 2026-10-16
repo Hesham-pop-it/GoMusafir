@@ -54,10 +54,11 @@ async function view({ org, trip, uid }) {
   for (const [id, r] of Object.entries(records)) {
     if (r.from_uid === uid) {
       const confirmed = r.status === 'confirmed';
-      outgoing.push({ id, email_masked: r.to_email_masked, relation: r.relation, status: confirmed ? 'confirmed' : 'sent',
+      outgoing.push({ id, email: r.to_email_masked, email_masked: r.to_email_masked, relation: r.relation, status: confirmed ? 'confirmed' : 'sent',
         ...(confirmed ? { name: await displayName(org, trip, r.to_uid), their_relation: r.answer_relation } : {}), created_at: r.created_at });
     } else if (r.to_uid === uid && r.status !== 'declined') {
-      incoming.push({ id, name: await displayName(org, trip, r.from_uid), relation: r.relation, status: r.status,
+      const from = await displayName(org, trip, r.from_uid);
+      incoming.push({ id, from_name: from, name: from, relation: r.relation, status: r.status,
         ...(r.status === 'confirmed' ? { their_relation: r.answer_relation } : {}), created_at: r.created_at });
     }
   }
@@ -69,12 +70,15 @@ async function answer({ org, trip, uid, id, relation, decline, now = Date.now() 
   if (decline === true ? relation !== undefined : !RELATIONS.includes(relation)) {
     throw new HttpsError('invalid-argument', 'Choose a relation from the list or decline.', { reason: 'invalid_field', field: 'relation' });
   }
+  let open = false;
   const result = await familyRef(org, trip).child(id).transaction(r => {
+    open = false;
     if (!r) return r;
     if (r.to_uid !== uid || r.status !== 'pending') return undefined;
+    open = true;
     return decline === true ? { ...r, status: 'declined', answered_at: now } : { ...r, status: 'confirmed', answer_relation: relation, answered_at: now };
   }, undefined, false);
-  if (!result.committed) throw new HttpsError('not-found', 'This request is no longer open.', { reason: 'not_found' });
+  if (!result.committed || !open) throw new HttpsError('not-found', 'This request is no longer open.', { reason: 'not_found' });
   return { ok: true, family: await view({ org, trip, uid }) };
 }
 

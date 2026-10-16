@@ -48,7 +48,7 @@ async function sessionContext(request) {
   const found = await svc.links().resolveSession(session);
   const { org_id: org, trip_id: trip, uid } = found.record;
   const stillThere = (await db.ref(`trips_participants/${trip}/${uid}`).get()).val();
-  if (!stillThere) throw new HttpsError('unauthenticated', 'Start again with your link.', { reason: 'session_invalid' });
+  if (!stillThere) throw new HttpsError('unauthenticated', 'Start again with your link.', { reason: 'session' });
   return { org, trip, uid, sessionHash: found.hash, link: found.link };
 }
 async function audit(ctx, action, request, extra = {}) {
@@ -123,10 +123,17 @@ exports.passportSave = onCall({ region: 'europe-west1' }, async request => {
   const { validateStep, maskPassportNumber } = svc.valid();
   const store = svc.store();
   let input = data;
-  if (step === 'paspoort' && data && typeof data === 'object' && typeof data.passport_number === 'string') {
-    // The page shows the number masked; sending it back unchanged keeps the stored one.
-    const existing = (await store.loadRecord(ctx.org, ctx.trip, ctx.uid)).stored.paspoort;
-    if (existing && data.passport_number === maskPassportNumber(existing.passport_number)) input = { ...data, passport_number: existing.passport_number };
+  const isObject = data && typeof data === 'object' && !Array.isArray(data);
+  if (isObject && ['gegevens', 'paspoort'].includes(step)) {
+    const existing = (await store.loadRecord(ctx.org, ctx.trip, ctx.uid)).stored[step];
+    if (step === 'gegevens') {
+      // "Gegevens zijn correct" sends only the confirmation: the saved or account values are checked and kept.
+      const { name, phone, email } = existing || await store.accountContact(ctx.uid);
+      input = { name, phone, email, ...Object.fromEntries(Object.entries(data).filter(([, v]) => v !== undefined && v !== null && v !== '')) };
+    } else if (existing && (data.number === undefined || data.number === maskPassportNumber(existing.number))) {
+      // The number is only sent when changed; the masked one sent back unchanged keeps the stored one.
+      input = { ...data, number: existing.number };
+    }
   }
   const clean = validateStep(step, input);
   await store.saveStep(ctx.org, ctx.trip, ctx.uid, step, clean);
