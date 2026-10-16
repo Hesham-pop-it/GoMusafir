@@ -1,6 +1,8 @@
 // Family links between two pilgrims of the same trip (phase 5, F12). The sender always gets the same answer,
-// and always has a row in their own list, whether or not the address belongs to someone on the trip: a request
-// to an unknown address is stored with no recipient and simply stays "sent". A decline also reads "sent".
+// whether or not the address belongs to someone on the trip: a request to an unknown address is stored with no
+// recipient and simply stays "sent" (the recipient is attached when that address later opens their own list).
+// A decline also reads "sent". A request to oneself, a repeat of an earlier one, one answering a request already
+// received, or one beyond 10 per person gets the same answer but stores nothing, so it leaves no row in the list.
 // Records: passport_family/{org}/{trip}/{id}. Nothing here is readable by clients.
 const crypto = require('crypto');
 const { HttpsError } = require('firebase-functions/v2/https');
@@ -37,6 +39,7 @@ async function request({ org, trip, uid, email, relation, now = Date.now() }) {
       from_uid: uid, to_uid: target && target !== uid ? target : null, to_email_masked: maskEmail(address), to_email_hash: hash,
       relation, status: 'pending', created_at: now,
     });
+    await store.registerRetention(org, trip, now);
   }
   return { ok: true, status: 'sent' };
 }
@@ -48,8 +51,20 @@ async function displayName(org, trip, uid) {
 }
 
 // -> { incoming[], outgoing[] } for one person. Declined requests are invisible to the sender.
+// A request stored before its recipient was on the trip carries only the address hash: the first time that person
+// opens their list with a matching account address, they become the recipient.
 async function view({ org, trip, uid }) {
   const records = (await familyRef(org, trip).get()).val() || {};
+  const open = Object.entries(records).filter(([, r]) => !r.to_uid && r.to_email_hash && r.from_uid !== uid);
+  if (open.length) {
+    const mine = (await auth.getUser(uid).catch(() => null))?.email;
+    const myHash = mine ? emailHash(normalizeEmail(mine)) : null;
+    for (const [id, r] of open) {
+      if (r.to_email_hash !== myHash) continue;
+      const claim = await familyRef(org, trip).child(id).child('to_uid').transaction(cur => (cur ? undefined : uid), undefined, false);
+      if (claim.committed) records[id] = { ...r, to_uid: uid };
+    }
+  }
   const incoming = [], outgoing = [];
   for (const [id, r] of Object.entries(records)) {
     if (r.from_uid === uid) {

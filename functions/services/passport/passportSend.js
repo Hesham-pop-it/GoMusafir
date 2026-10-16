@@ -15,6 +15,7 @@ const MODES = ['direct', 'hours', 'days', 'manual'];
 const MAX_AMOUNT = { hours: 24 * 14, days: 60 };
 const RESEND_GAP_MS = 10 * 60 * 1000;
 const CLAIM_MS = 10 * 60 * 1000;
+const QUEUE_MAX_TRIES = 5; // failed mail attempts before a queued link is given up
 const DEFAULT_SETTINGS = { mode: 'manual', amount: 0, lang: 'en' };
 const settingsRef = org => db.ref(`passport_settings/${org}`);
 
@@ -74,14 +75,14 @@ async function sendLinks({ orgId, tripId, uids, onlyNew = !uids, by = null, lang
   for (const uid of [...new Set(targets)]) {
     if (!members[uid] || staff[uid]) { skipped[uid] = 'not_participant'; continue; }
     const [index, status] = await Promise.all([links.indexRef(tripId, uid).get().then(s => s.val()), store.statusRef(orgId, tripId, uid).child('complete').get().then(s => s.val())]);
-    const active = index && !index.revoked_at && index.expires_at > now;
+    const active = index && !index.revoked_at && !index.locked_at && index.expires_at > now;
     if (onlyNew && (status === true || active)) { skipped[uid] = status === true ? 'complete' : 'already_sent'; continue; }
     if (!onlyNew && index?.sent_at && now - index.sent_at < RESEND_GAP_MS) { skipped[uid] = 'recent'; continue; }
     const contact = await store.accountContact(uid);
     if (!contact.email) { skipped[uid] = 'no_email'; continue; }
     ready.push({ uid, email: contact.email });
   }
-  if (ready.length) await inv.takeMailBudget(orgId, ready.length, now);
+  if (ready.length) { await inv.takeMailBudget(orgId, ready.length, now); await store.registerRetention(orgId, tripId, now); }
   const org = await orgName(orgId);
   const { sendEmail } = require('../emailService');
   let sent = 0, failed = 0, fallback = false;
@@ -91,14 +92,16 @@ async function sendLinks({ orgId, tripId, uids, onlyNew = !uids, by = null, lang
       const built = mail.buildLinkMail({ lang: language, org, trip, token: link.token });
       fallback = built.fallback;
       await sendEmail({ to: email, subject: built.subject, html: built.html, customArgs: { org_id: orgId, trip_id: tripId, kind: 'passport_link' } });
-      await links.markSent(tripId, uid, now);
-      sent++;
     } catch (error) {
       failed++;
       console.warn('Passport link mail failed', { tripId, uid, message: error.message });
-      await links.revokeLink({ tripId, uid, now });
+      await links.restoreLink({ tripId, uid, link, now });
       skipped[uid] = 'send_failed';
+      return;
     }
+    await links.markSent(tripId, uid, now);
+    await links.revokeHash(link.previous?.revoked_at ? null : link.previous?.hash, now); // the earlier link ends only once the new one is on its way
+    sent++;
   });
   await writeAuditLog(orgId, { action: 'PASSPORT_LINKS_SENT', byUid: by, targetId: tripId, ipAddress: ip,
     extra: { sent, failed, skipped: Object.keys(skipped).length - failed, source, lang: language } });
@@ -116,7 +119,11 @@ async function processDue({ now = Date.now(), limit = 100 } = {}) {
       const out = await sendLinks({ orgId: entry.org_id, tripId: entry.trip_id, uids: [entry.uid], onlyNew: true, source: 'queue', now });
       result.sent += out.sent;
       if (!out.sent && !out.failed) result.dropped++;
-      if (out.failed) { await queueRef(key).update({ claimed_at: null, send_at: now + RESEND_GAP_MS }); result.held++; continue; }
+      if (out.failed) {
+        const attempts = (claim.snapshot.val().attempts || 0) + 1;
+        if (attempts >= QUEUE_MAX_TRIES) { result.dropped++; } // fall through: the entry is removed
+        else { await queueRef(key).update({ claimed_at: null, send_at: now + RESEND_GAP_MS, attempts }); result.held++; continue; }
+      }
     } catch (error) {
       const retry = error.code === 'resource-exhausted';
       console.warn('Passport queue entry not sent', { key, message: error.message });
@@ -128,4 +135,4 @@ async function processDue({ now = Date.now(), limit = 100 } = {}) {
   return result;
 }
 
-module.exports = { MODES, DEFAULT_SETTINGS, RESEND_GAP_MS, getSettings, cleanSettings, dueAt, queueKey, enqueueJoin, sendLinks, processDue, settingsRef, orgName };
+module.exports = { MODES, DEFAULT_SETTINGS, RESEND_GAP_MS, QUEUE_MAX_TRIES, getSettings, cleanSettings, dueAt, queueKey, enqueueJoin, sendLinks, processDue, settingsRef, orgName };
