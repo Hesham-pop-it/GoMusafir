@@ -4,7 +4,7 @@
 // bucket path passport_docs/{org}/{trip}/{uid}/. No client rule allows any of these paths.
 const { HttpsError } = require('firebase-functions/v2/https');
 const { admin, db, auth } = require('../../admin');
-const { encrypt, decrypt } = require('../kmsService');
+const kms = require('../kmsService');
 const { STEPS, MEDICAL_CONSENT_VERSION, maskPassportNumber, statusMap } = require('./passportValidation');
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -12,6 +12,16 @@ const dataRef = (org, trip, uid) => db.ref(`passport/${org}/${trip}/${uid}`);
 const statusRef = (org, trip, uid) => db.ref(`passport_status/${org}/${trip}/${uid}`);
 const tripSettingsRef = trip => db.ref(`passport_trip_settings/${trip}`);
 const docPrefix = (org, trip, uid) => `passport_docs/${org}/${trip}/${uid}/`;
+
+// kmsService falls back to a built-in key when ENCRYPTION_KEY is missing. Outside the emulator the passport data
+// is never encrypted or read with that fallback: the key must be set and 64 hex characters. Nothing of the key
+// is ever put in a message.
+function assertEncryptionKey(env = process.env) {
+  if (env.FUNCTIONS_EMULATOR === 'true') return;
+  if (!/^[0-9a-fA-F]{64}$/.test(env.ENCRYPTION_KEY || '')) throw new HttpsError('failed-precondition', 'Passport storage is not configured.');
+}
+const encrypt = text => { assertEncryptionKey(); return kms.encrypt(text); };
+const decrypt = text => { assertEncryptionKey(); return kms.decrypt(text); };
 
 const encryptStep = data => encrypt(JSON.stringify(data));
 function decryptStep(enc) {
@@ -28,7 +38,10 @@ async function accountContact(uid) {
   const [userSnap, record] = await Promise.all([db.ref(`users/${uid}`).get(), auth.getUser(uid).catch(() => null)]);
   const user = userSnap.val() || {};
   let secret = {};
-  if (user.p_profile) { try { secret = JSON.parse(decrypt(user.p_profile)) || {}; } catch (_) { /* fall back to plain fields */ } }
+  if (user.p_profile) {
+    assertEncryptionKey();
+    try { secret = JSON.parse(kms.decrypt(user.p_profile)) || {}; } catch (_) { /* fall back to plain fields */ }
+  }
   const profile = user.profile || {};
   const pick = (...values) => values.find(v => typeof v === 'string' && v.trim() && v.trim() !== '***') || '';
   const first = pick(secret.firstName, profile.firstName, profile.first_name, user.first_name);
@@ -103,6 +116,6 @@ async function storeDocument(org, trip, uid, kind, { bytes, contentType, ext }, 
 }
 
 module.exports = {
-  RETENTION_MS, dataRef, statusRef, tripSettingsRef, docPrefix, encryptStep, decryptStep, tripNeedsCopy, accountContact,
+  RETENTION_MS, assertEncryptionKey, dataRef, statusRef, tripSettingsRef, docPrefix, encryptStep, decryptStep, tripNeedsCopy, accountContact,
   loadRecord, refreshStatus, registerRetention, saveStep, stepsView, storeDocument,
 };

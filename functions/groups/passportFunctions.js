@@ -4,12 +4,15 @@
 const { HttpsError } = require('firebase-functions/v2/https');
 const { onValueCreated } = require('firebase-functions/v2/database');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { defineSecret } = require('firebase-functions/params');
 const { z } = require('zod');
 const { onCall } = require('../middleware/participantAccessMiddleware');
 const { db } = require('../admin');
 const { verifyAppCheck, requireAuth, requireRole } = require('../middleware/appCheckMiddleware');
 const { writeAuditLog } = require('../services/auditService');
 
+// Binds the key the passport data is encrypted with; the store refuses to work without it outside the emulator.
+const ENCRYPTION_KEY = defineSecret('ENCRYPTION_KEY');
 const STAFF = ['admin', 'co-host'];
 const ID = z.string().regex(/^[-\w]{1,64}$/);
 const TOKEN = z.string().max(100);
@@ -62,7 +65,8 @@ async function mailCode({ link, uid, code }) {
   await require('../services/emailService').sendEmail({ to: contact.email, subject: built.subject, html: built.html, customArgs: { kind: 'passport_code' } });
   return contact.email;
 }
-const PILGRIM = { region: 'europe-west1', secrets: ['SENDGRID_API_KEY'] };
+const PILGRIM = { region: 'europe-west1', secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY] };
+const DATA = { region: 'europe-west1', secrets: [ENCRYPTION_KEY] };
 
 // -> { email_masked, needs_code, org_name, trip_title, lang? }. Sends the first code when none is waiting.
 exports.passportOpen = onCall(PILGRIM, async request => {
@@ -106,7 +110,7 @@ exports.passportResend = onCall(PILGRIM, async request => {
 });
 
 // -> { steps{gegevens, visum, paspoort, medisch, noodcontact, familie: {status, data}}, trip{needs_copy}, family{incoming[], outgoing[]} }
-exports.passportGet = onCall({ region: 'europe-west1' }, async request => {
+exports.passportGet = onCall(DATA, async request => {
   const ctx = await sessionContext(request);
   const [steps, needsCopy, family] = await Promise.all([
     svc.store().stepsView(ctx.org, ctx.trip, ctx.uid), svc.store().tripNeedsCopy(ctx.trip), svc.family().view(ctx)]);
@@ -117,7 +121,7 @@ exports.passportGet = onCall({ region: 'europe-west1' }, async request => {
 });
 
 // -> { steps }. The data is checked on the server for every step.
-exports.passportSave = onCall({ region: 'europe-west1' }, async request => {
+exports.passportSave = onCall(DATA, async request => {
   const ctx = await sessionContext(request);
   const { step, data } = parse(z.object({ step: z.string().max(30), data: z.any() }), request.data);
   const { validateStep, maskPassportNumber } = svc.valid();
@@ -142,7 +146,7 @@ exports.passportSave = onCall({ region: 'europe-west1' }, async request => {
 });
 
 // -> { ok: true, uploaded_at }
-exports.passportUpload = onCall({ region: 'europe-west1', memory: '512MiB' }, async request => {
+exports.passportUpload = onCall({ ...DATA, memory: '512MiB' }, async request => {
   const ctx = await sessionContext(request);
   const { kind, dataUrl } = parse(z.object({ kind: z.string().max(20), dataUrl: z.string().max(8 * 1024 * 1024) }), request.data);
   const doc = svc.valid().decodeDocument(dataUrl, kind);
@@ -164,7 +168,7 @@ exports.familyRequest = onCall({ region: 'europe-west1' }, async request => {
 });
 
 // -> { ok: true, family{incoming[], outgoing[]} }
-exports.familyAnswer = onCall({ region: 'europe-west1' }, async request => {
+exports.familyAnswer = onCall(DATA, async request => {
   const ctx = await sessionContext(request);
   const { id, relation, decline } = parse(z.object({ id: z.string().max(64), relation: z.string().max(20).optional(), decline: z.boolean().optional() }), request.data);
   const out = await svc.family().answer({ org: ctx.org, trip: ctx.trip, uid: ctx.uid, id, relation, decline });
@@ -214,7 +218,7 @@ exports.setPassportSettings = onCall({ region: 'europe-west1' }, async request =
 
 // uids: a list, or the word "all" (also all: true) for everyone on the trip without a usable link who is not finished.
 // -> { sent, skipped, failed, reasons: { uid: reason }, lang_fallback }
-exports.sendPassportLinks = onCall({ region: 'europe-west1', secrets: ['SENDGRID_API_KEY'], timeoutSeconds: 300 }, async request => {
+exports.sendPassportLinks = onCall({ region: 'europe-west1', secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY], timeoutSeconds: 300 }, async request => {
   const input = parse(z.object({ orgId: ID, tripId: ID, uids: z.union([z.literal('all'), z.array(ID).min(1).max(500)]).optional(),
     all: z.boolean().optional(), lang: LANG.optional() }), request.data);
   const { uid } = await staffContext(request, input.orgId);
@@ -237,14 +241,14 @@ exports.revokePassportLink = onCall({ region: 'europe-west1' }, async request =>
 // ── Triggers and schedules ─────────────────────────────────────────────────────────
 
 // A person joined a trip: queue their link by the organisation's timing; "direct" goes out at once.
-exports.onPassportParticipantJoined = onValueCreated({ ref: '/trips_participants/{tripId}/{uid}', region: 'europe-west1', secrets: ['SENDGRID_API_KEY'] }, async event => {
+exports.onPassportParticipantJoined = onValueCreated({ ref: '/trips_participants/{tripId}/{uid}', region: 'europe-west1', secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY] }, async event => {
   const { tripId, uid } = event.params;
   const orgId = (await db.ref(`trips_orgs/${tripId}`).get()).val();
   if (!orgId) return;
   const due = await svc.send().enqueueJoin({ orgId, tripId, uid });
   if (due !== null && due <= Date.now()) await svc.send().processDue();
 });
-exports.sendDuePassportLinks = onSchedule({ schedule: 'every 5 minutes', region: 'europe-west1', retryCount: 2, secrets: ['SENDGRID_API_KEY'] }, async () => {
+exports.sendDuePassportLinks = onSchedule({ schedule: 'every 5 minutes', region: 'europe-west1', retryCount: 2, secrets: ['SENDGRID_API_KEY', ENCRYPTION_KEY] }, async () => {
   await svc.send().processDue();
 });
 exports.passportRetention = onSchedule({ schedule: 'every day 03:30', timeZone: 'Europe/Amsterdam', region: 'europe-west1', retryCount: 2, timeoutSeconds: 540 }, async () => {
