@@ -10,7 +10,7 @@ const ctx = (over = {}) => ({
   validateDestination: value => { if (!/^(makkah|madinah|jeddah)(,|$)/i.test(value)) throw new Error('unknown'); },
   quote: async fields => {
     const { requiredSeats } = seatUsage(fields.start_date, fields.end_date, fields.participants);
-    return { required: requiredSeats, available, missing: Math.max(0, requiredSeats - available), price: 9.99, currency: 'eur', symbol: '€',
+    return { required: requiredSeats, available, missing: Math.max(0, requiredSeats - available), price: { amount: 9.99, currency: 'eur' }, currency: 'eur', symbol: '€',
       total: Math.round(Math.max(0, requiredSeats - available) * 9.99 * 100) / 100 };
   },
   ...over,
@@ -18,6 +18,7 @@ const ctx = (over = {}) => ({
 const start = () => newDraft({ id: 'd1', lang: 'nl', now, firstName: 'Saif' });
 const talk = async (draft, text, over) => say(draft, { text }, ctx(over));
 const act = async (draft, action, over) => say(draft, { action }, ctx(over));
+const banner = async d => { d.fields.image = 'https://x.test/b.jpg'; d.banner_done = true; return act(d, 'banner_uploaded'); };
 
 test('the eight steps are fixed and numbered', () => {
   assert.deepEqual(STEPS, ['name', 'banner', 'destination', 'dates', 'participants', 'seats', 'overview', 'created']);
@@ -30,8 +31,8 @@ test('a full conversation walks every step and ends at the overview', async () =
   const d = start();
   let r = await talk(d, 'Umrah Ramadan 2027');
   assert.equal(r.reply.key, 'ask_banner'); assert.equal(d.step, 'banner'); assert.equal(d.fields.title, 'Umrah Ramadan 2027');
-  r = await act(d, 'skip');
-  assert.equal(r.reply.key, 'banner_skipped'); assert.equal(d.step, 'destination');
+  r = await banner(d);
+  assert.equal(r.reply.key, 'ask_destination'); assert.equal(d.step, 'destination');
   r = await talk(d, 'we gaan naar Makkah');
   assert.equal(d.fields.destination, 'Makkah'); assert.equal(r.reply.key, 'ask_dates');
   r = await talk(d, 'we vertrekken 18 februari en zijn 3 maart terug');
@@ -45,7 +46,7 @@ test('a full conversation walks every step and ends at the overview', async () =
   assert.equal(r.reply.params.missing, 0);
   r = await act(d, 'confirm');
   assert.equal(r.reply.key, 'ready');
-  assert.ok(d.messages.length === 12);
+  assert.deepEqual(d.messages.filter(m => m.role === 'deen').map(m => m.key), ['ack_name', 'ask_banner', 'ask_destination', 'ack_destination', 'ask_dates', 'ack_dates', 'ask_participants', 'ack_participants', 'seats_ok', 'overview', 'ready']);
   assert.ok(d.messages.every(m => Number.isFinite(m.at)));
 });
 
@@ -53,7 +54,7 @@ test('missing seats stop at the seat check with the price, and a refresh after p
   available = 78;
   const d = start();
   for (const t of ['Trip', null, 'Makkah', '7 tot 20 februari 2027', '120']) {
-    if (t === null) await act(d, 'skip'); else await talk(d, t);
+    if (t === null) await banner(d); else await talk(d, t);
   }
   assert.equal(d.step, 'seats'); assert.equal(d.step_no, 6);
   assert.deepEqual([d.seats.required, d.seats.available, d.seats.missing], [120, 78, 42]);
@@ -69,7 +70,7 @@ test('a trip over 30 days needs a seat per participant per 30-day period', async
   available = 78;
   const d = start();
   for (const t of ['Trip', null, 'Makkah', '1 maart tot 15 april 2027', '50']) {
-    if (t === null) await act(d, 'skip'); else await talk(d, t);
+    if (t === null) await banner(d); else await talk(d, t);
   }
   assert.equal(d.seats.required, 100); assert.equal(d.seats.missing, 22);
 });
@@ -79,22 +80,22 @@ test('invalid answers repeat the question without changing anything', async () =
   const d = start();
   await talk(d, 'x');
   assert.equal(d.step, 'name');
-  await talk(d, 'Trip'); await act(d, 'skip');
+  await talk(d, 'Trip'); await banner(d);
   let r = await talk(d, 'nergens');
-  assert.equal(r.reply.key, 'destination_invalid'); assert.equal(d.step, 'destination');
+  assert.equal(r.reply.key, 'retry_destination'); assert.equal(d.step, 'destination');
   await talk(d, 'Makkah');
   r = await talk(d, 'binnenkort');
-  assert.equal(r.reply.key, 'dates_invalid');
+  assert.equal(r.reply.key, 'retry_dates');
   r = await talk(d, '1 januari 2020 tot 5 januari 2020');
-  assert.equal(r.reply.key, 'dates_past');
+  assert.equal(r.reply.key, 'retry_dates');
   r = await talk(d, '18 februari');
-  assert.equal(r.reply.key, 'dates_need_end'); assert.equal(d.pending_start_day, '2027-02-18'); assert.equal(d.fields.start_date, null);
+  assert.equal(r.reply.key, 'retry_dates'); assert.equal(d.pending_start_day, '2027-02-18'); assert.equal(d.fields.start_date, null);
   r = await talk(d, '3 maart');
   assert.equal(r.reply.key, 'ask_participants'); assert.equal(d.fields.end_day, '2027-03-03');
   r = await talk(d, 'veel');
-  assert.equal(r.reply.key, 'participants_invalid');
+  assert.equal(r.reply.key, 'retry_participants');
   r = await talk(d, '999999');
-  assert.equal(r.reply.key, 'participants_invalid');
+  assert.equal(r.reply.key, 'retry_participants');
   r = await talk(d, '40');
   assert.equal(d.step, 'overview');
 });
@@ -102,16 +103,16 @@ test('invalid answers repeat the question without changing anything', async () =
 test('end before start and trips over a year are refused', async () => {
   available = 500;
   const d = start();
-  await talk(d, 'Trip'); await act(d, 'skip'); await talk(d, 'Makkah');
-  assert.equal((await talk(d, '3 maart 2027 tot 18 februari 2027')).reply.key, 'dates_invalid');
-  assert.equal((await talk(d, '1 maart 2027 tot 1 maart 2029')).reply.key, 'dates_too_long');
+  await talk(d, 'Trip'); await banner(d); await talk(d, 'Makkah');
+  assert.equal((await talk(d, '3 maart 2027 tot 18 februari 2027')).reply.key, 'retry_dates');
+  assert.equal((await talk(d, '1 maart 2027 tot 1 maart 2029')).reply.key, 'retry_dates');
 });
 
 test('editing a field goes back to it and returns to the overview with fresh seats', async () => {
   available = 100;
   const d = start();
   for (const t of ['Trip', null, 'Makkah', '7 tot 20 februari 2027', '90']) {
-    if (t === null) await act(d, 'skip'); else await talk(d, t);
+    if (t === null) await banner(d); else await talk(d, t);
   }
   assert.equal(d.step, 'overview');
   let r = await act(d, 'edit_participants');
@@ -167,13 +168,13 @@ test('the model hint is only a hint: invalid values are refused, a valid one fil
   const model = async ({ step }) => (step === 'name' ? { title: 'Slimme titel', reply: 'Mooi gekozen!' } : null);
   let r = await talk(d, 'ik wil iets noemen', { model });
   assert.equal(d.fields.title, 'Slimme titel'); assert.equal(r.reply.text, 'Mooi gekozen!');
-  await act(d, 'skip'); await talk(d, 'Makkah');
+  await banner(d); await talk(d, 'Makkah');
   r = await talk(d, 'tja', { model: async () => ({ days: ['2027-02-30', '2027-03-01'] }) });
-  assert.equal(r.reply.key, 'dates_invalid');
+  assert.equal(r.reply.key, 'retry_dates');
   r = await talk(d, 'tja', { model: async () => ({ days: ['2027-02-10', '2027-02-12'] }) });
   assert.equal(d.fields.start_day, '2027-02-10');
   r = await talk(d, 'tja', { model: async () => { throw new Error('network'); } });
-  assert.equal(r.reply.key, 'participants_invalid');
+  assert.equal(r.reply.key, 'retry_participants');
 });
 
 test('a created draft does not change any more', async () => {

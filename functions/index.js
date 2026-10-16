@@ -45,6 +45,14 @@ exports.requestLoginApproval  = require("./groups/loginApprovalFunctions").reque
 exports.answerLoginApproval   = require("./groups/loginApprovalFunctions").answerLoginApproval;
 exports.requestSensitiveApproval = require("./groups/loginApprovalFunctions").requestSensitiveApproval;
 exports.sensitiveStatus       = require("./groups/loginApprovalFunctions").sensitiveStatus;
+
+// ── Deen (trip assistant) ─────────────────────────────────────────────────────
+const deenFunctions = require("./groups/deenFunctions");
+exports.deenStart             = deenFunctions.deenStart;
+exports.deenSay               = deenFunctions.deenSay;
+exports.uploadTripBanner      = deenFunctions.uploadTripBanner;
+exports.deenCheckout          = deenFunctions.deenCheckout;
+exports.deenCreate            = deenFunctions.deenCreate;
 exports.checkUserExistence    = authFunctions.checkUserExistence;
 exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
 exports.deleteMyAccount       = authFunctions.deleteMyAccount;

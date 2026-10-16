@@ -9,7 +9,7 @@ const MAX_PARTICIPANTS = 5000;
 const MAX_TRIP_DAYS = 366;
 const MAX_MESSAGES = 200;
 const DRAFT_TTL_MS = 30 * DAY_MS;
-const ACTIONS = ['confirm', 'edit_name', 'edit_destination', 'edit_dates', 'edit_participants', 'skip', 'later', 'restart', 'refresh'];
+const ACTIONS = ['confirm', 'banner_uploaded', 'resume', 'edit_name', 'edit_destination', 'edit_dates', 'edit_participants', 'skip', 'later', 'restart', 'refresh'];
 const EDIT_STEP = { edit_name: 'name', edit_destination: 'destination', edit_dates: 'dates', edit_participants: 'participants' };
 
 const stepNo = step => STEPS.indexOf(step) + 1;
@@ -149,7 +149,7 @@ async function handleAction(draft, action, ctx) {
     draft.status = 'paused';
     return { key: 'saved_later', params: { expires_at: draft.expires_at } };
   }
-  if (action === 'refresh') {
+  if (action === 'refresh' || action === 'banner_uploaded' || action === 'resume') {
     const was = draft.step;
     const reply = await advance(draft, ctx, null);
     return was === 'seats' && draft.step === 'overview' ? { ...reply, key: 'seats_paid' } : reply;
@@ -159,10 +159,7 @@ async function handleAction(draft, action, ctx) {
     if (action === 'edit_dates') draft.pending_start_day = null;
     return advance(draft, ctx, null);
   }
-  if (action === 'skip') {
-    if (draft.step === 'banner') { draft.banner_done = true; draft.fields.image = null; return advance(draft, ctx, { key: 'banner_skipped', params: {} }); }
-    return advance(draft, ctx, null);
-  }
+  if (action === 'skip') return advance(draft, ctx, null); // the banner step cannot be skipped
   if (action === 'confirm') {
     if (draft.step === 'overview') return { key: 'ready', params: { summary: summary(draft) } };
     return advance(draft, ctx, null);
@@ -180,8 +177,7 @@ async function handleText(draft, text, ctx) {
     draft.fields.title = heard.title;
     draft.editing = null;
   } else if (step === 'banner') {
-    if (heard.skip) { draft.banner_done = true; draft.fields.image = null; lead = { key: 'banner_skipped', params: {} }; }
-    else return { reply: await advance(draft, ctx, { key: 'ask_banner', params: {} }), heard };
+    return { reply: await advance(draft, ctx, { key: 'ask_banner', params: {} }), heard }; // only an upload completes it
   } else if (step === 'destination') {
     lead = applyDestination(draft, heard.destinations, ctx);
     if (!lead) draft.editing = null;
@@ -214,6 +210,31 @@ async function handleText(draft, text, ctx) {
   return { reply, heard };
 }
 
+// The keys the web client renders. A stored value is acknowledged first, then the next question follows.
+const RETRY = { destination_invalid: 'retry_destination', dates_invalid: 'retry_dates', dates_past: 'retry_dates', dates_too_long: 'retry_dates',
+  dates_need_end: 'retry_dates', participants_invalid: 'retry_participants' };
+const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
+function ackFor(draft, before) {
+  const f = draft.fields, b = before.fields;
+  if (f.title && f.title !== b.title) return { key: 'ack_name', params: { title: f.title } };
+  if (f.destination && f.destination !== b.destination) return { key: 'ack_destination', params: { destination: f.destination } };
+  if (f.start_day && (f.start_day !== b.start_day || f.end_day !== b.end_day)) return { key: 'ack_dates', params: { start: f.start_day, end: f.end_day } };
+  if (f.participants && f.participants !== b.participants) return { key: 'ack_participants', params: { count: f.participants } };
+  return null;
+}
+function clientReplies(reply, draft, before, isAction) {
+  const out = [];
+  const ack = !isAction && !RETRY[reply.key] && reply.key !== 'not_understood' && reply.key !== 'overview_change_what' ? ackFor(draft, before) : null;
+  if (ack) out.push(ack);
+  if (RETRY[reply.key]) return [{ ...reply, key: RETRY[reply.key], params: { ...reply.params, reason: reply.key } }];
+  if (reply.key === 'overview' && ack && before.step !== 'overview' && before.step !== 'seats') {
+    out.push({ key: 'seats_ok', params: { required: reply.params.required, available: reply.params.available } });
+  }
+  if (reply.key === 'ready' || reply.key === 'already_created' || reply.key === 'saved_later') { out.push(reply); return out; }
+  out.push(reply);
+  return out;
+}
+
 // One turn. Mutates and returns the draft with the new messages appended.
 async function say(draft, { text, action }, ctx) {
   if (draft.status === 'created') return { draft, reply: { key: 'already_created', params: { trip_id: draft.trip_id } } };
@@ -221,6 +242,7 @@ async function say(draft, { text, action }, ctx) {
   const now = ctx.now;
   if (action) pushMessage(draft, { role: 'user', text: '', action }, now);
   else pushMessage(draft, { role: 'user', text }, now);
+  const before = { step: draft.step, fields: { ...draft.fields } };
   let reply, replyText = null;
   if (action) reply = await handleAction(draft, action, ctx);
   else {
@@ -228,12 +250,14 @@ async function say(draft, { text, action }, ctx) {
     reply = out.reply; replyText = out.heard.replyText;
   }
   if (replyText) reply = { ...reply, text: replyText };
-  pushMessage(draft, { role: 'deen', text: reply.text || '', key: reply.key, params: reply.params || {} }, now);
+  const replies = clientReplies(reply, draft, before, Boolean(action));
+  const last = replies[replies.length - 1];
+  for (const r of replies) pushMessage(draft, { role: 'deen', text: r.text || '', key: r.key, params: r.params || {} }, now);
   draft.updated_at = now;
   draft.expires_at = now + DRAFT_TTL_MS;
-  return { draft, reply };
+  return { draft, reply: last, replies };
 }
 
 module.exports = {
-  STEPS, STEPS_TOTAL, ACTIONS, MAX_PARTICIPANTS, MAX_TRIP_DAYS, DRAFT_TTL_MS, newDraft, say, pushMessage, advance, setStep, summary, cleanLine,
+  clientReplies, STEPS, STEPS_TOTAL, ACTIONS, MAX_PARTICIPANTS, MAX_TRIP_DAYS, DRAFT_TTL_MS, newDraft, say, pushMessage, advance, setStep, summary, cleanLine,
 };
