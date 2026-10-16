@@ -14,6 +14,16 @@ const { validate, schemas } = require("../middleware/validateSchema");
 const { checkRateLimit } = require("../middleware/rateLimiter");
 const crypto = require("crypto");
 
+// Marks the matching e-mail invitation joined and keeps the organisation participant index current.
+// Lazy and non-fatal: a failure here must never stop someone from joining their trip.
+async function markInvitationJoined(orgId, tripId, uid, email) {
+  try {
+    await require("../services/invitations/invitationService").markInvitationJoined({ orgId, tripId, uid, email });
+  } catch (err) {
+    console.warn("Could not mark the invitation joined:", err.message);
+  }
+}
+
 // ── Redeem Invitation ─────────────────────────────────────────────────────────
 // This is the MOST security-critical endpoint.
 exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
@@ -76,6 +86,7 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
       [`users/${uid}/mfa_pending`]: false,
       [`users/${uid}/account_type`]: 'participant',
     });
+    await markInvitationJoined(orgId, tripId, uid, userRecord.email);
     const access = await refreshAccess(uid);
     return { success: true, tripId, orgId, access, message: "Already joined." };
   }
@@ -197,6 +208,7 @@ exports.redeemInvitation = onCall({ enrollment: true, region: "europe-west1" }, 
     // Publish account type and both membership indexes in the same write.
     // Access refreshes must never see a new participant without their trip.
     await db.ref().update(updates);
+    await markInvitationJoined(orgId, tripId, uid, userRecord.email);
     access = await refreshAccess(uid);
   } catch (dbErr) {
     throw new HttpsError("internal", "Failed to update participant status.");
