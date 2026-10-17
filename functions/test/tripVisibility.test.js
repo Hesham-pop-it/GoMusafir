@@ -309,3 +309,12 @@ test('staff get the location of a line the member mirror stripped, and nothing e
   await f.views.mirrorChat('o','t','message',null);
   assert.equal(f.root().chat_view_staff.message,undefined);assert.equal(f.root().chat_view.message,undefined);
 });
+test('a new trip gets its staff in the trip view even though they are not participants',async()=>{
+  const f=fixture({mode:'Show to organizers'});
+  f.state.orgs.o.staff.z='admin';
+  f.state.users.z={profile:{firstName:'Staff',lastName:'Zed',email:'z@test.invalid'}};
+  await f.views.writeTripView('t');
+  assert.equal(f.state.trip_view.t.staff.z.profile.firstName,'Staff');
+  assert.equal(f.state.trip_view.t.member.z.profile.firstName,'');
+  assert.equal(f.state.trip_view.t.staff.b.profile.firstName,'First-b');
+});

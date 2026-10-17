@@ -87,4 +87,15 @@ async function mirrorRecentChat(tripId, limit = 200) {
   return Object.keys(messages).length;
 }
 
-module.exports = { writeTripView, refreshUserViews, mirrorChat, mirrorRecentChat, AUDIENCES };
+// The profile fields getParticipantProfile reads; profile also receives unrelated writes (likes).
+const PROFILE_KEYS = ['firstName', 'lastName', 'first_name', 'last_name', 'email', 'phone', 'phoneNumber', 'photoURL'];
+const viewOf = profile => JSON.stringify(PROFILE_KEYS.map(key => (profile && typeof profile === 'object' ? profile[key] : undefined) ?? null));
+const profileAffectsViews = (before, after) => viewOf(before) !== viewOf(after);
+
+// Retries only help while the cause is temporary. Bad data, or a record the policy
+// refuses, fails the same way every time, so those are logged and dropped.
+const PERMANENT_CODES = new Set(['not-found', 'permission-denied', 'invalid-argument', 'failed-precondition']);
+const isPermanent = error => error instanceof TypeError || error instanceof RangeError || error instanceof SyntaxError
+  || PERMANENT_CODES.has(error?.code);
+
+module.exports = { profileAffectsViews, isPermanent, writeTripView, refreshUserViews, mirrorChat, mirrorRecentChat, AUDIENCES };
