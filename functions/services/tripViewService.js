@@ -1,5 +1,5 @@
 const { db } = require('../admin');
-const { directory, sanitizeMessage, sendersOf } = require('./tripVisibilityService');
+const { directory, sanitizeMessage, sendersOf, senderOf } = require('./tripVisibilityService');
 
 // trip_view/{tripId}/member/{uid} and trip_view/{tripId}/staff/{uid}: the
 // directory entry fellow pilgrims and staff may see, with the same redaction as
@@ -50,17 +50,32 @@ async function refreshUserViews(uid) {
   for (const tripId of await tripsOf(uid)) await writeTripView(tripId, [uid]);
 }
 
+// A line carries a location when it has coordinates, an address or the location type.
+const LOCATION_KEYS = ['lat', 'lng', 'latitude', 'longitude', 'location', 'coordinates', 'address'];
+const STAFF_KEYS = ['type', 'text', ...LOCATION_KEYS];
+const hasLocation = message => message.type === 'location' || LOCATION_KEYS.some(key => message[key] !== undefined);
+
 // trips_active/{org}/{trip}/chat_view/{messageId}: the chat line as fellow
 // pilgrims may see it (member audience), so phones listen instead of polling.
 // Phones replace the names with their own audience's names from trip_view.
+// chat_view_staff/{messageId} exists only for a line whose location the member
+// view removed: the staff audience's version of type, text and the location fields.
 async function mirrorChat(orgId, tripId, messageId, message) {
-  const target = db.ref(`trips_active/${orgId}/${tripId}/chat_view/${messageId}`);
-  if (!message || typeof message !== 'object') return target.remove();
-  const users = {};
+  const base = `trips_active/${orgId}/${tripId}`;
+  const target = db.ref(`${base}/chat_view/${messageId}`), staffTarget = db.ref(`${base}/chat_view_staff/${messageId}`);
+  if (!message || typeof message !== 'object') return Promise.all([target.remove(), staffTarget.remove()]);
+  const users = {}, staffUsers = {};
   await Promise.all([...sendersOf({ [messageId]: message })].map(async uid => {
-    users[uid] = (await db.ref(`trip_view/${tripId}/member/${uid}`).get()).val() || undefined;
+    const [member, staff] = await Promise.all([db.ref(`trip_view/${tripId}/member/${uid}`).get(), db.ref(`trip_view/${tripId}/staff/${uid}`).get()]);
+    users[uid] = member.val() || undefined;
+    staffUsers[uid] = staff.val() || undefined;
   }));
-  return target.set(sanitizeMessage(message, users));
+  const writes = [target.set(sanitizeMessage(message, users))];
+  if (hasLocation(message) && !users[senderOf(message)]?.visibility?.canSeeLocation) {
+    const staffLine = sanitizeMessage(message, staffUsers);
+    writes.push(staffTarget.set(Object.fromEntries(STAFF_KEYS.filter(key => staffLine[key] !== undefined).map(key => [key, staffLine[key]]))));
+  } else writes.push(staffTarget.remove());
+  return Promise.all(writes);
 }
 
 // Mirrors the newest `limit` chat lines of a trip (backfill for older trips).

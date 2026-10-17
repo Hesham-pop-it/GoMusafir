@@ -219,4 +219,4 @@ async function respondToLocationRequest(request) {
   await db.ref().update(answerUpdates(wanted, now));
   return { status: wanted, expiresAt: accept ? now + GRANT_MS : null };
 }
-module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, directory };
+module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, senderOf, directory };

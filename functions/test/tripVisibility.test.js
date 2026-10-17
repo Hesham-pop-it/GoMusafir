@@ -287,3 +287,25 @@ test('retrying an accepted answer restores a missing grant from the original ans
   await f.call('respondToLocationRequest',{notificationId:id,accept:false},'b');
   assert.equal(f.root().location_permissions.b,undefined);
 });
+test('staff get the location of a line the member mirror stripped, and nothing else of it',async()=>{
+  const f=fixture({mode:'Show to organizers'});
+  await f.views.writeTripView('t');
+  await f.views.mirrorChat('o','t','message',f.root().chat.message);
+  const staffLine=f.root().chat_view_staff.message;
+  assert.equal(staffLine.type,'location');assert.equal(staffLine.latitude,31);assert.equal(staffLine.longitude,71);
+  assert.deepEqual(Object.keys(staffLine).sort(),['latitude','longitude','type']);
+  assert.equal(f.root().chat_view.message.latitude,undefined);
+  // The line without a location, or with a location the members may see, has no staff copy.
+  await f.views.mirrorChat('o','t','plain',{sender_id:'b',type:'text',text:'hi'});
+  assert.equal(f.root().chat_view_staff.plain,undefined);
+  f.state.orgs.o.trips.t.visibility_config.location='Show to Everyone';
+  await f.views.writeTripView('t');
+  await f.views.mirrorChat('o','t','message',f.root().chat.message);
+  assert.equal(f.root().chat_view_staff.message,undefined);assert.equal(f.root().chat_view.message.latitude,31);
+  f.state.orgs.o.trips.t.visibility_config.location='Show to organizers';
+  await f.views.writeTripView('t');
+  await f.views.mirrorChat('o','t','message',f.root().chat.message);
+  assert.ok(f.root().chat_view_staff.message);
+  await f.views.mirrorChat('o','t','message',null);
+  assert.equal(f.root().chat_view_staff.message,undefined);assert.equal(f.root().chat_view.message,undefined);
+});
