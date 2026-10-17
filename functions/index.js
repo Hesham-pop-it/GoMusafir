@@ -141,6 +141,10 @@ for (const name of ['onParticipantIndexChanged', 'onStaffIndexChanged', 'onUserP
   exports[name] = orgMembersFunctions[name];
 }
 
+// Server-written directory views that phones listen to, and the own-account signal.
+const tripViewFunctions = require('./groups/tripViewFunctions');
+for (const name of Object.keys(tripViewFunctions)) exports[name] = tripViewFunctions[name];
+
 // Shared all-muted inactivity checks for iOS and Android.
 const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');
 exports.reportVoiceActivity = voiceInactivityFunctions.reportVoiceActivity;

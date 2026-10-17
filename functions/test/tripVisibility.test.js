@@ -9,6 +9,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const fields = ['name','lastname','email','phone','location'];
   const state = {
     orgs: { o: { staff: viewerRole ? { a: viewerRole } : {}, trips: { t: { visibility_config: Object.fromEntries(fields.map(f => [f, mode])) } } } },
+    trips_orgs: { t: 'o' },
     trips_participants: { t: { a: true, b: true, c: true } },
     users: Object.fromEntries(['a','b','c'].map(uid => [uid, { profile: { firstName: `First-${uid}`, lastName: `Last-${uid}`, email: `${uid}@test.invalid`, phone: '123' }, participant_visibility: { t: personal } }])),
     trips_active: { o: { t: { locations: { b: { lat: 31, lng: 71, email: 'leak@test.invalid' } }, location_permissions: {}, notifications: {},
@@ -21,6 +22,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const reads = [], cached = [];
   const db = {ref(path) { return {
     get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
+    update:async values=>{for(const [key,value] of Object.entries(values)){if(value===null){const keys=`${path}/${key}`.split('/');const last=keys.pop();delete read(keys.join('/'))?.[last];}else write(`${path}/${key}`,value);}},
     orderByChild(){return this;},limitToLast(){return this;},
     push(){const key=`request-${++nextId}`;return {key,set:async value=>write(`${path}/${key}`,value)};},
     transaction:async fn=>{const result=fn(structuredClone(read(path)));if(result===undefined)return {committed:false,snapshot:snap(read(path))};write(path,result);return {committed:true,snapshot:snap(result)};},
@@ -45,8 +47,10 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   if (realCache) deps['./userRecordCache']=load('../services/userRecordCache');
   deps['./participantProfileService']=load('../services/participantProfileService');
   const service=load('../services/tripVisibilityService');
+  deps['./tripVisibilityService']=service;
+  const views=load('../services/tripViewService');
   const call = (method, data={}, uid='a') => service[method]({auth:{uid,token:{role:'admin',orgId:'forged'}},data:{tripId:'t',...data}});
-  return {state,call,reads,cached,root:()=>state.trips_active.o.t};
+  return {state,call,reads,cached,views,root:()=>state.trips_active.o.t};
 }
 for (const role of [null,'admin','manager','co-host']) {
   test(`organizer visibility uses current organization membership: ${role}`, async()=>{
@@ -174,4 +178,19 @@ test('shared records are redacted per viewer and the viewer\'s own record is nev
   const count=path=>f.reads.filter(read=>read===path).length,own=count('users/b'),other=count('users/c');
   await f.call('getVisibleTripData',{},'b');
   assert.equal(count('users/b'),own+1);assert.equal(count('users/c'),other);
+});
+test('trip views hold the member and staff redaction and drop people who left',async()=>{
+  const f=fixture({mode:'Show to organizers'});
+  f.state.users.c.participant_visibility.t={};
+  await f.views.writeTripView('t');
+  const view=f.state.trip_view.t;
+  assert.equal(view.member.b.profile.firstName,'');assert.equal(view.member.b.profile.email,'');
+  assert.equal(view.staff.b.profile.firstName,'First-b');assert.equal(view.staff.b.profile.email,'b@test.invalid');
+  assert.equal(view.member.b.visibility.canSeeLocation,false);assert.equal(view.staff.b.visibility.canSeeLocation,true);
+  assert.ok(!JSON.stringify(view).includes('leak@test.invalid'));
+  const viewer=await f.call('getVisibleTripData',{},'a');
+  assert.deepEqual(view.member.b,viewer.users.b);
+  delete f.state.trips_participants.t.c;
+  await f.views.writeTripView('t',['c']);
+  assert.equal(f.state.trip_view.t.member.c,undefined);assert.equal(f.state.trip_view.t.staff.c,undefined);
 });

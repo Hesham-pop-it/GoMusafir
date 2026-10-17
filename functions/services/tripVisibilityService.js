@@ -10,7 +10,8 @@ const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
 // `only` limits the result to the people a chat, voice or notification payload
 // names; those sections need no coordinates, only names and location visibility.
-async function directory(request, access, only = null) {
+// `fresh` skips the shared record cache (server-written views must not lag).
+async function directory(request, access, only = null, fresh = false) {
   const { tripId } = request.data;
   const { orgId, trip, staff } = access;
   const root = `trips_active/${orgId}/${tripId}`;
@@ -24,7 +25,7 @@ async function directory(request, access, only = null) {
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
     // The viewer's own record is read fresh so their own privacy choices show at once.
-    const userSnap = uid === request.auth.uid ? await db.ref(`users/${uid}`).get() : await cachedUser(db, uid);
+    const userSnap = fresh || uid === request.auth.uid ? await db.ref(`users/${uid}`).get() : await cachedUser(db, uid);
     const personal = userSnap.val()?.participant_visibility?.[tripId] || {};
     let result;
     try { result = await getParticipantProfile({ ...request, data: { tripId, targetUid: uid } }, { access, snapshots: [
