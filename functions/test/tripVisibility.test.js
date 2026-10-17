@@ -18,12 +18,13 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const read = path => path.split('/').filter(Boolean).reduce((v,k)=>v?.[k],state);
   const write = (path, value) => { const keys = path.split('/'); const last = keys.pop(); keys.reduce((v,k)=>v[k] ||= {},state)[last] = value; };
   const snap = v => ({val:()=>v, exists:()=>v != null});
-  const reads = [], cached = [];
-  const db = {ref(path) { return {
+  const reads = [], cached = [], transactions = [];
+  const db = {ref(path='') { return {
+    update:async values=>{for(const [k,v] of Object.entries(values))write(k,v);},
     get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
     orderByChild(){return this;},limitToLast(){return this;},
     push(){const key=`request-${++nextId}`;return {key,set:async value=>write(`${path}/${key}`,value)};},
-    transaction:async fn=>{const result=fn(structuredClone(read(path)));if(result===undefined)return {committed:false,snapshot:snap(read(path))};write(path,result);return {committed:true,snapshot:snap(result)};},
+    transaction:async fn=>{transactions.push(path);const result=fn(structuredClone(read(path)));if(result===undefined)return {committed:false,snapshot:snap(read(path))};write(path,result);return {committed:true,snapshot:snap(result)};},
   };}};
   class HttpsError extends Error {constructor(code,message){super(message);this.code=code;}}
   const access = async (request, tripId) => {
@@ -46,7 +47,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   deps['./participantProfileService']=load('../services/participantProfileService');
   const service=load('../services/tripVisibilityService');
   const call = (method, data={}, uid='a') => service[method]({auth:{uid,token:{role:'admin',orgId:'forged'}},data:{tripId:'t',...data}});
-  return {state,call,reads,cached,root:()=>state.trips_active.o.t};
+  return {state,call,reads,cached,transactions,root:()=>state.trips_active.o.t};
 }
 for (const role of [null,'admin','manager','co-host']) {
   test(`organizer visibility uses current organization membership: ${role}`, async()=>{
@@ -87,6 +88,13 @@ test('only recipient acceptance grants one requester temporary location access w
   assert.equal(notifications[`location_response_${id}`].title,'Location Request Accepted');
   f.root().location_permissions.b.a.expiresAt=Date.now()-1;
   assert.equal((await f.call('getVisibleTripData')).locations.b,undefined);
+});
+test('answering a location request runs the transaction on the one request only',async()=>{
+  const f=fixture();const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  await f.call('respondToLocationRequest',{notificationId:id,accept:true},'b');
+  assert.deepEqual(f.transactions,[`trips_active/o/t/notifications/b/${id}`]);
+  assert.equal(f.root().notifications.b[id].status,'accepted');
+  assert.equal(f.root().notifications.a[`location_response_${id}`].status,'accepted');
 });
 test('decline, expired requests, legacy boolean grants and removed members do not expose location',async()=>{
   const f=fixture();const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
