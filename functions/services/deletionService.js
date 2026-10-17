@@ -211,6 +211,30 @@ function createDeletionService({
     return { uid, status: "purged" };
   }
 
+  // ── Account: earlier deletion under the GDPR ───────────────────────────────
+  // Only the audited developer script (scripts/eraseAccountNow.js) calls this, on a support
+  // request. There is no button in the app (decision 2). It deactivates the account, skips
+  // the 30 days and runs the same wipe as the daily job; the legal data is kept the same way.
+  async function eraseAccountNow(uid, { actor, reason, ticket }) {
+    if (!actor || !reason || !ticket) throw new Error("actor, reason and ticket are required");
+    if (!(await val(`account_deletions/${uid}`))) {
+      const claimOrg = (await auth.getUser(uid)).customClaims?.orgId || null;
+      const owned = await ownedOrganizations(uid, claimOrg);
+      if (owned.length) {
+        await audit("ACCOUNT_PURGE_BLOCKED", { uid, orgId: owned[0], by: actor, extra: { reason: "owns-organization", ticket } });
+        return { uid, status: "blocked" };
+      }
+      await db.ref(`account_deletions/${uid}`).set({
+        requested_at: now(), purge_after: now(), token_hash: sha256(newToken()),
+        org_id: (await val(`users/${uid}/staff_org_id`)) || claimOrg,
+      });
+      await auth.updateUser(uid, { disabled: true });
+      await revokeSessions(uid);
+    }
+    await audit("ACCOUNT_ERASE_EARLY_REQUESTED", { uid, by: actor, extra: { reason, ticket } });
+    return purgeAccount(uid, { force: true, actor });
+  }
+
   // Daily job: an indexed, bounded read of the queue. Failures stay queued for the next run.
   async function purgeDueAccounts({ limit = PURGE_BATCH } = {}) {
     const snap = await db.ref("account_deletions").orderByChild("purge_after").endAt(now()).limitToFirst(limit).get();
@@ -330,7 +354,7 @@ function createDeletionService({
   }
 
   return {
-    requestAccountDeletion, cancelAccountDeletion, isAccountLinkValid, purgeAccount, purgeDueAccounts,
+    requestAccountDeletion, cancelAccountDeletion, isAccountLinkValid, purgeAccount, purgeDueAccounts, eraseAccountNow,
     requestOrganizationDeletion, restoreOrganization, isOrganizationLinkValid, organizationDeletionStatus,
     stampEmailCodeVerified, requireRecentAuth, audit,
   };

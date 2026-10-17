@@ -275,3 +275,29 @@ test('the status tells the app whether the signed-in person owns a deleted organ
   assert.equal(own.organization.name, 'Al Noor Travel');
   assert.equal((await f.svc.organizationDeletionStatus({ uid: 'c1', orgId: 'org' })).organization.is_owner, false);
 });
+
+// ── GDPR early deletion ──────────────────────────────────────────────────────
+test('the GDPR erase needs actor, reason and ticket, deactivates, wipes at once and records who asked and why', async () => {
+  const f = fixture();
+  await assert.rejects(f.svc.eraseAccountNow('pil', { actor: 'dev:a', reason: 'GDPR art. 17' }), /ticket/);
+  const out = await f.svc.eraseAccountNow('pil', { actor: 'dev:a', reason: 'GDPR art. 17', ticket: 'SUP-1' });
+  assert.equal(out.status, 'purged');
+  const d = f.db.dump();
+  assert.equal(d.users.pil, undefined);
+  assert.equal(d.account_deletions, undefined);
+  assert.equal(d.orgs.org.payments.p.amount, 5, 'legal data is kept');
+  assert.equal(d.trips_active.org.ended.chat.m1.sender_name, 'Deleted user');
+  assert.deepEqual(f.revoked, ['pil']);
+  const audit = Object.values(d.deletion_audit);
+  assert.ok(audit.some(e => e.event === 'ACCOUNT_ERASE_EARLY_REQUESTED' && e.reason === 'GDPR art. 17' && e.ticket === 'SUP-1' && e.by === 'dev:a'));
+  assert.ok(audit.some(e => e.event === 'ACCOUNT_PURGED_EARLY'));
+});
+test('the GDPR erase also finishes a request that is already in its waiting period, and never wipes an owner', async () => {
+  const f = fixture();
+  await f.svc.requestAccountDeletion({ uid: 'pil', authTime: fresh });
+  assert.equal((await f.svc.eraseAccountNow('pil', { actor: 'dev:a', reason: 'r', ticket: 't' })).status, 'purged');
+  const g = fixture();
+  assert.equal((await g.svc.eraseAccountNow('owner', { actor: 'dev:a', reason: 'r', ticket: 't' })).status, 'blocked');
+  assert.ok(g.db.dump().users.owner);
+  assert.equal(g.db.dump().account_deletions, undefined);
+});
