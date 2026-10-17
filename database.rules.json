@@ -452,6 +452,13 @@
       ".read": false,
       ".write": false
     },
+    "trip_voice_due": {
+      ".indexOn": [
+        "dueAt"
+      ],
+      ".read": false,
+      ".write": false
+    },
     "trip_expirations": {
       ".indexOn": [
         "expires_at"

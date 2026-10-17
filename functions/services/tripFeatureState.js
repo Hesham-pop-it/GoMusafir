@@ -75,6 +75,14 @@ function settle(previous, trip, now) {
   return state;
 }
 
+// When the minute job should look at a trip again, or null when nothing is pending.
+// A live session is checked every minute; otherwise at its next boundary.
+function voiceDueAt(state) {
+  if (!state) return null;
+  if (state.session) return 0;
+  return state.nextCheckAt > 0 ? state.nextCheckAt : null;
+}
+
 function endAt(state, timestamp) {
   if (!state.session || !Number.isFinite(timestamp)) return state;
   const stoppedAt = Math.max(state.session.startedAt || timestamp, Math.min(state.serverNow, timestamp));
@@ -89,4 +97,4 @@ function endAt(state, timestamp) {
   return state;
 }
 
-module.exports = { SOLO_TIMEOUT_MS, DAY_MS, ALLOWANCE_SECONDS, HOST_RECONNECT_GRACE_MS, EXHAUSTED_MESSAGE, validTripDates, featureState, settle, endAt };
+module.exports = { SOLO_TIMEOUT_MS, DAY_MS, ALLOWANCE_SECONDS, HOST_RECONNECT_GRACE_MS, EXHAUSTED_MESSAGE, validTripDates, featureState, settle, endAt, voiceDueAt };

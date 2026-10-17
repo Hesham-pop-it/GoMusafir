@@ -18,6 +18,7 @@ function fixture() {
     on: (_, listener) => listener(snapshot(path)), off() {},
     get: async () => snapshot(path),
     set: async value => { data.set(path, structuredClone(value)); },
+    remove: async () => { data.delete(path); },
     transaction: async change => {
       const next = change(structuredClone(data.get(path) || null));
       if (next !== undefined) data.set(path, structuredClone(next));
@@ -222,4 +223,14 @@ test('a delayed old-room update cannot overwrite a newer session queue', async (
   await assert.rejects(f.request('a'), { code: 'failed-precondition' });
   assert.deepEqual(f.state(), newer);
   assert.deepEqual(f.writes, []);
+});
+
+test('the reconcile pass drops the speaker ledger of a trip with no session and keeps a live one', async () => {
+  const f = fixture();
+  await f.request('a');
+  await f.update({});
+  assert.ok(f.state(), 'live session keeps its ledger');
+  f.data.set('trip_feature_access/o/t', { voiceAccess: 'FULL', session: null });
+  await f.update({});
+  assert.equal(f.state(), undefined);
 });
