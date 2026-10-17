@@ -164,36 +164,59 @@ async function respondToLocationRequest(request) {
   const notificationRef = db.ref(`${root}/notifications/${uid}/${notificationId}`);
   const notification = (await notificationRef.get()).val();
   if (!notification || notification.type !== 'location_request' || !id(notification.senderUid)) throw new HttpsError('not-found', 'Request not found.');
-  if (notification.status && notification.status !== 'pending') return { status: notification.status };
-  if (!(notification.expiresAt > Date.now())) throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
   const members = (await db.ref(`trips_participants/${tripId}`).get()).val() || {};
-  if (members[uid] !== true || members[notification.senderUid] !== true) throw new HttpsError('permission-denied', 'Participant no longer belongs to this trip.');
+  const GRANT_MS = 15 * 60 * 1000;
+  const sender = notification.senderUid;
+  const grantPath = `${root}/location_permissions/${uid}/${sender}`;
+  const responsePath = `${root}/notifications/${sender}/location_response_${notificationId}`;
+  // One multi-path write: the response, the grant and the prune entry stand or fall together.
+  const answerUpdates = (status, at) => {
+    const accepted = status === 'accepted';
+    const updates = {
+      [responsePath]: {
+        type: 'location_response', senderUid: uid, tripId, orgId, timestamp: at, status, name: 'Participant',
+        title: accepted ? 'Location Request Accepted' : 'Location Request Declined',
+        message: accepted ? 'Location is shared with you for 15 minutes.' : 'The participant declined your request.',
+      },
+      // The answered request leaves the list; the prune removes it.
+      ...expiryEntry(notificationId, `${root}/notifications/${uid}/${notificationId}`, at),
+    };
+    if (accepted) updates[grantPath] = { acceptedAt: at, expiresAt: at + GRANT_MS, requestId: notificationId };
+    return updates;
+  };
+  const wanted = accept ? 'accepted' : 'declined';
+  if (notification.status && notification.status !== 'pending') {
+    // A retry after the answer was stored but the write that follows failed: finish it from the
+    // stored answer time, so the grant never outlives the original 15 minutes.
+    if (notification.status === wanted && members[uid] === true && members[sender] === true) {
+      const at = notification.respondedAt;
+      const [response, grant] = await Promise.all([db.ref(responsePath).get(), db.ref(grantPath).get()]);
+      const live = wanted === 'declined' || (Number.isFinite(at) && at + GRANT_MS > Date.now());
+      if (live && (!response.exists() || (wanted === 'accepted' && !grant.exists()))) {
+        await db.ref().update(answerUpdates(wanted, Number.isFinite(at) ? at : Date.now()));
+      }
+    }
+    return { status: notification.status };
+  }
+  if (!(notification.expiresAt > Date.now())) throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
+  if (members[uid] !== true || members[sender] !== true) throw new HttpsError('permission-denied', 'Participant no longer belongs to this trip.');
   const now = Date.now();
   // Transaction on the one request binds the answer to it once, so retries cannot extend a grant.
   const result = await notificationRef.transaction(pending => {
-    if (pending === null) return null;
+    if (pending === null) return;
     if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
-    pending.status = accept ? 'accepted' : 'declined';
+    pending.status = wanted;
     pending.respondedAt = now;
     pending.visible_until = now;
     return pending;
   });
-  if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
-  const updates = {
-    [`${root}/notifications/${notification.senderUid}/location_response_${notificationId}`]: {
-      type: 'location_response', senderUid: uid, tripId, orgId, timestamp: now,
-      status: accept ? 'accepted' : 'declined', name: 'Participant',
-      title: accept ? 'Location Request Accepted' : 'Location Request Declined',
-      message: accept ? 'Location is shared with you for 15 minutes.' : 'The participant declined your request.',
-    },
-  };
-  if (accept) {
-    updates[`${root}/location_permissions/${uid}/${notification.senderUid}`] =
-      { acceptedAt: now, expiresAt: now + 15 * 60 * 1000, requestId: notificationId };
+  if (!result.committed || result.snapshot.val()?.status !== wanted || result.snapshot.val()?.respondedAt !== now) {
+    const stored = result.snapshot.val();
+    if (!stored) throw new HttpsError('not-found', 'Request not found.');
+    if (stored.status === 'pending') throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
+    throw new HttpsError('failed-precondition', 'This request was already handled.');
   }
-  await db.ref().update(updates);
-  // The answered request leaves the list; the prune removes it.
-  await db.ref().update(expiryEntry(notificationId, `${root}/notifications/${uid}/${notificationId}`, now)).catch(() => {});
-  return { status: accept ? 'accepted' : 'declined', expiresAt: accept ? now + 15 * 60 * 1000 : null };
+  await db.ref().update(answerUpdates(wanted, now));
+  return { status: wanted, expiresAt: accept ? now + GRANT_MS : null };
 }
 module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, directory };

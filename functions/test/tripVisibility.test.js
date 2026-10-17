@@ -247,3 +247,43 @@ test('rewriting a few trip view entries reads neither the member list nor locati
   await f.views.writeTripView('t',['c']);
   assert.equal(f.state.trip_view.t.member.c,undefined);
 });
+const rejectsWith=(promise,code)=>assert.rejects(promise,error=>error.code===code);
+test('a request that vanishes before the transaction is not found and writes no grant',async()=>{
+  const f=fixture({mode:'Do Not Show'});const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  const request=f.root().notifications.b[id];let reads=0;
+  Object.defineProperty(f.root().notifications.b,id,{configurable:true,enumerable:true,get:()=>++reads===1?request:undefined});
+  await rejectsWith(f.call('respondToLocationRequest',{notificationId:id,accept:true},'b'),'not-found');
+  assert.equal(f.root().location_permissions.b,undefined);
+  assert.equal(f.root().notifications.a?.[`location_response_${id}`],undefined);
+});
+test('a request that expires before the transaction reports expiry, not already handled',async()=>{
+  const f=fixture({mode:'Do Not Show'});const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  const request=f.root().notifications.b[id];let reads=0;
+  Object.defineProperty(request,'expiresAt',{configurable:true,enumerable:true,get:()=>++reads===1?Date.now()+60000:1});
+  await rejectsWith(f.call('respondToLocationRequest',{notificationId:id,accept:true},'b'),'failed-precondition');
+  await assert.rejects(f.call('respondToLocationRequest',{notificationId:id,accept:true},'b'),/expired/);
+  assert.equal(f.root().location_permissions.b,undefined);
+});
+test('the answer, the grant and the prune entry are written together',async()=>{
+  const f=fixture({mode:'Do Not Show'});const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  await f.call('respondToLocationRequest',{notificationId:id,accept:true},'b');
+  assert.equal(f.state.notification_expiry[id].path,`trips_active/o/t/notifications/b/${id}`);
+  assert.equal(f.root().notifications.b[id].visible_until,f.root().notifications.b[id].respondedAt);
+});
+test('retrying an accepted answer restores a missing grant from the original answer time only',async()=>{
+  const f=fixture({mode:'Do Not Show'});const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  await f.call('respondToLocationRequest',{notificationId:id,accept:true},'b');
+  const grant=structuredClone(f.root().location_permissions.b.a);
+  delete f.root().location_permissions.b;delete f.root().notifications.a[`location_response_${id}`];
+  assert.equal((await f.call('respondToLocationRequest',{notificationId:id,accept:true},'b')).status,'accepted');
+  assert.equal(JSON.stringify(f.root().location_permissions.b.a),JSON.stringify(grant));
+  assert.equal(f.root().notifications.a[`location_response_${id}`].status,'accepted');
+  assert.equal(grant.expiresAt,f.root().notifications.b[id].respondedAt+15*60*1000);
+  delete f.root().location_permissions.b;
+  f.root().notifications.b[id].respondedAt=Date.now()-16*60*1000;
+  await f.call('respondToLocationRequest',{notificationId:id,accept:true},'b');
+  assert.equal(f.root().location_permissions.b,undefined);
+  delete f.root().location_permissions.b;
+  await f.call('respondToLocationRequest',{notificationId:id,accept:false},'b');
+  assert.equal(f.root().location_permissions.b,undefined);
+});
