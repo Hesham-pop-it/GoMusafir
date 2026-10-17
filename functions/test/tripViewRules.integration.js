@@ -41,7 +41,8 @@ async function main() {
     } },
     account_signal: { [pilgrim.uid]: 'e1', [other.uid]: 'e2' },
     trips_active: { o: { t: {
-      chat_view: { m1: { sender_id: pilgrim.uid, sender_name: 'Participant', text: 'hi' } },
+      chat_view: { m1: { sender_id: pilgrim.uid, sender_name: 'Participant', text: 'hi', timestamp: now } },
+      chat: { m1: { sender_id: pilgrim.uid, text: 'hi', timestamp: now } },
       locations: { [pilgrim.uid]: { lat: 1, lng: 2 }, [other.uid]: { lat: 3, lng: 4 } },
     } } },
   });
@@ -65,6 +66,17 @@ async function main() {
   await allow(staff, `${T}/chat_view`);
   await deny(outsider, `${T}/chat_view`);
   await deny(pilgrim, `${T}/chat_view/m2`, 'PUT', { text: 'forged' });
+  // The unread badge queries the mirror from the read pointer on, which the index serves; the chat itself stays closed.
+  const since = async (user, path) => {
+    const r = await fetch(`${base}/${path}.json?ns=${ns}&auth=${encodeURIComponent(user.token)}&orderBy=${encodeURIComponent('"timestamp"')}&startAt=${now - 1}`);
+    checks++; return r;
+  };
+  let unread = await since(other, `${T}/chat_view`);
+  const body = await unread.text();
+  assert.equal(unread.status, 200, body);
+  assert.deepEqual(Object.keys(JSON.parse(body)), ['m1']);
+  unread = await since(other, `${T}/chat`);
+  assert.equal(unread.status, 401);
   // Coordinates: per person, only when the view allows it for that audience.
   await deny(pilgrim, `${T}/locations`);
   await allow(pilgrim, `${T}/locations/${pilgrim.uid}`);

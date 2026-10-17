@@ -24,6 +24,7 @@ export function paths(orgId, tripId) {
         reports: `${base}/reports`,
         settings: `${base}/message_settings`,
         chat: `${base}/chat`,
+        chatView: `${base}/chat_view`,
         readPointers: `${base}/read_pointers`,
     };
 }
@@ -70,8 +71,9 @@ export function subscribeGroupUnread(orgId, tripId, uid, cb) {
     const unsubPointer = watchPath(`${p.readPointers}/${uid}`, (pointer) => {
         const lastRead = pointer || 0;
         if (unsubUnread) unsubUnread();
-        unsubUnread = watchQuery(`${p.chat}|ts>=${lastRead + 1}`,
-            () => query(ref(database, p.chat), orderByChild('timestamp'), startAt(lastRead + 1)), (chat) => {
+        // Members may not read the chat itself; the server's member mirror holds the same lines.
+        unsubUnread = watchQuery(`${p.chatView}|ts>=${lastRead + 1}`,
+            () => query(ref(database, p.chatView), orderByChild('timestamp'), startAt(lastRead + 1)), (chat) => {
                 const list = chat ? Object.values(chat) : [];
                 cb(list.filter((m) => m.sender_id !== uid).length);
             }, () => cb(0));
