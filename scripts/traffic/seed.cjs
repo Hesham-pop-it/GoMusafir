@@ -76,6 +76,11 @@ async function seed(users) {
       if (uid === staffUid) await auth.setCustomUserClaims(uid, { orgId: ORG, role: 'admin' });
     }));
   }
+  // The server-written directory views and chat mirror, as backfillTripViews.js writes them.
+  process.env.GCLOUD_PROJECT = PROJECT;
+  const { writeTripView, mirrorRecentChat } = require(path.resolve(__dirname, '../../functions/services/tripViewService'));
+  await writeTripView(TRIP);
+  await mirrorRecentChat(TRIP);
   const size = Buffer.byteLength(JSON.stringify(data.users[uids[0]]));
   console.log(JSON.stringify({ users: uids.length, staff: 1, userRecordBytes: size }));
   await app.delete();

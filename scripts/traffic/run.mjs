@@ -24,6 +24,8 @@ const minutes = Number(args.minutes || 3);
 const warmupSeconds = Number(args.warmup || 45);
 const chatEverySeconds = Number(args.chat || 10);
 const locationEverySeconds = Number(args.location || 15);
+// --map closed: nobody has the map open, so no one subscribes to coordinates.
+const mapOpen = args.map !== 'closed';
 const here = path.dirname(new URL(import.meta.url).pathname);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -70,14 +72,17 @@ async function startUser(i) {
   const root = `trips_active/${ORG}/${TRIP}`;
   const seen = () => { counters.callbacks += 1; };
   // What a pilgrim has open on the trip overview (TripOverviewScreen, VoiceContext,
-  // TemplateAlertPopup): two revision hooks and five polled paths.
+  // TemplateAlertPopup): two revision hooks, the voice fields and the data paths.
   data.useVisibilityRevision(TRIP);
   data.useVisibilityRevision(TRIP);
   data.onVisibleValue(ref(database, `users/${uid}`), null, seen);
-  data.onVisibleValue(ref(database, `${root}/voice_channel/activeSpeaker`), TRIP, seen);
+  // Voice status and the active speaker are read straight from the voice node (VoiceContext).
+  const voice = await import(`../../src/utils/voiceChannelFields.js?vu=${i}`);
+  voice.watchVoiceChannelState(database, ORG, TRIP, seen);
+  voice.watchActiveSpeaker(database, ORG, TRIP, data.watchDirectoryUser(TRIP), seen);
   data.onVisibleValue(ref(database, `${root}/notifications/${uid}`), TRIP, seen);
   data.onVisibleValue(ref(database, `${root}/chat`), TRIP, seen);
-  data.onVisibleValue(ref(database, `${root}/locations`), TRIP, seen);
+  if (mapOpen) data.onVisibleValue(ref(database, `${root}/locations`), TRIP, seen);
   return { uid, database, root };
 }
 
@@ -101,7 +106,11 @@ let running = true;
 started.forEach((user, i) => (async () => {
   await sleep((i % locationEverySeconds) * 1000);
   while (running) {
-    await set(ref(user.database, `${user.root}/locations/${user.uid}`), { lat: 21.42 + Math.random() / 100, lng: 39.82 + Math.random() / 100, accuracy: 12, updated_at: Date.now() });
+    await set(ref(user.database, `${user.root}/locations/${user.uid}`), (() => {
+      // The payload syncLocationToFirebase writes.
+      const lat = 21.42 + Math.random() / 100, lng = 39.82 + Math.random() / 100;
+      return { lat, lng, updated_at: Date.now() };
+    })());
     counters.locationWrites += 1;
     await sleep(locationEverySeconds * 1000);
   }
@@ -123,7 +132,7 @@ const day = bytes => perUserPerMin(bytes) * 240; // 4 h with the app open
 const mb = bytes => Math.round(bytes / 1e4) / 100;
 const p = steady.proxy;
 const summary = {
-  label, users, minutes: Math.round(elapsedMin * 100) / 100, chatEverySeconds, locationEverySeconds,
+  label, users, mapOpen, minutes: Math.round(elapsedMin * 100) / 100, chatEverySeconds, locationEverySeconds,
   perPilgrimPerDayMB: {
     phoneDatabase: mb(day(p.client_db.up + p.client_db.down)),
     phoneCallables: mb(day(p.client_functions.up + p.client_functions.down)),
@@ -151,6 +160,6 @@ summary.budget = Object.fromEntries([
   ['functionCalls', summary.callsPerPilgrimPerDay],
 ].map(([key, value]) => [key, { value, limit: budgets[key], ok: value <= budgets[key] }]));
 mkdirSync(path.join(here, 'results'), { recursive: true });
-writeFileSync(path.join(here, 'results', `${label}-n${users}.json`), JSON.stringify({ summary, startup, steady }, null, 2));
+writeFileSync(path.join(here, 'results', `${label}-n${users}${mapOpen ? '' : '-nomap'}.json`), JSON.stringify({ summary, startup, steady }, null, 2));
 console.log(JSON.stringify(summary, null, 2));
 process.exit(summary.invalid || (args.enforce && Object.values(summary.budget).some(b => !b.ok)) ? 1 : 0);
