@@ -2,11 +2,12 @@
 // Handles Realtime Database triggers for push notifications.
 
 const { onValueCreated, onValueUpdated, onValueWritten } = require("firebase-functions/v2/database");
-const { sendPushNotification } = require("../services/notificationService");
+const { sendPushNotification, sendPushToMany } = require("../services/notificationService");
 const { admin, db } = require("../admin");
 const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
 const { signalChat, signalVoice, signalNotifications } = require("../services/tripSignals");
+const { stampNotification, onlyStamped } = require("../services/notificationStamp");
 
 /**
  * Triggered when a new chat message is created.
@@ -77,30 +78,10 @@ exports.onChatCreated = onValueCreated({
             skipDbSave: true
         };
 
-        // 1. Dispatch push notification to all recipients directly
-        const pushPromises = allRecipientUids.map(async recipientUid => {
-            // Quiet (no sound) while the recipient is in the voice channel.
-            const quiet = await isInVoice(orgId, tripId, recipientUid);
-            return sendPushNotification(recipientUid, title, body, payload, quiet ? { ...options, quiet: true } : options);
-        });
-
-        // 2. Also log in trip-level notifications for in-trip history
-        const tripNotifPromises = allRecipientUids.map(pUid =>
-            db.ref(`trips_active/${orgId}/${tripId}/notifications/${pUid}`).push().set({
-                type: "chat_message",
-                title: title,
-                message: messageText,
-                name: senderName,
-                senderUid: data.sender_id,
-                tripId,
-                orgId,
-                timestamp: timestamp,
-                read: false,
-                seen: false
-            })
-        );
-
-        await Promise.all([...pushPromises, ...tripNotifPromises]);
+        // One push for everyone, sent in groups of at most 500 tokens; quiet (no sound) while the recipient is in the voice channel.
+        await sendPushToMany(allRecipientUids, title, body, payload, options,
+            recipientUid => isInVoice(orgId, tripId, recipientUid));
+        // Group chat messages leave no notification record: the chat is the history, the push stays.
     } catch (error) {
         console.log("Error in onChatCreated:", error);
     }
@@ -120,6 +101,9 @@ exports.onNotificationCreated = onValueCreated({
     // Only proceed if there's real notification data to notify
     if (!data) return;
     await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
+    // The server decides how long the record stays visible (config/notification_terms).
+    await stampNotification(db, { orgId, tripId, uid, notifId: event.params.notifId, record: data })
+        .catch(error => console.log("Error stamping notification:", error));
 
     // CRITICAL FIX: Ignore updates/nodes that only mark read/seen or have no valid payload
     if (data.read === true && !data.message && !data.title) return;
@@ -573,5 +557,7 @@ exports.onNotificationUpdated = onValueUpdated({
     region: "europe-west1"
 }, async (event) => {
     const { orgId, tripId, uid } = event.params;
+    // Stamping the end date is not a change the person needs to refetch for.
+    if (onlyStamped(event.data.before.val(), event.data.after.val())) return;
     await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
 });

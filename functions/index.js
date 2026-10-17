@@ -164,6 +164,7 @@ exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;
 exports.getVisibleTripData = tripFunctions.getVisibleTripData;
 exports.requestParticipantLocation = tripFunctions.requestParticipantLocation;
 exports.respondToLocationRequest = tripFunctions.respondToLocationRequest;
+exports.resolveSos = tripFunctions.resolveSos;
 exports.getOwnAccount = authFunctions.getOwnAccount;
 
 // Direct messaging: message requests, Journey team thread and staff chat.

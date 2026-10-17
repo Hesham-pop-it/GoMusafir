@@ -35,7 +35,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   };
   const deps = {
     'firebase-functions/v2/https':{HttpsError}, '../admin':{db,auth:{getUser:async()=>({email:'fallback@test.invalid'})}},
-    './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy,
+    './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy, './notificationTerms':require('../services/notificationTerms'),
     './unchangedResponse':require('../services/unchangedResponse'),
     // The shared cache has its own test; most tests here change records between calls.
     './userRecordCache':{cachedUser:(store,uid)=>{cached.push(uid);return store.ref(`users/${uid}`).get();}},
@@ -213,4 +213,24 @@ test('the chat mirror holds the member view of a line and is removed with it',as
   assert.equal(mirrored.replyTo.sender,'Participant');
   await f.views.mirrorChat('o','t','message',null);
   assert.equal(f.root().chat_view.message,undefined);
+});
+test('expired notifications are not sent, an open SOS and fresh records are',async()=>{
+  const f=fixture({viewerRole:'admin'});
+  const now=Date.now();
+  f.root().notifications.a={
+    old:{type:'seat_update',timestamp:now-40*86400000,title:'Old'},
+    fresh:{type:'seat_update',timestamp:now-86400000,title:'Fresh'},
+    stampedGone:{type:'alert',timestamp:now,visible_until:now-1,title:'Gone'},
+    sos:{type:'emergency',timestamp:now-90*86400000,title:'SOS'},
+    sosDone:{type:'emergency',timestamp:now-5*86400000,resolved_at:now-2*86400000,title:'Done'},
+  };
+  const result=await f.call('getVisibleTripData',{section:'notifications'});
+  assert.deepEqual(Object.keys(result).sort(),['fresh','sos']);
+});
+test('an answered location request leaves the list for the asked pilgrim',async()=>{
+  const f=fixture({mode:'Do Not Show'});
+  const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  assert.ok(id in await f.call('getVisibleTripData',{section:'notifications'},'b'));
+  await f.call('respondToLocationRequest',{notificationId:id,accept:false},'b');
+  assert.equal(id in await f.call('getVisibleTripData',{section:'notifications'},'b'),false);
 });

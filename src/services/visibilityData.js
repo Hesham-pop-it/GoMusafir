@@ -381,6 +381,7 @@ export function offVisible(target) {
 }
 export const requestParticipantLocation = (tripId, targetUid) => httpsCallable(functions, 'requestParticipantLocation')({ tripId, targetUid });
 export const respondToLocationRequest = (tripId, notificationId, accept) => httpsCallable(functions, 'respondToLocationRequest')({ tripId, notificationId, accept });
+export const resolveSos = (tripId, notificationId) => httpsCallable(functions, 'resolveSos')({ tripId, notificationId });
 export const isLocationGrantActive = grant => Boolean(grant && typeof grant === 'object' && grant.acceptedAt > 0 && grant.expiresAt > Date.now());
 
 // Re-fetch one-shot profile consumers when a participant changes a custom choice,

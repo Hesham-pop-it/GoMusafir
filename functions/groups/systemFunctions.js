@@ -66,6 +66,13 @@ exports.dataCleanupCron = onSchedule(
     } catch (e) {
       console.log("Error cleaning up OTP records:", e.message);
     }
+
+    // 3. Remove notifications past their end date, found through the notification_expiry index
+    try {
+      await require("../services/notificationPrune").pruneExpiredNotifications(db, now);
+    } catch (e) {
+      console.log("Error pruning notifications:", e.message);
+    }
   }
 );
 // ── Secure Cleanup PII (Maintenance) ──────────────────────────────────────────
