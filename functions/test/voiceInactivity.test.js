@@ -15,11 +15,11 @@ test('all connected users count, including unpublished microphones and staff', (
 });
 test('continued silence preserves deadline; speech/unmute resets it; stale observations cannot restore it', () => {
   let state = observe(null, initial);
-  assert.equal(observe(state, { ...initial, now: 5000, id: 'other' }).startedAt, 1000);
+  assert.equal(observe(state, { ...initial, now: 5000, id: 'other' }), undefined, 'unchanged silence writes nothing');
   state = observe(state, { ...initial, now: 6000, activity: true });
   assert.equal(state.status, 'active');
   assert.equal(observe(state, { ...initial, now: 5000 }), undefined);
-  state = observe(state, { ...initial, now: 7000, id: 'next' });
+  state = observe(state, { ...initial, now: 7000, id: 'next', startedAt: 7000 });
   assert.equal(state.startedAt, 7000);
   assert.equal(state.id, 'next');
 });
@@ -42,6 +42,7 @@ function fixture() {
   let now = 1000;
   const store = {
     'trips_active/o/t/voice_channel/isChannelStarted': true,
+    'voice_speakers/o/t/entries/participant': { status: 'granted' },
     'orgs/o/staff/host': 'admin',
     'orgs/o/staff/other': 'co-host',
     'orgs/o/staff': { host: 'admin', other: 'co-host', absent: 'manager', participant: 'participant' },
@@ -213,4 +214,35 @@ test('ending event completes a committed No after the responding request disappe
   await f.api.onVoiceInactivityChanged(f.event(before));
   assert.equal(f.deleted(), 1);
   assert.equal(f.state().status, 'ended');
+});
+
+test('activity reports are answered without any LiveKit call and write only on change', async () => {
+  const f = fixture();
+  f.fail(); // a LiveKit call would now throw
+  await f.api.reportVoiceActivity(f.request('host'));
+  assert.equal(f.state().status, 'timing');
+  const before = JSON.stringify(f.state());
+  f.setTime(5000);
+  await f.api.reportVoiceActivity(f.request('host'));
+  assert.equal(JSON.stringify(f.state()), before, 'an unchanged report writes nothing');
+  await f.api.reportVoiceActivity(f.request('host', { activity: true }));
+  assert.equal(f.state().status, 'active');
+  const active = JSON.stringify(f.state());
+  f.setTime(9000);
+  await f.api.reportVoiceActivity(f.request('host', { activity: true }));
+  assert.equal(JSON.stringify(f.state()), active);
+});
+test('listeners who cannot speak are ignored; speakers in the ledger and staff are counted', async () => {
+  const f = fixture();
+  f.store['orgs/o/staff'].listener = undefined;
+  const ignored = await f.api.reportVoiceActivity(f.request('listener', { activity: true }));
+  assert.equal(ignored.ignored, true);
+  assert.equal(f.state(), undefined);
+  await f.api.reportVoiceActivity(f.request('participant', { activity: true }));
+  assert.equal(f.state().status, 'active');
+});
+test('a report outside an active session is refused', async () => {
+  const f = fixture();
+  f.store['trips_active/o/t/voice_channel/isChannelStarted'] = false;
+  await assert.rejects(f.api.reportVoiceActivity(f.request('host')), { code: 'failed-precondition' });
 });
