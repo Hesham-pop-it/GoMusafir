@@ -45,7 +45,7 @@ test('writer: drops points inside the window, keeps payload shape, retries after
     await app.syncLocationToFirebase(c, { trip });
     await app.syncLocationToFirebase({ ...c, latitude: 30 + M }, { trip });
     assert.equal(app.state.writes.length, 1);
-    assert.deepEqual(Object.keys(app.state.writes[0].value), ['lat', 'lng', 'latitude', 'longitude', 'speed', 'heading', 'accuracy', 'updated_at']);
+    assert.deepEqual(Object.keys(app.state.writes[0].value), ['lat', 'lng', 'updated_at']);
     assert.equal(app.state.writes[0].path, 'trips_active/o/t/locations/user');
     app.state.now += 20000;
     await app.syncLocationToFirebase({ ...c, latitude: 30 + M }, { trip });

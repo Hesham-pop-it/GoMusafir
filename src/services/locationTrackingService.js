@@ -103,14 +103,12 @@ export async function syncLocationToFirebase(coords, { force = false, trip = nul
         // and accepted, expiring location grants before returning any coordinates.
         // A hidden global setting must not prevent an explicitly accepted request.
         const locationRef = ref(database, `trips_active/${orgId}/${tripId}/locations/${userId}`);
+        // Every phone that sees this position receives it, so only the fields a
+        // reader uses are sent. Older builds read `lat ?? latitude`; nothing reads
+        // speed, heading or accuracy.
         await set(locationRef, {
             lat: lat,
             lng: lng,
-            latitude: lat,
-            longitude: lng,
-            speed: typeof coords.speed === 'number' ? coords.speed : null,
-            heading: typeof coords.heading === 'number' ? coords.heading : null,
-            accuracy: typeof coords.accuracy === 'number' ? coords.accuracy : null,
             updated_at: serverTimestamp(),
         });
     } catch (err) {
