@@ -25,7 +25,7 @@ function fixture({ staffRole = 'co-host', claims = { role: 'co-host', orgId: 'or
         deleteUser: async () => calls.push('auth-delete'),
       },
     },
-    '../services/kmsService': {}, '../services/accountCleanupService': { getAccountCleanup: () => ({ markOrganizationDeleted: async () => {} }) },
+    '../services/kmsService': {}, '../services/deletionService': { getDeletionService: () => ({}) },
     '../services/auditService': { writeAuditLog: async (orgId, entry) => logs.push({ orgId, ...entry }) },
     '../middleware/appCheckMiddleware': {
       verifyAppCheck: noop,
