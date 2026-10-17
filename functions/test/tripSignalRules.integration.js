@@ -62,12 +62,13 @@ async function main() {
   await deny(staff, `${N}/${pilgrim.uid}`);
   await deny(outsider, `${N}/${outsider.uid}`);
   await deny(pilgrim, `${N}/${pilgrim.uid}`, 'PUT', 'forged');
-  // An ended trip closes the signal to participants.
+  // An ended trip closes the signal to participants and staff.
   await owner('orgs/o/trips/t/end_date', now - 1);
   await deny(pilgrim, S);
   await deny(pilgrim, V);
   await deny(pilgrim, `${N}/${pilgrim.uid}`);
-  await allow(staff, S);
+  await deny(staff, S);
+  await deny(staff, V);
   console.log(`PASS: ${checks} direct RTDB checks for the trip signals.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

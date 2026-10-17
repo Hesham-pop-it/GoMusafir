@@ -42,6 +42,7 @@ async function main() {
     account_signal: { [pilgrim.uid]: 'e1', [other.uid]: 'e2' },
     trips_active: { o: { t: {
       chat_view: { m1: { sender_id: pilgrim.uid, sender_name: 'Participant', text: 'hi', timestamp: now } },
+      chat_view_staff: { m1: { type: 'location', latitude: 1, longitude: 2 } },
       chat: { m1: { sender_id: pilgrim.uid, text: 'hi', timestamp: now } },
       locations: { [pilgrim.uid]: { lat: 1, lng: 2 }, [other.uid]: { lat: 3, lng: 4 } },
     } } },
@@ -66,6 +67,12 @@ async function main() {
   await allow(staff, `${T}/chat_view`);
   await deny(outsider, `${T}/chat_view`);
   await deny(pilgrim, `${T}/chat_view/m2`, 'PUT', { text: 'forged' });
+  // Staff-only copy of location lines the member view stripped.
+  await allow(staff, `${T}/chat_view_staff`);
+  await deny(pilgrim, `${T}/chat_view_staff`);
+  await deny(pilgrim, `${T}/chat_view_staff/m1`);
+  await deny(outsider, `${T}/chat_view_staff`);
+  await deny(staff, `${T}/chat_view_staff/m2`, 'PUT', { type: 'location' });
   // The unread badge queries the mirror from the read pointer on, which the index serves; the chat itself stays closed.
   const since = async (user, path) => {
     const r = await fetch(`${base}/${path}.json?ns=${ns}&auth=${encodeURIComponent(user.token)}&orderBy=${encodeURIComponent('"timestamp"')}&startAt=${now - 1}`);
@@ -102,7 +109,18 @@ async function main() {
   await deny(pilgrim, 'trip_view/t/member');
   await deny(pilgrim, `${T}/chat_view`);
   await deny(pilgrim, `${T}/locations/${pilgrim.uid}`);
-  await allow(staff, 'trip_view/t/staff');
+  // The server refuses staff too once the trip has ended, so the views follow it.
+  await deny(staff, 'trip_view/t/member');
+  await deny(staff, 'trip_view/t/staff');
+  await deny(staff, `${T}/chat_view`);
+  await deny(staff, `${T}/chat_view_staff`);
+  await deny(staff, `${T}/chat_view_staff/m1`);
+  await deny(staff, `${T}/locations/${pilgrim.uid}`);
+  await owner('orgs/o/staff', { [staff.uid]: 'admin', [pilgrim.uid]: 'admin' });
+  await deny(pilgrim, `trip_view/t/staff/${pilgrim.uid}`);
+  await deny(pilgrim, `${T}/chat_view_staff`);
+  await owner(grant, { acceptedAt: now, expiresAt: now + 60000, requestId: 'r1' });
+  await deny(pilgrim, grant);
   console.log(`PASS: ${checks} direct RTDB checks for the trip views, chat mirror and coordinates.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
