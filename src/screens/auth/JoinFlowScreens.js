@@ -29,6 +29,7 @@ import { Ionicons, Feather } from '@expo/vector-icons';
 import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { prepareAvatar } from '../../utils/imageSizing';
 import * as FileSystem from 'expo-file-system/legacy';
 import { COUNTRIES } from '../../constants/Countries';
 import { Typography } from '../../constants/Typography';
@@ -1111,8 +1112,10 @@ export const JoinProfilePictureScreen = ({ navigation, route }) => {
                 ],
                 { compress: 0.9, format: SaveFormat.JPEG }
             );
+            // Avatars are stored at 256 px.
+            const avatarResult = await prepareAvatar(manipResult.uri, manipResult.width, manipResult.height);
 
-            setImage(manipResult.uri);
+            setImage(avatarResult.full.uri);
             if (error) setError('');
             setCropModalVisible(false);
         } catch (error) {

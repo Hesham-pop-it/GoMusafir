@@ -37,6 +37,7 @@ import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { useLanguage } from '../../context/LanguageContext';
+import RemoteImage from '../../components/RemoteImage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -704,7 +705,7 @@ const ParticipantsScreen = () => {
                     {selectedParticipant && (
                         <>
                             <View style={styles.detailHeader}>
-                                <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
+                                <RemoteImage source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
                                 <Text style={styles.detailName}>{selectedParticipant.name}</Text>
                             </View>
 

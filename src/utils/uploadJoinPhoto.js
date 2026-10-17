@@ -6,8 +6,8 @@ export async function uploadJoinPhoto(uri) {
     try {
         // Send a bounded JPEG through the authenticated enrollment endpoint.
         // Enrollment authorization uses Auth and Realtime Database.
-        const photo = await manipulateAsync(uri, [{ resize: { width: 768 } }], {
-            compress: 0.8, format: SaveFormat.JPEG, base64: true,
+        const photo = await manipulateAsync(uri, [{ resize: { width: 256 } }], {
+            compress: 0.7, format: SaveFormat.JPEG, base64: true,
         });
         if (!photo.base64) throw new Error('Could not read the selected photo.');
         const result = await httpsCallable(functions, 'uploadProfilePhoto')({

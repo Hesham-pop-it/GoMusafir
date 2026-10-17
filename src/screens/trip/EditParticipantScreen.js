@@ -26,6 +26,7 @@ import { Typography } from '../../constants/Typography';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { prepareAvatar } from '../../utils/imageSizing';
 import { functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
 import { uploadTripMedia } from '../../utils/uploadTripMedia';
@@ -340,8 +341,10 @@ const EditParticipantScreen = () => {
                 ],
                 { compress: 0.9, format: SaveFormat.JPEG }
             );
+            // Avatars are stored at 256 px.
+            const avatarResult = await prepareAvatar(manipResult.uri, manipResult.width, manipResult.height);
 
-            setAvatarUri(manipResult.uri);
+            setAvatarUri(avatarResult.full.uri);
             setCropModalVisible(false);
         } catch (error) {
             console.error("Error cropping image:", error);

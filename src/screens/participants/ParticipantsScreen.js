@@ -32,6 +32,7 @@ import { httpsCallable } from 'firebase/functions';
 import { useLanguage } from '../../context/LanguageContext';
 import ChatEncryption from '../../utils/chatEncryption';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import RemoteImage from '../../components/RemoteImage';
 
 const { width } = Dimensions.get('window');
 
@@ -635,7 +636,7 @@ const ParticipantsScreen = ({ navigation }) => {
             onPress={() => handleParticipantPress(item)}
             activeOpacity={0.7}
         >
-            <Image source={{ uri: item.image }} style={styles.avatar} />
+            <RemoteImage source={{ uri: item.image }} style={styles.avatar} />
             <View style={styles.cardContent}>
                 <Text style={styles.nameText}>{item.name}</Text>
                 <Text style={styles.tripText}>{item.trip}</Text>
