@@ -166,8 +166,7 @@ export const translations = {
     restore_org_body: "You can restore it until the deadline below. After that it is gone for good.",
     restore_org_days: "Days left",
     restore_org_button: "Restore organisation",
-    restore_org_done: "Your organisation is restored. Please sign in again.",
-    sign_in_account_scheduled: "This account is scheduled for deletion. Check your email for the link to cancel it."
+    restore_org_done: "Your organisation is restored. Please sign in again."
   },
   nl: {
     participants: "Deelnemers",
