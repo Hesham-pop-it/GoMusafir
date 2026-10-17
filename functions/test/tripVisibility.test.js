@@ -33,6 +33,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const deps = {
     'firebase-functions/v2/https':{HttpsError}, '../admin':{db,auth:{getUser:async()=>({email:'fallback@test.invalid'})}},
     './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy,
+    './unchangedResponse':require('../services/unchangedResponse'),
   };
   function load(file) {
     const module={exports:{}};
@@ -124,4 +125,18 @@ test('chat, voice and notifications read only the profiles they name and no coor
   assert.deepEqual(f.reads.filter(path=>path.startsWith('users/')),['users/a']);
   f.reads.length=0;await f.call('getVisibleTripData');
   assert.equal(f.reads.filter(path=>path.startsWith('users/')).length,3);
+});
+test('polls that send the hash they hold get an unchanged answer until the redacted data changes',async()=>{
+  const f=fixture({mode:'Show to Everyone'});
+  const plain=await f.call('getVisibleTripData');
+  assert.equal(plain.envelope,undefined);assert.ok(plain.users.b);
+  const first=await f.call('getVisibleTripData',{knownHash:''});
+  assert.equal(first.envelope,1);assert.deepEqual(first.data,plain);
+  const same=await f.call('getVisibleTripData',{knownHash:first.hash});
+  assert.deepEqual(same,{envelope:1,unchanged:true,hash:first.hash});
+  f.state.users.b.participant_visibility.t={name:'Do not show'};
+  f.state.orgs.o.trips.t.visibility_config.name='Custom Choice';
+  const changed=await f.call('getVisibleTripData',{knownHash:first.hash});
+  assert.notEqual(changed.hash,first.hash);assert.equal(changed.data.users.b.profile.firstName,'');
+  assert.equal((await f.call('getVisibleTripData',{knownHash:'x'.repeat(65)})).envelope,undefined);
 });

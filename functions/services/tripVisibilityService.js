@@ -3,6 +3,7 @@ const { db } = require('../admin');
 const { requireTripAccess } = require('./participantAccessService');
 const { getParticipantProfile } = require('./participantProfileService');
 const { visible, activeGrant } = require('./visibilityPolicy');
+const { respond } = require('./unchangedResponse');
 const roles = ['admin', 'manager', 'co-host'];
 const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
@@ -84,6 +85,9 @@ function sanitizeMessage(message, users) {
 }
 
 async function getVisibleTripData(request) {
+  return respond(request, await visibleTripData(request));
+}
+async function visibleTripData(request) {
   const { tripId, section = 'directory' } = request.data || {};
   if (!id(tripId) || !['directory','chat','voice','notifications'].includes(section)) throw new HttpsError('invalid-argument', 'Invalid visibility request.');
   const access = await requireTripAccess(request, tripId);
