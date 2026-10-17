@@ -10,13 +10,15 @@ function fixture({ capacity = 2, failWrite = false, failAccess = false, authProf
   const read = key => key.split('/').filter(Boolean).reduce((v,k) => v?.[k], data);
   const write = (key, value) => { const parts=key.split('/');const last=parts.pop();const parent=parts.reduce((v,k)=>v[k] ||= {},data);parent[last]=value; };
   const snap = value => { const copy=value == null ? null : JSON.parse(JSON.stringify(value));return {val:()=>copy,exists:()=>copy!=null}; };
-  let prematureParticipant = false;
+  let prematureParticipant = false, failUpdate = false;
+  const transactions = [];
   const db = {ref:(key='')=>({get:async()=>snap(read(key)),set:async value=>{
     write(key,value);if(key.endsWith('account_type') && !read('trips_participants/t/p')) prematureParticipant=true;
   },update:async updates=>{
+    if(failUpdate){failUpdate=false;throw new Error('update unavailable');}
     if(failWrite){failWrite=false;throw new Error('write unavailable');}
     for(const [k,v] of Object.entries(updates))write(key ? `${key}/${k}`:k,v);
-  },transaction:async cb=>{cb(null);const value=cb(snap(read(key)).val());if(failWrite){failWrite=false;throw new Error('write unavailable');}if(value!==undefined){if(key)write(key,value);else data=value;}return {committed:value!==undefined,snapshot:snap(read(key))};}})};
+  },transaction:async cb=>{transactions.push(key);cb(null);const value=cb(snap(read(key)).val());if(failWrite){failWrite=false;throw new Error('write unavailable');}if(value!==undefined){if(key)write(key,value);else data=value;}return {committed:value!==undefined,snapshot:snap(read(key))};}})};
   class HttpsError extends Error {constructor(code,message){super(message);this.code=code;}}
   const access = {tripExpiry:t=>t?.status==='active' && t.end_date>Date.now()?t.end_date:0,refreshAccess:async uid=>{
     if(failAccess){failAccess=false;throw new Error('access unavailable after commit');}
@@ -36,7 +38,7 @@ function fixture({ capacity = 2, failWrite = false, failAccess = false, authProf
   deps['./tripCapacity']=deps['../services/tripCapacity']=require('../services/tripCapacity');
   deps['../services/participantJoinSeat']=load('services/participantJoinSeat.js');
   const {redeemInvitation:join,getInviteMetadata:metadata}=load('groups/inviteFunctions.js');
-  return {get data(){return data;},read,metadata:uid=>metadata({auth:uid?{uid}:undefined,data:{inviteCode:'JOIN'}}),join:(uid,profile={})=>join({auth:{uid:uid||'p'},data:{inviteCode:'JOIN',...profile}}),premature:()=>prematureParticipant};
+  return {get data(){return data;},read,transactions,failNextUpdate:()=>{failUpdate=true;},metadata:uid=>metadata({auth:uid?{uid}:undefined,data:{inviteCode:'JOIN'}}),join:(uid,profile={})=>join({auth:{uid:uid||'p'},data:{inviteCode:'JOIN',...profile}}),premature:()=>prematureParticipant};
 }
 test('returning participant restores name and photo from Auth when basic profile is missing', async () => {
   const f=fixture({authProfile:{displayName:'Ali Khan',photoURL:'https://example.test/ali.jpg'}});
@@ -96,7 +98,7 @@ test('QR metadata and joining ignore a stale full counter and abandoned reservat
   assert.equal(preview.isFull,false);
   await f.join('new');
   assert.equal(f.read('orgs/o/trips/t/participants'),4);
-  assert.equal(f.read('orgs/o/trips/t/participant_join_seats'),undefined);
+  assert.equal(f.read('orgs/o/trips/t/participant_join_seats') ?? undefined,undefined);
 });
 test('removing a member frees a seat even when the old counter remains full',async()=>{
   const f=fixture({capacity:1});await f.join('a');
@@ -141,4 +143,16 @@ test('numeric string capacity is compared numerically',async()=>{
   assert.equal((await f.metadata()).isFull,false);
   await f.join();
   assert.equal((await f.metadata()).isFull,true);
+});
+
+test('the seat check runs as a transaction on the trip membership, never on the database root',async()=>{
+  const f=fixture();await f.join();
+  assert.deepEqual(f.transactions,['trips_participants/t']);
+  assert.equal(f.read('trips_participants/t/p'),true);
+});
+test('a failed follow-up write takes the new membership out again and frees the seat',async()=>{
+  const f=fixture({capacity:1});f.failNextUpdate();
+  await assert.rejects(f.join('a'),{code:'internal'});
+  assert.equal(f.read('trips_participants/t'),null);
+  await f.join('b');assert.equal(f.read('orgs/o/trips/t/participants'),1);
 });
