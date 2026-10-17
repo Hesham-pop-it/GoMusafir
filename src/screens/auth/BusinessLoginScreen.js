@@ -91,6 +91,18 @@ const BusinessLoginScreen = () => {
                 return;
             }
 
+            // An owner whose organisation is scheduled for deletion can only restore it.
+            try {
+                const status = await httpsCallable(functions, 'getDeletionStatus')();
+                if (status.data?.organization?.is_owner) {
+                    setIsLoading(false);
+                    navigation.navigate('RestoreOrganization');
+                    return;
+                }
+            } catch (statusErr) {
+                console.log("[BusinessLogin] Deletion status unavailable:", statusErr?.code);
+            }
+
             // RBAC: Check if user has business/staff access
             // S6: Role-Based Access Control - Double check both database and Custom Claims
             const userRef = ref(database, `users/${user.uid}`);
