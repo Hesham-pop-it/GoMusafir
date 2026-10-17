@@ -20,7 +20,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const snap = v => ({val:()=>v, exists:()=>v != null});
   const reads = [], cached = [];
   const db = {ref(path) { return {
-    get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
+    get:async()=>{reads.push(path);return snap(read(path));}, update:async()=>{}, set:async value=>write(path,value),
     orderByChild(){return this;},limitToLast(){return this;},
     push(){const key=`request-${++nextId}`;return {key,set:async value=>write(`${path}/${key}`,value)};},
     transaction:async fn=>{const result=fn(structuredClone(read(path)));if(result===undefined)return {committed:false,snapshot:snap(read(path))};write(path,result);return {committed:true,snapshot:snap(result)};},
@@ -32,7 +32,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   };
   const deps = {
     'firebase-functions/v2/https':{HttpsError}, '../admin':{db,auth:{getUser:async()=>({email:'fallback@test.invalid'})}},
-    './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy,
+    './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy, './notificationTerms':require('../services/notificationTerms'),
     './unchangedResponse':require('../services/unchangedResponse'),
     // The shared cache has its own test; most tests here change records between calls.
     './userRecordCache':{cachedUser:(store,uid)=>{cached.push(uid);return store.ref(`users/${uid}`).get();}},
@@ -174,4 +174,24 @@ test('shared records are redacted per viewer and the viewer\'s own record is nev
   const count=path=>f.reads.filter(read=>read===path).length,own=count('users/b'),other=count('users/c');
   await f.call('getVisibleTripData',{},'b');
   assert.equal(count('users/b'),own+1);assert.equal(count('users/c'),other);
+});
+test('expired notifications are not sent, an open SOS and fresh records are',async()=>{
+  const f=fixture({viewerRole:'admin'});
+  const now=Date.now();
+  f.root().notifications.a={
+    old:{type:'seat_update',timestamp:now-40*86400000,title:'Old'},
+    fresh:{type:'seat_update',timestamp:now-86400000,title:'Fresh'},
+    stampedGone:{type:'alert',timestamp:now,visible_until:now-1,title:'Gone'},
+    sos:{type:'emergency',timestamp:now-90*86400000,title:'SOS'},
+    sosDone:{type:'emergency',timestamp:now-5*86400000,resolved_at:now-2*86400000,title:'Done'},
+  };
+  const result=await f.call('getVisibleTripData',{section:'notifications'});
+  assert.deepEqual(Object.keys(result).sort(),['fresh','sos']);
+});
+test('an answered location request leaves the list for the asked pilgrim',async()=>{
+  const f=fixture({mode:'Do Not Show'});
+  const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});
+  assert.ok(id in await f.call('getVisibleTripData',{section:'notifications'},'b'));
+  await f.call('respondToLocationRequest',{notificationId:id,accept:false},'b');
+  assert.equal(id in await f.call('getVisibleTripData',{section:'notifications'},'b'),false);
 });

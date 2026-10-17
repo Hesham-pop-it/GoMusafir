@@ -5,6 +5,7 @@ const { getParticipantProfile } = require('./participantProfileService');
 const { visible, activeGrant } = require('./visibilityPolicy');
 const { respond } = require('./unchangedResponse');
 const { cachedUser } = require('./userRecordCache');
+const { loadTerms, isActive, expiryEntry } = require('./notificationTerms');
 const roles = ['admin', 'manager', 'co-host'];
 const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
@@ -110,7 +111,11 @@ async function visibleTripData(request) {
     }
     return voice;
   }
-  const notifications = (await db.ref(`${root}/notifications/${request.auth.uid}`).get()).val() || {};
+  // Only active notifications leave the server; expired ones wait for the daily prune.
+  const [all, terms] = await Promise.all([db.ref(`${root}/notifications/${request.auth.uid}`).get(), loadTerms(db)]);
+  const now = Date.now();
+  const notifications = Object.fromEntries(Object.entries(all.val() || {})
+    .filter(([, value]) => value && typeof value === 'object' && isActive(value, terms, now, access.trip?.end_date)));
   const data = await directory(request, access, sendersOf(notifications));
   return Object.fromEntries(Object.entries(notifications).map(([key, value]) => {
     const result = sanitizeMessage(value, data.users);
@@ -163,6 +168,7 @@ async function respondToLocationRequest(request) {
     if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
     pending.status = accept ? 'accepted' : 'declined';
     pending.respondedAt = now;
+    pending.visible_until = now;
     current.notifications[notification.senderUid] ||= {};
     current.notifications[notification.senderUid][`location_response_${notificationId}`] = {
       type: 'location_response', senderUid: uid, tripId, orgId, timestamp: now,
@@ -178,6 +184,8 @@ async function respondToLocationRequest(request) {
     return current;
   });
   if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
+  // The answered request leaves the list; the prune removes it.
+  await db.ref().update(expiryEntry(notificationId, `${root}/notifications/${uid}/${notificationId}`, now)).catch(() => {});
   return { status: accept ? 'accepted' : 'declined', expiresAt: accept ? now + 15 * 60 * 1000 : null };
 }
 module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, directory };
