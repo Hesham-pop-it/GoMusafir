@@ -140,6 +140,9 @@ const summary = {
   coldStartKBPerPilgrim: Math.round((startup.proxy.client_db.up + startup.proxy.client_db.down + startup.proxy.client_functions.up + startup.proxy.client_functions.down) / users / 10) / 100,
   counters: steady.counters,
 };
+// Location writes that never reach the proxy mean traffic went around it.
+if (steady.counters.locationWrites && !p.client_db.up) summary.invalid = 'phone database traffic bypassed the proxy';
+if (summary.invalid) console.error(`INVALID RUN: ${summary.invalid}`);
 const budgets = JSON.parse(readFileSync(path.join(here, 'budgets.json'), 'utf8'));
 summary.budget = Object.fromEntries([
   ['phoneTotalMB', summary.perPilgrimPerDayMB.phoneTotal],
@@ -150,4 +153,4 @@ summary.budget = Object.fromEntries([
 mkdirSync(path.join(here, 'results'), { recursive: true });
 writeFileSync(path.join(here, 'results', `${label}-n${users}.json`), JSON.stringify({ summary, startup, steady }, null, 2));
 console.log(JSON.stringify(summary, null, 2));
-process.exit(args.enforce && Object.values(summary.budget).some(b => !b.ok) ? 1 : 0);
+process.exit(summary.invalid || (args.enforce && Object.values(summary.budget).some(b => !b.ok)) ? 1 : 0);

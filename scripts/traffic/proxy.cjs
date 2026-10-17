@@ -13,12 +13,24 @@ const stats = {};
 const reset = () => routes.forEach(r => { stats[r.name] = { up: 0, down: 0, connections: 0 }; });
 reset();
 
+// The database handshake names the host to use from then on ("h"), and the SDK
+// reconnects there, past the proxy. Rewriting it to the proxy port keeps every
+// reconnect counted; both ports have five digits, so frame lengths stay valid.
+const HOST = Buffer.from('"h":"127.0.0.1:19500"');
+function keepHost(chunk, port) {
+  const at = chunk.indexOf(HOST);
+  if (at < 0) return chunk;
+  const copy = Buffer.from(chunk);
+  copy.write(String(port), at + HOST.length - 6);
+  return copy;
+}
+
 for (const route of routes) {
   net.createServer(client => {
     stats[route.name].connections += 1;
     const upstream = net.connect(route.target, '127.0.0.1');
     client.on('data', chunk => { stats[route.name].up += chunk.length; upstream.write(chunk); });
-    upstream.on('data', chunk => { stats[route.name].down += chunk.length; client.write(chunk); });
+    upstream.on('data', chunk => { stats[route.name].down += chunk.length; client.write(route.target === 19500 ? keepHost(chunk, route.listen) : chunk); });
     const close = () => { client.destroy(); upstream.destroy(); };
     client.on('error', close); upstream.on('error', close);
     client.on('close', close); upstream.on('close', close);
