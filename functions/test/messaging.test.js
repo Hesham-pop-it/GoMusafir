@@ -432,12 +432,17 @@ test('staff chat pushes the other staff but not the sender, quiet in voice', asy
 });
 
 function notifications({ inVoice = [] } = {}) {
-  const pushes = [], written = {};
+  const pushes = [], written = {}, signals = [];
   const db = fakeDb({ 'trips_participants/trip/alice': true, 'trips_participants/trip/bob': true, 'orgs/org/staff/staff1': 'admin',
     'users/staff1': { profile: { firstName: 'Sam', lastName: 'Host' } } });
   const dependencies = {
-    'firebase-functions/v2/database': { onValueCreated: (o, h) => h, onValueWritten: (o, h) => h },
+    'firebase-functions/v2/database': { onValueCreated: (o, h) => h, onValueUpdated: (o, h) => h, onValueWritten: (o, h) => h },
     '../services/notificationService': { sendPushNotification: async (uid, t, b, p, o) => pushes.push({ uid, o }) },
+    '../services/tripSignals': {
+      signalChat: async (d, o, t, id) => signals.push(['chat', id]),
+      signalVoice: async (d, o, t, id) => signals.push(['voice', id]),
+      signalNotifications: async (d, o, t, uid, id) => signals.push(['notifications', uid, id]),
+    },
     '../admin': { admin: { database: { ServerValue: { TIMESTAMP: 'TS' } } }, db: { ref: p => ({
       once: async () => { const v = db.read(p) ?? written[p] ?? null; return { val: () => v, exists: () => v != null }; },
       push: () => ({ set: async () => {} }),
@@ -449,7 +454,7 @@ function notifications({ inVoice = [] } = {}) {
   const src = fs.readFileSync(path.join(__dirname, '../groups/notificationFunctions.js'), 'utf8');
   vm.runInNewContext(src, { module, exports: module.exports, console, Date, Object, Array, Set, String, Promise, Number,
     Math, JSON, require: key => { if (!(key in dependencies)) throw Error(`Unexpected dependency ${key}`); return dependencies[key]; } });
-  return { fn: module.exports.onChatCreated, voice: module.exports.onVoiceChannelUpdated, pushes, written };
+  return { fn: module.exports.onChatCreated, voice: module.exports.onVoiceChannelUpdated, pushes, written, signals };
 }
 
 test('onChatCreated skips system lines and is quiet for recipients in voice', async () => {
@@ -460,6 +465,8 @@ test('onChatCreated skips system lines and is quiet for recipients in voice', as
   const byUid = Object.fromEntries(n.pushes.map(p => [p.uid, p.o]));
   assert.equal(Object.keys(byUid).sort().join(), 'bob,staff1');
   assert.equal(byUid.bob.quiet, true); assert.equal(byUid.staff1.quiet, undefined);
+  // Both lines move the chat signal, the system line included.
+  assert.deepEqual(n.signals, [['chat', 'm1'], ['chat', 'm2']]);
 });
 
 const CHAT = 'trips_active/org/trip/chat/';
@@ -503,4 +510,7 @@ test('other voice channel updates write no chat line', async () => {
   await n.voice(voiceEvent({ isChannelStarted: true, isAllMuted: false }, { isChannelStarted: true, isAllMuted: true }));
   await n.voice(voiceEvent({ isChannelStarted: false }, { isChannelStarted: false, endReason: 'x' }));
   assert.equal(Object.keys(n.written).length, 0);
+  assert.deepEqual(n.signals, [['voice', 'ev1'], ['voice', 'ev1']]);
+  await n.voice(voiceEvent({ isChannelStarted: false }, null));
+  assert.equal(n.signals.length, 2);
 });

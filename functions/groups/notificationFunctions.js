@@ -255,7 +255,7 @@ exports.onVoiceChannelUpdated = onValueWritten({
     const after = event.data.after.val() || {};
     const { orgId, tripId } = event.params;
     // A removed channel (trip deletion) must not leave a signal behind.
-    if (event.data.after.exists()) {
+    if (event.data.after.val() !== null) {
         await signalVoice(db, orgId, tripId, event.id).catch(error => console.log("Error signalling voice:", error));
     }
 
