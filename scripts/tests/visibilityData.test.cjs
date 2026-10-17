@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/services/visibilityData.js'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 function fixture(){
- const state={calls:[],queue:[],data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
+ const state={calls:[],queue:[],signals:new Map(),data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
  const auth={get currentUser(){return state.uid?{uid:state.uid}:null;}};
  const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible,useVisibilityRevision,visibilitySignature})',{
   auth,functions:{},URL,console,
@@ -12,13 +12,21 @@ function fixture(){
   AppState:{get currentState(){return state.appState;},addEventListener:(_,listener)=>{
     state.stateListeners.add(listener);return {remove:()=>state.stateListeners.delete(listener)};
   }},
-  httpsCallable:(_,name)=>async params=>{state.calls.push({name,params});if(state.wait)await state.wait;if(state.fail)throw Error('denied');return {data:state.data};},
-  get:async()=>{throw Error('raw read not allowed');},onValue:()=>{throw Error('raw subscription not allowed');},
-  setTimeout:fn=>{const item={fn};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
+  httpsCallable:(_,name)=>async params=>{state.calls.push({name,params});if(state.wait)await state.wait;if(state.fail)throw Error('denied');
+   if(!state.hashes||params.knownHash===undefined)return {data:state.data};
+   const hash=JSON.stringify(state.data);return {data:params.knownHash===hash?{envelope:1,unchanged:true,hash}:{envelope:1,hash,data:structuredClone(state.data)}};},
+  get:async()=>{throw Error('raw read not allowed');},
+  database:{},ref:(_,path)=>({path}),
+  onValue:(target,callback)=>{
+   if(!target.path?.endsWith('/chat_signal'))throw Error('raw subscription not allowed');
+   state.signals.set(target.path,callback);return ()=>state.signals.delete(target.path);
+  },
+  setTimeout:(fn,ms)=>{const item={fn,ms};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
  });
  const ref=path=>({toString:()=>`https://example.test/${path}`});
- const tick=async()=>{const item=state.queue.shift();if(item&&!item.cancelled)await item.fn();};
- return {state,api,ref,tick,changeState:next=>{state.appState=next;for(const listener of state.stateListeners)listener(next);}};
+ const tick=async()=>{let item;do item=state.queue.shift();while(item?.cancelled);if(item)await item.fn();return item;};
+ const run=async ms=>{const index=state.queue.findIndex(item=>!item.cancelled&&item.ms===ms);assert.ok(index>=0,`no ${ms} ms timer`);const [item]=state.queue.splice(index,1);await item.fn();};
+ return {state,api,ref,tick,run,changeState:next=>{state.appState=next;for(const listener of state.stateListeners)listener(next);}};
 }
 test('profile reads use one authorized directory request instead of raw PII',async()=>{
  const f=fixture();const [a,b]=await Promise.all([
@@ -99,9 +107,10 @@ test('visibility revisions stay stable across server completion order but change
  f.state.data.users={a:{profile:{firstName:'A',lastName:'One'}},b:{profile:{firstName:'B',lastName:'Two'}}};
  f.api.useVisibilityRevision('t');await f.tick();
  f.state.data.users={b:{profile:{lastName:'Two',firstName:'B'}},a:{profile:{lastName:'One',firstName:'A'}}};
- await f.tick();assert.equal(f.state.revisions[0],f.state.revisions[1]);
+ await f.tick();assert.equal(f.state.revisions.length,1);
  f.state.data.users.b.profile={firstName:'',lastName:''};
- await f.tick();assert.notEqual(f.state.revisions[1],f.state.revisions[2]);
+ await f.tick();assert.equal(f.state.revisions.length,2);assert.notEqual(f.state.revisions[0],f.state.revisions[1]);
+ f.state.fail=true;await f.tick();assert.equal(f.state.revisions.at(-1),'unavailable');
  f.state.cleanup();
 });
 test('semantic comparison preserves array order, nulls, and real field changes',()=>{
@@ -110,4 +119,61 @@ test('semantic comparison preserves array order, nulls, and real field changes',
  assert.notEqual(signature([1,2]),signature([2,1]));
  assert.notEqual(signature({a:null}),signature({}));
  assert.notEqual(signature({a:false}),signature({a:true}));
+});
+
+test('revision hooks share the screen directory poll instead of polling on their own',async()=>{
+ const f=fixture(),values=[];
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
+ f.api.useVisibilityRevision('t');const first=f.state.cleanup;
+ f.api.useVisibilityRevision('t');const second=f.state.cleanup;
+ while(f.state.queue.some(item=>!item.cancelled&&item.ms===0))await f.tick();
+ assert.equal(f.state.calls.length,1);
+ assert.equal(f.state.queue.filter(item=>!item.cancelled).length,1);
+ await f.tick();assert.equal(f.state.calls.length,2);
+ assert.equal(f.state.queue.filter(item=>!item.cancelled).length,1);
+ first();second();stop();
+ assert.equal(f.state.queue.filter(item=>!item.cancelled).length,0);
+});
+test('polls send the held hash and unchanged answers keep the held data',async()=>{
+ const f=fixture(),values=[];f.state.hashes=true;
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
+ await f.tick();assert.equal(f.state.calls[0].params.knownHash,'');assert.equal(values.at(-1).b.lat,1);
+ await f.tick();assert.equal(f.state.calls[1].params.knownHash,JSON.stringify(f.state.data));assert.equal(values.length,1);
+ f.state.data.locations.b.lat=9;await f.tick();assert.equal(values.at(-1).b.lat,9);
+ f.state.fail=true;await f.tick();assert.equal(values.at(-1),null);
+ f.state.fail=false;await f.tick();assert.equal(f.state.calls.at(-1).params.knownHash,'');assert.equal(values.at(-1).b.lat,9);
+ const one=await f.api.getVisibleSnapshot(f.ref('users/b/profile'),'t');
+ assert.equal(one.val().firstName,'Visible');assert.equal(f.state.calls.at(-1).params.knownHash,undefined);
+ stop();
+});
+test('chat refetches when the chat signal or the directory changes, with a slow fallback',async()=>{
+ const f=fixture(),messages=[];
+ f.state.data.m1={text:'one'};
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>messages.push(snap.val()));
+ const signal=f.state.signals.get('trips_active/o/t/chat_signal');assert.ok(signal);
+ signal({val:()=>'m1'});
+ await f.tick();assert.equal(messages.length,1);
+ const fallback=f.state.queue.find(item=>!item.cancelled);assert.equal(fallback.ms,30000);
+ const calls=f.state.calls.length;
+ signal({val:()=>'m1'});assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===0).length,0);
+ f.state.data.m2={text:'two'};signal({val:()=>'m2'});
+ await f.tick();assert.equal(f.state.calls.length,calls+1);assert.ok(messages.at(-1).m2);
+ const people=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',()=>{});
+ await f.run(0);
+ const chats=()=>f.state.calls.filter(call=>call.params.section==='chat').length,before=chats();
+ await f.run(4000);assert.equal(chats(),before);
+ f.state.data.users.b.profile.firstName='';
+ await f.run(4000);await f.run(0);assert.equal(chats(),before+1);
+ people();stop();
+ assert.equal(f.state.signals.size,0);
+});
+test('a screen joining a running chat poll gets data at once',async()=>{
+ const f=fixture(),first=[],second=[];
+ f.state.data.m1={text:'one'};
+ const a=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>first.push(snap.val()));
+ await f.tick();
+ const b=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>second.push(snap.val()));
+ const next=f.state.queue.find(item=>!item.cancelled);assert.equal(next.ms,0);
+ await f.tick();assert.equal(second.length,1);assert.equal(first.length,1);
+ a();b();
 });
