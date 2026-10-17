@@ -161,6 +161,8 @@ test('the purge job reads at most the batch limit and a failure stays queued', a
   for (const uid of ['pil', 'c1']) {
     await f.db.ref(`account_deletions/${uid}`).set({ purge_after: NOW - DAY, org_id: uid === 'c1' ? 'org' : null });
   }
+  await f.auth.updateUser('pil', { disabled: true });
+  await f.auth.updateUser('c1', { disabled: true });
   const one = await f.svc.purgeDueAccounts({ limit: 1 });
   assert.equal(one.due.length, 1);
   f.auth.deleteUser = async () => { throw new Error('auth down'); };
@@ -175,6 +177,42 @@ test('the purge never wipes someone who still owns an organisation', async () =>
   assert.deepEqual(out.blocked, ['owner']);
   assert.ok(f.db.dump().users.owner);
   assert.ok(f.events().includes('ACCOUNT_PURGE_BLOCKED'));
+  assert.equal(f.db.dump().account_deletions.owner.purge_after, NOW + DAY, 'a blocked entry moves forward a day instead of staying due');
+});
+test('a queued entry whose user is still enabled is left intact by the purge and moved forward', async () => {
+  const f = fixture();
+  await f.db.ref('account_deletions/pil').set({ purge_after: NOW - DAY, org_id: null });
+  const out = await f.svc.purgeDueAccounts();
+  assert.deepEqual(out.purged, []);
+  assert.equal((await f.svc.purgeAccount('pil', { force: true })).status, 'not-disabled');
+  const d = f.db.dump();
+  assert.ok(d.users.pil);
+  assert.equal(d.account_deletions.pil.purge_after, NOW + DAY);
+  assert.ok(!f.auth.calls.some(c => c[0] === 'delete'));
+  assert.ok(f.events().includes('ACCOUNT_PURGE_SKIPPED'));
+});
+test('a purge for a user already gone from Auth still proceeds', async () => {
+  const f = fixture();
+  await f.db.ref('account_deletions/ghost').set({ purge_after: NOW - DAY, org_id: null });
+  assert.equal((await f.svc.purgeAccount('ghost')).status, 'purged');
+});
+test('a repeated request finishes a half-failed deactivation', async () => {
+  const f = fixture();
+  await f.db.ref('account_deletions/pil').set({ requested_at: NOW, purge_after: NOW + 30 * DAY, token_hash: 'h' });
+  const out = await f.svc.requestAccountDeletion({ uid: 'pil', authTime: stale });
+  assert.equal(out.already_requested, true);
+  assert.deepEqual(f.auth.calls.find(c => c[0] === 'update'), ['update', 'pil', { disabled: true }]);
+  assert.deepEqual(f.revoked, ['pil']);
+});
+test('cancelling removes the queue entry before enabling, and a failed enable never leaves an enabled user queued', async () => {
+  const f = fixture();
+  await f.svc.requestAccountDeletion({ uid: 'pil', authTime: fresh });
+  const real = f.auth.updateUser;
+  f.auth.updateUser = async () => { throw new Error('auth down'); };
+  await assert.rejects(f.svc.cancelAccountDeletion({ uid: 'pil', token: TOKEN }));
+  assert.equal(f.db.dump().account_deletions, undefined);
+  assert.equal((await f.auth.getUser('pil')).disabled, true);
+  f.auth.updateUser = real;
 });
 test('an early purge (GDPR script) skips the waiting period and is audited as such', async () => {
   const f = fixture();
@@ -222,7 +260,8 @@ test('organisation deletion deactivates at once, queues the purge, revokes membe
   const d = f.db.dump();
   assert.equal(d.orgs.org.metadata.deleted_at, NOW);
   assert.equal(d.orgs.org.metadata.purge_after, NOW + 30 * DAY);
-  assert.equal(d.orgs.org.metadata.deleted_by, 'owner');
+  assert.equal(d.orgs.org.metadata.deleted_by, undefined, 'the uid stays out of the world-readable metadata');
+  assert.equal(d.org_deletions.org.deleted_by, 'owner');
   assert.equal(d.org_deletions.org.purge_after, NOW + 30 * DAY);
   assert.equal(d.orgs.org.payments.p.amount, 5);
   assert.deepEqual(f.revoked.sort(), ['c1', 'owner', 'pil']);

@@ -215,7 +215,6 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revoke
     await flush({
       [`orgs/${orgId}/metadata/deleted_at`]: at,
       [`orgs/${orgId}/metadata/purge_after`]: due,
-      [`orgs/${orgId}/metadata/deleted_by`]: by,
       [`org_deletions/${orgId}`]: { deleted_at: at, purge_after: due, deleted_by: by, token_hash: tokenHash },
     });
     return { deleted_at: at, purge_after: due };
@@ -260,6 +259,13 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revoke
   // Deletes trips, chat, media, staff list and participant links. KEEPS payments,
   // prepaid seats, checkout sessions, consents, metadata (incl. Stripe id) and logs.
   async function purgeOrganization(orgId) {
+    // Re-check at the moment of the purge: a restore or a changed date since the queue read wins.
+    const queued = await val(`org_deletions/${orgId}`);
+    const deletedAt = await val(`orgs/${orgId}/metadata/deleted_at`);
+    if (!queued || !(queued.purge_after <= now()) || typeof deletedAt !== "number") {
+      console.log("Organisation purge skipped", { orgId, reason: "not-due-or-restored" });
+      return { skipped: true };
+    }
     // Participants lose access before their trips disappear.
     await revokeMany(await organizationMembers(orgId));
     const tripIds = new Set([
@@ -300,8 +306,8 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revoke
 
   // Organisations whose purge_after has passed. Bounded: an indexed query on the small
   // org_deletions queue, at most `limit` entries per run. Entries that no longer match
-  // the organisation (restored or already purged) are dropped.
-  async function findOrganizationsDueForPurge({ limit = 50 } = {}) {
+  // the organisation (restored or already purged) are dropped (not in a dry run, which only reads).
+  async function findOrganizationsDueForPurge({ limit = 50, dryRun = false } = {}) {
     const snap = await db.ref("org_deletions").orderByChild("purge_after").endAt(now()).limitToFirst(limit).get();
     const due = [];
     if (!snap.exists()) return due;
@@ -310,7 +316,8 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revoke
     for (const orgId of ids) {
       const meta = (await val(`orgs/${orgId}/metadata`)) || {};
       if (typeof meta.deleted_at !== "number" || meta.purged_at) {
-        await flush({ [`org_deletions/${orgId}`]: null });
+        if (dryRun) console.log("Dry run: would drop stale org_deletions entry", { orgId });
+        else await flush({ [`org_deletions/${orgId}`]: null });
         continue;
       }
       due.push(orgId);
@@ -326,7 +333,7 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revoke
 }
 
 async function runOrganizationPurge(cleanup, { enabled, limit = 50 } = {}) {
-  const due = await cleanup.findOrganizationsDueForPurge({ limit });
+  const due = await cleanup.findOrganizationsDueForPurge({ limit, dryRun: !enabled });
   const result = { due, purged: [], failed: [], dryRun: !enabled };
   if (!enabled) return result;
   for (const orgId of due) {

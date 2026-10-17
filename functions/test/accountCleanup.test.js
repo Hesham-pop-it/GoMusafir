@@ -149,6 +149,7 @@ test('deleteTripData removes trip records and media, keeps a cover shared with a
 });
 test('purgeOrganization removes trips and staff but keeps payments, Stripe id and logs', async () => {
   const { db, auth, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 40 * DAY);
   await svc.purgeOrganization('org1');
   const d = db.dump();
   assert.equal(d.orgs.org1.trips, undefined);
@@ -174,7 +175,7 @@ test('markOrganizationDeleted sets the three metadata fields and queues the orga
   assert.deepEqual(out, { deleted_at: NOW, purge_after: NOW + 30 * DAY });
   assert.equal(d.orgs.org1.metadata.deleted_at, NOW);
   assert.equal(d.orgs.org1.metadata.purge_after, NOW + 30 * DAY);
-  assert.equal(d.orgs.org1.metadata.deleted_by, 'owner');
+  assert.equal(d.orgs.org1.metadata.deleted_by, undefined);
   assert.equal(d.orgs.org1.metadata.stripe_customer_id, 'cus_1');
   assert.deepEqual(d.org_deletions.org1, { deleted_at: NOW, purge_after: NOW + 30 * DAY, deleted_by: 'owner', token_hash: 'abc' });
 });
@@ -220,6 +221,25 @@ test('purgeOrganization revokes the sessions of staff and participants first and
   assert.deepEqual(revoked.sort(), ['c1', 'owner', 'p1', 'shared']);
   assert.equal(db.dump().org_deletions, undefined);
   assert.equal(db.dump().orgs.org1.metadata.stripe_customer_id, 'cus_1');
+});
+test('purgeOrganization does nothing unless the queue entry is due and the organisation is marked deleted', async () => {
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 5 * DAY);
+  assert.deepEqual(await svc.purgeOrganization('org1'), { skipped: true });
+  await svc.purgeOrganization('org2');
+  assert.ok(db.dump().orgs.org2.trips, 'never queued');
+  await db.ref('org_deletions/org1/purge_after').set(NOW - 1);
+  await db.ref('orgs/org1/metadata/deleted_at').remove();
+  assert.deepEqual(await svc.purgeOrganization('org1'), { skipped: true });
+  assert.ok(db.dump().orgs.org1.trips.t1, 'restored meanwhile');
+});
+test('the dry run only reads: stale queue entries are kept', async () => {
+  const { db, svc } = setup();
+  await db.ref('org_deletions/gone').set({ purge_after: NOW - DAY });
+  await runOrganizationPurge(svc, { enabled: false });
+  assert.ok(db.dump().org_deletions.gone);
+  await runOrganizationPurge(svc, { enabled: true });
+  assert.equal(db.dump().org_deletions, undefined);
 });
 test('the purge job does nothing unless explicitly enabled', async () => {
   const { db, svc } = setup();

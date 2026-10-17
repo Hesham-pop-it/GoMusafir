@@ -1,7 +1,7 @@
 // ─── Active and upcoming journeys of an organisation ─────────────────────────
-// Used by both deletion paths (deleteOrganization and the owner branch of
-// deleteMyAccount). A journey blocks deletion while it is active and has not ended
-// yet, so upcoming journeys count too. Same rule as tripExpiry and database.rules.json.
+// Used by organisation deletion (requestOrganizationDeletion; an owner must delete or hand over
+// the organisation before deleting their account). A journey blocks deletion while it is active
+// and has not ended yet, so upcoming journeys count too. Same rule as tripExpiry and database.rules.json.
 
 // Same test as tripExpiry in participantAccessService (kept here so this file loads without Firebase).
 const isActive = (trip, now) => trip && trip.status === "active" && Number.isFinite(trip.end_date) && trip.end_date > now;

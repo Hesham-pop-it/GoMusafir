@@ -110,7 +110,12 @@ function createDeletionService({
   // ── Account: request ────────────────────────────────────────────────────────
   async function requestAccountDeletion({ uid, claimOrgId = null, authTime, ip = null }) {
     const existing = await val(`account_deletions/${uid}`);
-    if (existing) return { success: true, purge_after: existing.purge_after, already_requested: true };
+    if (existing) {
+      // A retry after a half-failed request finishes the deactivation (both calls are idempotent).
+      await auth.updateUser(uid, { disabled: true });
+      await revokeSessions(uid);
+      return { success: true, purge_after: existing.purge_after, already_requested: true };
+    }
 
     await requireRecentAuth(uid, authTime);
 
@@ -162,8 +167,20 @@ function createDeletionService({
     const entry = await val(`account_deletions/${uid}`);
     if (!entry || !sameHash(entry.token_hash, sha256(token)) || now() > entry.purge_after) throw invalidLink();
 
-    await auth.updateUser(uid, { disabled: false });
+    // The queue entry goes first: if re-enabling then fails, the account stays disabled and out of
+    // the queue, never enabled and still queued for the purge.
     await db.ref(`account_deletions/${uid}`).remove();
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await auth.updateUser(uid, { disabled: false });
+        break;
+      } catch (e) {
+        if (attempt >= 3) {
+          await audit("ACCOUNT_DELETE_CANCEL_ENABLE_FAILED", { uid, by: uid, ip, extra: { message: e.message } });
+          throw e;
+        }
+      }
+    }
     await audit("ACCOUNT_DELETE_CANCELLED", { uid, by: uid, ip });
     const email = await emailOf(uid);
     if (email) {
@@ -196,6 +213,16 @@ function createDeletionService({
     if (owned.length) {
       await audit("ACCOUNT_PURGE_BLOCKED", { uid, orgId: owned[0], by: actor, extra: { reason: "owns-organization" } });
       return { uid, status: "blocked" };
+    }
+    // Only a deactivated account is wiped: an enabled one in the queue means a cancel half-finished.
+    try {
+      const rec = await auth.getUser(uid);
+      if (rec.disabled !== true) {
+        await audit("ACCOUNT_PURGE_SKIPPED", { uid, by: actor, extra: { reason: "not-disabled" } });
+        return { uid, status: "not-disabled" };
+      }
+    } catch (e) {
+      if (e.code !== "auth/user-not-found") throw e;
     }
     const orgIds = await organizationsOf(uid, entry.org_id);
     await cleanup.removeUserCompletely(uid, { staffOrgId: entry.org_id });
@@ -245,7 +272,12 @@ function createDeletionService({
       try {
         const out = await purgeAccount(uid);
         if (out.status === "purged") result.purged.push(uid);
-        else if (out.status === "blocked") result.blocked.push(uid);
+        else if (out.status === "blocked" || out.status === "not-disabled") {
+          if (out.status === "blocked") result.blocked.push(uid);
+          // Push the entry back a day so it does not stay due and starve the real purges.
+          await db.ref(`account_deletions/${uid}/purge_after`).set(now() + DAY);
+          console.log("Account purge postponed", { uid, status: out.status });
+        }
       } catch (e) {
         console.error("Account purge failed", { uid, message: e.message });
         result.failed.push(uid);
@@ -319,7 +351,7 @@ function createDeletionService({
       by = uid;
     } else {
       if (typeof token !== "string" || token.length < 32 || !sameHash(queue.token_hash, sha256(token))) throw invalidLink();
-      by = meta.deleted_by || null;
+      by = queue.deleted_by || null;
     }
     await cleanup.restoreOrganization(orgId);
     await audit("ORG_RESTORED", { uid: by, orgId, by, ip, extra: { via: uid ? "app" : "link" } });
