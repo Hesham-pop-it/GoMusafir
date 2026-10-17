@@ -13,6 +13,7 @@ import {
     ScrollView,
     Dimensions,
     ActivityIndicator,
+    AppState,
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
@@ -26,6 +27,7 @@ import ParticipantDetailsModal from '../../components/ParticipantDetailsModal';
 import { Typography } from '../../constants/Typography';
 import { auth, database, functions } from '../../config/firebase';
 import { ref, onValue, get } from 'firebase/database';
+import { watchPath } from '../../services/sharedListeners';
 import { httpsCallable } from 'firebase/functions';
 import { useLanguage } from '../../context/LanguageContext';
 import ChatEncryption from '../../utils/chatEncryption';
@@ -351,13 +353,46 @@ const ParticipantsScreen = ({ navigation }) => {
                 // Get Staff list to filter them out later
                 // Admin account should not be shown in participants
                 const staffSnap = await get(ref(database, `orgs/${orgId}/staff`));
-                const staffList = staffSnap.exists() ? staffSnap.val() : {};
+                let staffList = staffSnap.exists() ? staffSnap.val() : {};
 
-                // Listen to Org's Trips
+                // The list is built from the trips, their participants and the staff
+                // list. It is rebuilt when one of those changes, not on a timer.
                 const tripsRef = ref(database, `orgs/${orgId}/trips`);
-                const unsubscribeTrips = onValue(tripsRef, async (snapshot) => {
-                    if (snapshot.exists()) {
-                        const tripsData = snapshot.val();
+                let latestTrips = null, building = false, again = false, closed = false, buildTimer = null;
+                const participantWatches = new Map();
+                const scheduleBuild = () => {
+                    clearTimeout(buildTimer);
+                    buildTimer = setTimeout(build, 300);
+                };
+                const build = async () => {
+                    if (closed) return;
+                    if (building) { again = true; return; }
+                    building = true;
+                    try { await buildList(latestTrips); }
+                    finally { building = false; if (again) { again = false; scheduleBuild(); } }
+                };
+                // Listen to each trip's participant ids; the first value is the build already running.
+                const syncParticipantWatches = (tripIds) => {
+                    for (const [tripId, stop] of participantWatches) {
+                        if (!tripIds.includes(tripId)) { stop(); participantWatches.delete(tripId); }
+                    }
+                    for (const tripId of tripIds) {
+                        if (participantWatches.has(tripId)) continue;
+                        let first = true;
+                        participantWatches.set(tripId, watchPath(`trips_participants/${tripId}`, () => {
+                            if (first) { first = false; return; }
+                            scheduleBuild();
+                        }, () => {}));
+                    }
+                };
+                let firstStaff = true;
+                const stopStaffWatch = watchPath(`orgs/${orgId}/staff`, (value) => {
+                    if (firstStaff) { firstStaff = false; return; }
+                    staffList = value || {};
+                    scheduleBuild();
+                }, () => {});
+                const buildList = async (tripsData) => {
+                    if (tripsData) {
                         const participantsMap = new Map();
                         const tripIds = Object.keys(tripsData);
 
@@ -504,11 +539,23 @@ const ParticipantsScreen = ({ navigation }) => {
                         setAllParticipants([]);
                         setIsLoading(false);
                     }
+                };
+                const unsubscribeTrips = onValue(tripsRef, (snapshot) => {
+                    latestTrips = snapshot.exists() ? snapshot.val() : null;
+                    syncParticipantWatches(Object.keys(latestTrips || {}));
+                    build();
                 }, (error) => {
                     setIsLoading(false);
                 });
 
-                return () => unsubscribeTrips();
+                return () => {
+                    closed = true;
+                    clearTimeout(buildTimer);
+                    unsubscribeTrips();
+                    stopStaffWatch();
+                    participantWatches.forEach(stop => stop());
+                    participantWatches.clear();
+                };
             } catch (err) {
                 setIsLoading(false);
             }
@@ -526,8 +573,9 @@ const ParticipantsScreen = ({ navigation }) => {
             } finally { refreshing = false; }
         };
         refresh();
-        const timer = setInterval(refresh, 4000);
-        return () => { disposed = true; clearInterval(timer); stop?.(); };
+        // No timer: rebuilds follow the listeners above; coming back to the app rebuilds once.
+        const appState = AppState.addEventListener('change', state => { if (state === 'active') refresh(); });
+        return () => { disposed = true; appState.remove(); stop?.(); };
     }, []);
 
 

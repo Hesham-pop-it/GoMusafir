@@ -46,6 +46,7 @@ function fixture() {
       if (name === 'firebase-functions/v2/https') return { HttpsError };
       if (name === 'livekit-server-sdk') return { TrackSource: { MICROPHONE: 2 } };
       if (name === '../admin') return { db };
+      if (name === './comparableValue') return require('../services/comparableValue');
       if (name === './guardedTransaction') return require('../services/guardedTransaction');
       if (name === './tripVoiceService') return { roomService: () => service, STAFF_ROLES: ['admin', 'co-host', 'manager'] };
       throw new Error(name);

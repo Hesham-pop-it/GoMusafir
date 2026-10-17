@@ -27,6 +27,7 @@ function fixture() {
     module: accessModule, require: name => {
       if (name === '../admin') return adminModule;
       if (name === './guardedTransaction') return {};
+      if (name === './comparableValue') return require('../services/comparableValue');
       if (name === 'firebase-functions/v2/https') return { HttpsError };
       throw Error(name);
     },

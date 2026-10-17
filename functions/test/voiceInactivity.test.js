@@ -87,6 +87,7 @@ function fixture() {
         accessRef: () => ({ get: async () => snapshot({ session: { id: 'session', roomName: 'voice-room', roomSid: 'room', status: 'active' } }) }),
         stopSession: async () => { deleted++; rooms = []; store['trips_active/o/t/voice_channel/isChannelStarted'] = false; },
       };
+      if (name === './comparableValue') return require('../services/comparableValue');
       if (name.includes('guardedTransaction')) return require('../services/guardedTransaction');
       if (name.includes('voiceInactivityState')) return require('../services/voiceInactivityState');
       throw new Error(name);

@@ -72,3 +72,12 @@ test('a stale pre-join access snapshot cannot replace the confirmed join grant',
   f.update({expires_at:0,revoked_before:51,version:4});
   assert.ok(f.denied()>0);f.stop();
 });
+test('access checks are listener driven, with no polling timer', () => {
+  const root = path.join(__dirname, '../../src');
+  for (const file of ['utils/participantAccess.js', 'hooks/useTripFeatureAccess.js']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.doesNotMatch(text, /setInterval\([^)]*refresh/, file);
+    assert.doesNotMatch(text, /\b30000\b/, file);
+  }
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'hooks/useTripFeatureAccess.js'), 'utf8'), /serverNow/);
+});

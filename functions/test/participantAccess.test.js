@@ -38,6 +38,7 @@ function fixture(overrides = {}) {
   class HttpsError extends Error { constructor(code, message) { super(message);this.code = code; } }
   const sandbox = { module: { exports: {} }, require: name => {
     if (name === '../admin') return adminMock;
+    if (name === './comparableValue') return require('../services/comparableValue');
     if (name === './guardedTransaction') return require('../services/guardedTransaction');
     if (name === 'firebase-functions/v2/https') return { HttpsError };
     throw new Error(`Unexpected import ${name}`);
@@ -199,4 +200,14 @@ test('admin revocation never rolls back a newer cutoff or drops staff entitlemen
   assert.equal(f.data.app_access.p.revoked_before, 9999999999);
   assert.equal(f.data.app_access.p.staff, true);
   assert.equal(f.data.app_access.p.version, 11);
+});
+test('an unchanged refresh does not rewrite the access record or bump its version', async () => {
+  const f = fixture();
+  await f.api.refreshAccess('p');
+  const first = JSON.stringify(f.data.app_access.p);
+  const again = await f.api.refreshAccess('p');
+  assert.equal(JSON.stringify(f.data.app_access.p), first);
+  assert.equal(again.version, JSON.parse(first).version);
+  f.data.orgs.o.trips.t.end_date += 1000;
+  assert.equal((await f.api.refreshAccess('p')).version, again.version + 1);
 });

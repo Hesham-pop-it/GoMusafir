@@ -9,6 +9,14 @@ const roomService = () => new RoomServiceClient((process.env.LIVEKIT_URL || '').
   process.env.LIVEKIT_API_KEY, process.env.LIVEKIT_API_SECRET, { requestTimeout: 8 });
 
 const { guardedTransaction } = require('./guardedTransaction');
+const { canonical, stored } = require('./comparableValue');
+
+function unchangedBesidesClock(previous, next) {
+  if (!previous || !next) return false;
+  const { serverNow, ...before } = previous;
+  const { serverNow: _now, ...after } = next;
+  return canonical(stored(before)) === canonical(stored(after));
+}
 
 async function updateState(orgId, tripId, change = state => state) {
   const trip = (await db.ref(`orgs/${orgId}/trips/${tripId}`).get()).val();
@@ -18,7 +26,9 @@ async function updateState(orgId, tripId, change = state => state) {
   // The guard also safely propagates errors from asynchronous SDK retries.
   const result = await guardedTransaction(accessRef(orgId, tripId), previous => {
     const now = Date.now();
-    return change(settle(previous, trip, now), now);
+    const next = change(settle(previous, trip, now), now);
+    // Phones listen to this node: skip the write when only the clock moved.
+    return unchangedBesidesClock(previous, next) ? previous : next;
   });
   return result.snapshot.val();
 }
