@@ -408,6 +408,9 @@
       }
     },
     "invites": {
+      ".indexOn": [
+        "expires_at"
+      ],
       "$inviteCode": {
         ".read": false
       }
