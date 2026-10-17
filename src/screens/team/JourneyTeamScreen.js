@@ -14,7 +14,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import Svg, { Path } from 'react-native-svg';
 import { auth, database, functions } from '../../config/firebase';
-import { ref, onValue, get } from 'firebase/database';
+import { ref, get } from 'firebase/database';
+import { watchPath } from '../../services/sharedListeners';
 import { httpsCallable } from 'firebase/functions';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
@@ -49,24 +50,23 @@ const JourneyTeamScreen = () => {
         const myUid = currentUser.uid;
 
         // 1. Get orgId
-        const orgRef = ref(database, `users/${myUid}/staff_org_id`);
-        const unsubscribeUser = onValue(orgRef, (snap) => {
-            const orgId = snap.val();
+        let unsubscribeStaff = null;
+        const unsubscribeUser = watchPath(`users/${myUid}/staff_org_id`, (orgId) => {
+            if (unsubscribeStaff) { unsubscribeStaff(); unsubscribeStaff = null; }
             if (!orgId) {
                 setIsLoading(false);
                 return;
             }
 
             // 2. Fetch staff list block
-            const staffRef = ref(database, `orgs/${orgId}/staff`);
-            onValue(staffRef, async (staffSnap) => {
-                if (!staffSnap.exists()) {
+            unsubscribeStaff = watchPath(`orgs/${orgId}/staff`, async (staffList) => {
+                if (!staffList) {
                     setTeam([]);
                     setIsLoading(false);
                     return;
                 }
 
-                const staffList = staffSnap.val(); // { uid: "manager", uid2: "co-host" }
+                // staffList: { uid: "manager", uid2: "co-host" }
                 
                 // Track current user's role
                 const myRole = staffList[myUid] || 'none';
@@ -124,7 +124,7 @@ const JourneyTeamScreen = () => {
             });
         });
 
-        return () => unsubscribeUser();
+        return () => { unsubscribeUser(); if (unsubscribeStaff) unsubscribeStaff(); };
     }, []);
 
     const toggleDeleteMode = () => {
