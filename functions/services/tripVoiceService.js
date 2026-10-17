@@ -128,6 +128,8 @@ async function finishSession(orgId, tripId, session) {
       endReason: session.endReason, endRecipientUid: session.endReason === 'alone_timeout' ? session.soloUid : null, endedSessionId: session.id, sessionRequestedAt: session.requestedAt,
       lastUpdatedBy: 'system' };
   });
+  // Per-person presence written by phones lives beside the voice node.
+  await db.ref(`trips_active/${orgId}/${tripId}/voice_presence`).set(null);
   await db.ref(`orgs/${orgId}/trips/${tripId}/voice_state`).transaction(voice => {
     if ((voice?.sessionRequestedAt || 0) > session.requestedAt) return;
     return { ...voice, is_active: false, endedSessionId: session.id, sessionRequestedAt: session.requestedAt };

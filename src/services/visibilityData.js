@@ -29,7 +29,7 @@ function resolve(target, tripId) {
     if (path.startsWith('users/')) return { path, tripId, section: tripId ? 'directory' : 'account' };
     const parts = path.split('/');
     if (parts[0] !== 'trips_active') return null;
-    const section = { locations: 'directory', location_permissions: 'directory', chat: 'chat', voice_channel: 'voice', notifications: 'notifications' }[parts[3]];
+    const section = { locations: 'directory', location_permissions: 'directory', chat: 'chat', notifications: 'notifications' }[parts[3]];
     return section ? { path, tripId: parts[2], section } : null;
 }
 function select(data, request) {
@@ -134,21 +134,20 @@ function startForegroundPolling(task, intervalMs = 4000, firstDelayMs = 0) {
     stop.setInterval = ms => { if (ms === intervalMs) return; intervalMs = ms; stop.now(); };
     return stop;
 }
-// Chat, voice and notifications are fetched when their server-written signal
+// Chat and notifications are fetched when their server-written signal
 // moves, when the directory changes (names follow privacy choices), and as a
 // slow fallback in case a signal is missed.
 const SIGNAL_FALLBACK_MS = 30000;
-// Voice presence can move several times a second; one fetch per gap is enough.
+// Signals can move several times a second; one fetch per gap is enough.
 const SIGNAL_GAP_MS = 1500;
 // The first fetch waits this long for the signal's first value.
 const SIGNAL_FIRST_WAIT_MS = 1000;
-const SIGNALLED = ['chat', 'voice', 'notifications', 'account'];
+const SIGNALLED = ['chat', 'notifications', 'account'];
 function signalPath(request, uid) {
     if (request.section === 'account') return `account_signal/${uid}`;
     const [, orgId, tripId] = request.path.split('/');
     const root = `trips_active/${orgId}/${tripId}`;
     if (request.section === 'chat') return `${root}/chat_signal`;
-    if (request.section === 'voice') return `${root}/voice_signal`;
     return `${root}/notification_signal/${uid}`;
 }
 // The first value also triggers a fetch: the first fetch waits for it, so no
@@ -379,6 +378,10 @@ export function onVisibleValue(target, tripId, callback, onError = () => {}) {
 export function offVisible(target) {
     for (const stop of [...(listeners.get(pathOf(target)) || [])]) stop();
 }
+// One person's directory entry, for lookups that follow privacy choices (for
+// example the name of whoever is speaking). Returns the stop function.
+export const watchDirectoryUser = tripId => (uid, callback) =>
+    onVisibleValue(ref(database, `users/${uid}`), tripId, snapshot => callback(snapshot.val()), () => callback(null));
 export const requestParticipantLocation = (tripId, targetUid) => httpsCallable(functions, 'requestParticipantLocation')({ tripId, targetUid });
 export const respondToLocationRequest = (tripId, notificationId, accept) => httpsCallable(functions, 'respondToLocationRequest')({ tripId, notificationId, accept });
 export const resolveSos = (tripId, notificationId) => httpsCallable(functions, 'resolveSos')({ tripId, notificationId });

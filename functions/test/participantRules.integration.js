@@ -48,6 +48,16 @@ async function main() {
   await deny(`users/${uid}/joined_trips/fake`, 'PUT', { org_id: 'o' });
   await deny(`app_access/${uid}/expires_at`, 'PUT', Date.now() + 999999);
   await deny('trips_active/o/other/voice_presence/' + uid, 'PUT', true);
+  // Voice status: the id and flag of the speaker and the end/mute fields are readable; the speaker record, with any name in it, is not.
+  await owner('trips_active/o/t/voice_channel', { isAllMuted: false, endReason: 'x', activeSpeaker: { uid: 'other', name: 'Hidden Name', speaking: true } });
+  await allow('trips_active/o/t/voice_channel/activeSpeaker/uid', 'GET');
+  await allow('trips_active/o/t/voice_channel/activeSpeaker/speaking', 'GET');
+  await allow('trips_active/o/t/voice_channel/isAllMuted', 'GET');
+  await deny('trips_active/o/t/voice_channel/activeSpeaker', 'GET');
+  await deny('trips_active/o/t/voice_channel/activeSpeaker/name', 'GET');
+  await deny('trips_active/o/t/voice_channel', 'GET');
+  await allow(`trips_active/o/t/voice_app_presence/${uid}`, 'PUT', true);
+  await deny('trips_active/o/t/voice_app_presence/other', 'PUT', true);
   await deny('trips_active/o/other/notifications/someone', 'PUT', { title: 'no' });
   // Raw PII and historical metadata must not bypass the server-filtered views.
   await owner('users/other', { profile: { firstName: 'Hidden', email: 'private@example.test' }, full_name: 'Hidden Name' });

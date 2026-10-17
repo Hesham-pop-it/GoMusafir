@@ -485,10 +485,12 @@ test('a participant leave event does not immediately end a room with a connectin
 test('admin departure closes the room even while participants and another host remain', async () => {
   const f = fixture(); await f.reserve(); await f.join();
   const session = f.state().session;
+  f.write('trips_active/o/t/voice_presence', { host: true, participant: true });
   f.rooms.get(session.roomName).participants = [{ identity: 'participant' }, { identity: 'other' }];
   await f.service.handleRoomEvent({ event: 'participant_left', createdAt: MAY / 1000,
     room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } });
   assert.equal(f.state().session, null);
+  assert.equal(f.read('trips_active/o/t/voice_presence'), null);
   assert.ok(f.deleted.includes(session.roomName));
   assert.equal(f.read('trips_active/o/t/voice_channel/endReason'), 'admin_left');
   assert.equal(f.read('trips_active/o/t/voice_channel/presence'), null);

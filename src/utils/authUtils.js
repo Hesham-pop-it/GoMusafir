@@ -32,6 +32,8 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
             // 1. Clear presence for the explicitly passed trip context
             if (tripId && orgId) {
                 cleanupPromises.push(
+                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence`), { [uid]: null }).catch(() => {}),
+                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_presence`), { [uid]: null }).catch(() => {}),
                     update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`), { [uid]: null }).catch(() => {}),
                     update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`), { [uid]: null }).catch(() => {}),
                     update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/active_hosts`), { [uid]: null }).catch(() => {})
@@ -47,6 +49,8 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
                     const currentOrgId = orgSnap.val();
                     if (currentOrgId) {
                         cleanupPromises.push(
+                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence`), { [uid]: null }).catch(() => {}),
+                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), { [uid]: null }).catch(() => {}),
                             update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence`), { [uid]: null }).catch(() => {}),
                             update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence`), { [uid]: null }).catch(() => {}),
                             update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/active_hosts`), { [uid]: null }).catch(() => {})

@@ -25,7 +25,7 @@ function fixture(){
     if(!state.views||state.deny?.has(target.path)){onError(Error('permission_denied'));return ()=>{};}
     state.listens.set(target.path,{callback,onError});return ()=>state.listens.delete(target.path);
    }
-   if(!/\/(chat_signal|voice_signal|notification_signal\/[^/]+)$|^account_signal\/[^/]+$/.test(target.path||''))throw Error('raw subscription not allowed');
+   if(!/\/(chat_signal|notification_signal\/[^/]+)$|^account_signal\/[^/]+$/.test(target.path||''))throw Error('raw subscription not allowed');
    state.signals.set(target.path,callback);state.signalErrors.set(target.path,onError);return ()=>state.signals.delete(target.path);
   },
   setTimeout:(fn,ms)=>{const item={fn,ms};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
@@ -196,24 +196,24 @@ test('a screen joining a running chat poll gets data at once',async()=>{
  await f.tick();assert.equal(second.length,1);assert.equal(first.length,1);
  a();b();
 });
-test('voice and own notifications follow their signals with the same slow fallback',async()=>{
+test('chat and own notifications follow their signals with the same slow fallback',async()=>{
  const f=fixture();
- const voice=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
+ const chat=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',()=>{});
  const notes=f.api.onVisibleValue(f.ref('trips_active/o/t/notifications/a'),'t',()=>{});
- assert.deepEqual([...f.state.signals.keys()].sort(),['trips_active/o/t/notification_signal/a','trips_active/o/t/voice_signal']);
+ assert.deepEqual([...f.state.signals.keys()].sort(),['trips_active/o/t/chat_signal','trips_active/o/t/notification_signal/a']);
  assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===1000).length,2);
- f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>null});
+ f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>null});
  f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>null});
  await f.run(0);await f.run(0);
  assert.equal(f.state.calls.length,2);
  assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===30000).length,2);
  const sections=()=>f.state.calls.map(call=>call.params.section);
  const soon=async()=>{const item=f.state.queue.find(item=>!item.cancelled&&item.ms<30000);f.state.queue.splice(f.state.queue.indexOf(item),1);await item.fn();};
- f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>'e1'});
- await soon();assert.equal(sections().at(-1),'voice');
+ f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>'e1'});
+ await soon();assert.equal(sections().at(-1),'chat');
  f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>'e2'});
  await soon();assert.equal(sections().at(-1),'notifications');
- voice();notes();assert.equal(f.state.signals.size,0);
+ chat();notes();assert.equal(f.state.signals.size,0);
 });
 test('the first fetch waits for the signal and a late first value fetches again',async()=>{
  const f=fixture();
@@ -225,8 +225,8 @@ test('the first fetch waits for the signal and a late first value fetches again'
 });
 test('a refused signal listener falls back to the four second poll',async()=>{
  const f=fixture();
- const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
- f.state.signalErrors.get('trips_active/o/t/voice_signal')(Error('permission_denied'));
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',()=>{});
+ f.state.signalErrors.get('trips_active/o/t/chat_signal')(Error('permission_denied'));
  await f.run(0);await f.run(4000);
  assert.equal(f.state.calls.length,2);
  assert.ok(f.state.queue.some(item=>!item.cancelled&&item.ms===4000));
@@ -234,8 +234,8 @@ test('a refused signal listener falls back to the four second poll',async()=>{
 });
 test('signal bursts fetch at most once per gap',async()=>{
  const f=fixture();
- const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
- const signal=f.state.signals.get('trips_active/o/t/voice_signal');
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',()=>{});
+ const signal=f.state.signals.get('trips_active/o/t/chat_signal');
  signal({val:()=>null});await f.run(0);
  for(const id of ['e1','e2','e3'])signal({val:()=>id});
  const pending=f.state.queue.filter(item=>!item.cancelled&&item.ms<30000);
@@ -318,4 +318,9 @@ test('one-shot profile reads use the person\'s view entry instead of the callabl
  f.state.viewEntries={'trip_view/t/member/b':entry('Bee',false)};
  const snap=await f.api.getVisibleSnapshot(f.ref('users/b/full_name'),'t');
  assert.equal(snap.val(),'Bee');assert.equal(f.state.calls.length,0);
+});
+test('voice status is no longer polled: the voice node is read directly, not through the callable',async()=>{
+ const f=fixture();
+ await assert.rejects(f.api.getVisibleSnapshot(f.ref('trips_active/o/t/voice_channel/isAllMuted'),'t'),/raw read not allowed/);
+ assert.equal(f.state.calls.length,0);
 });
