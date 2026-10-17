@@ -172,7 +172,7 @@ test('chat refetches when the chat signal or the directory changes, with a slow 
  const signal=f.state.signals.get('trips_active/o/t/chat_signal');assert.ok(signal);
  signal({val:()=>'m1'});
  await f.tick();assert.equal(messages.length,1);
- const fallback=f.state.queue.find(item=>!item.cancelled);assert.equal(fallback.ms,30000);
+ const fallback=f.state.queue.find(item=>!item.cancelled);assert.equal(fallback.ms,600000);
  const calls=f.state.calls.length;
  signal({val:()=>'m1'});assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===0).length,0);
  f.state.data.m2={text:'two'};signal({val:()=>'m2'});
@@ -206,9 +206,9 @@ test('chat and own notifications follow their signals with the same slow fallbac
  f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>null});
  await f.run(0);await f.run(0);
  assert.equal(f.state.calls.length,2);
- assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===30000).length,2);
+ assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===600000).length,2);
  const sections=()=>f.state.calls.map(call=>call.params.section);
- const soon=async()=>{const item=f.state.queue.find(item=>!item.cancelled&&item.ms<30000);f.state.queue.splice(f.state.queue.indexOf(item),1);await item.fn();};
+ const soon=async()=>{const item=f.state.queue.find(item=>!item.cancelled&&item.ms<600000);f.state.queue.splice(f.state.queue.indexOf(item),1);await item.fn();};
  f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>'e1'});
  await soon();assert.equal(sections().at(-1),'chat');
  f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>'e2'});
@@ -238,7 +238,7 @@ test('signal bursts fetch at most once per gap',async()=>{
  const signal=f.state.signals.get('trips_active/o/t/chat_signal');
  signal({val:()=>null});await f.run(0);
  for(const id of ['e1','e2','e3'])signal({val:()=>id});
- const pending=f.state.queue.filter(item=>!item.cancelled&&item.ms<30000);
+ const pending=f.state.queue.filter(item=>!item.cancelled&&item.ms<600000);
  assert.equal(pending.length,1);assert.ok(pending[0].ms>1000&&pending[0].ms<=1500);
  stop();
 });

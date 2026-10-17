@@ -134,10 +134,11 @@ function startForegroundPolling(task, intervalMs = 4000, firstDelayMs = 0) {
     stop.setInterval = ms => { if (ms === intervalMs) return; intervalMs = ms; stop.now(); };
     return stop;
 }
-// Chat and notifications are fetched when their server-written signal
-// moves, when the directory changes (names follow privacy choices), and as a
-// slow fallback in case a signal is missed.
-const SIGNAL_FALLBACK_MS = 30000;
+// Notifications and the own account are fetched when their server-written
+// signal moves, when the directory changes (names follow privacy choices), on
+// return to the foreground, and as a slow safety net. A listener that is still
+// attached does not miss a value, and a refused one switches to the 4 s poll.
+const SIGNAL_FALLBACK_MS = 10 * 60 * 1000;
 // Signals can move several times a second; one fetch per gap is enough.
 const SIGNAL_GAP_MS = 1500;
 // The first fetch waits this long for the signal's first value.
