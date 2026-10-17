@@ -459,6 +459,10 @@
       ".read": false,
       ".write": false
     },
+    "trip_seat_counts": {
+      ".read": false,
+      ".write": false
+    },
     "trip_expirations": {
       ".indexOn": [
         "expires_at"

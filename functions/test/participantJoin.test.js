@@ -156,3 +156,13 @@ test('a failed follow-up write takes the new membership out again and frees the 
   assert.equal(f.read('trips_participants/t'),null);
   await f.join('b');assert.equal(f.read('orgs/o/trips/t/participants'),1);
 });
+
+test('invite preview uses the stored member count and counts organizers who are not members',async()=>{
+  const f=fixture({capacity:5});
+  f.data.orgs.o.staff={host:'admin',manager:'manager'};
+  f.data.trips_participants={t:{host:true,a:true}};
+  f.data.trip_seat_counts={t:2};
+  const preview=await f.metadata('new');
+  assert.equal(preview.filledSeats,3);
+  assert.equal(preview.isFull,false);
+});
