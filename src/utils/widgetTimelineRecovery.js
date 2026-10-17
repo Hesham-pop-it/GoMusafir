@@ -3,6 +3,16 @@
 export function createWidgetTimelineRecovery(widget) {
     let revision = 0;
     return {
+        clear() {
+            revision++;
+            widget.updateSnapshot({
+                activeChannelName: 'Sign in to GoMusafir',
+                isConnected: false, isChannelActive: false, isAdmin: false,
+                isMuted: true, isSpeaking: false, isGlobalMuteActive: false,
+                participantCount: 0, tripId: '', orgId: '',
+                activeChannelImageURL: '', activeSpeakerName: '', activeSpeakerAvatar: '',
+            });
+        },
         updateSnapshot(props) {
             revision++;
             widget.updateSnapshot(props);

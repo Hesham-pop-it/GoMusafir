@@ -1,3 +1,5 @@
+import { protectedSession } from '../services/protectedSessionService';
+import { journeyWidget } from '../services/journeyWidgetService';
 import { fetchAppAccess } from './participantAccess';
 import { finishEnrollment } from './enrollmentSession';
 import { signOut } from 'firebase/auth';
@@ -14,6 +16,8 @@ import { stopLiveLocationTracking } from '../services/locationTrackingService';
  * @param {{ tripId?: string, orgId?: string }} [activeTripContext]
  */
 export const safeSignOut = async (authInstance = auth, activeTripContext = {}) => {
+    protectedSession.invalidate();
+    try { journeyWidget.clear(); } catch (_) {}
     finishEnrollment();
     const logoutTimer = setTimeout(() => signOut(authInstance).catch(() => {}), 1500);
     try {

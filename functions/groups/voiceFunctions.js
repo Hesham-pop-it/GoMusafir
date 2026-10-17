@@ -27,8 +27,9 @@ exports.generateLiveKitToken = firebaseOnCall({ region: "europe-west1", timeoutS
   const ttl = Math.max(1, Math.min(60, Math.floor((state.tripEndsAt - Date.now()) / 1000),
     state.voiceAccess === 'PRE_TRIP_LIMITED' ? Math.ceil(state.preTripVoiceRemainingSeconds) : 60));
   const token = new AccessToken(apiKey, apiSecret, { identity: request.auth.uid,
-    name: request.auth.token.name || request.auth.token.email || request.auth.uid, ttl });
-  token.addGrant({ roomJoin: true, room: state.session.roomName, canPublish: true, canSubscribe: true });
+    name: "Participant", ttl });
+  token.addGrant({ roomJoin: true, room: state.session.roomName, canPublish: false, canSubscribe: true,
+    canPublishData: true, canUpdateOwnMetadata: false });
   return { token: await token.toJwt(), url: process.env.LIVEKIT_URL, featureAccess: state };
 });
 
@@ -62,6 +63,13 @@ exports.livekitWebhook = onRequest({ region: 'europe-west1' }, async (req, res) 
   }
   try {
     await handleRoomEvent(event);
+    if (['participant_joined', 'participant_left', 'track_published'].includes(event.event)) {
+      const mapping = (await db.ref(`voice_rooms/${event.room?.name}`).get()).val();
+      if (mapping) {
+        const { updateSpeakers } = require('../services/voiceSpeakerService');
+        await updateSpeakers(mapping.orgId, mapping.tripId, { roomName: event.room.name });
+      }
+    }
     return res.status(200).json({ received: true });
   } catch (error) {
     console.error('Voice webhook processing failed:', error);

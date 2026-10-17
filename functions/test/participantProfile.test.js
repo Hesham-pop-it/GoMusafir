@@ -15,6 +15,7 @@ function fixture({ config = { email: 'Show to everyone', phone: 'Show to everyon
         if (denied) throw new HttpsError('permission-denied', 'Denied');
         return { orgId: 'o', trip: { visibility_config: config }, staff };
       } };
+      if (name === './visibilityPolicy') return require('../services/visibilityPolicy');
       if (name.includes('kmsService')) return { decrypt: v => v.startsWith('encrypted:') ? v.slice(10) : v };
       throw Error(name);
     },

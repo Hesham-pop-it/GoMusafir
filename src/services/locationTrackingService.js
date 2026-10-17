@@ -22,6 +22,11 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
         console.log('[BackgroundLocation] TaskManager error:', error);
         return;
     }
+    // A queued native task may arrive after permission was downgraded in Settings.
+    if (!(await hasBackgroundLocationPermission())) {
+        await stopBackgroundLocationUpdates();
+        return;
+    }
     if (data) {
         const { locations } = data;
         if (locations && locations.length > 0) {
@@ -64,46 +69,9 @@ async function syncLocationToFirebase(coords) {
             return;
         }
 
-        // Check global config and personal visibility settings
-        try {
-            const globalVisSnap = await get(ref(database, `orgs/${orgId}/trips/${tripId}/visibility_config`));
-            let globalSetting = 'show to everyone';
-            if (globalVisSnap.exists()) {
-                const gVal = globalVisSnap.val();
-                const rawGlobal = gVal?.location ?? gVal?.liveLocation ?? gVal?.live_location ?? gVal?.Location;
-                if (rawGlobal) {
-                    const s = String(rawGlobal).trim().toLowerCase();
-                    if (s === 'do not show' || s === "don't show" || s === 'hide' || s === 'none' || s === 'hidden') {
-                        globalSetting = 'do not show';
-                    } else if (s === 'custom choice' || s === 'custom') {
-                        globalSetting = 'custom choice';
-                    } else if (s === 'show to organizer' || s === 'show to organizers' || s === 'organizers' || s === 'organizer') {
-                        globalSetting = 'show to organizer';
-                    } else {
-                        globalSetting = 'show to everyone';
-                    }
-                }
-            }
-
-            // If global setting is explicitly 'do not show', do not sync
-            if (globalSetting === 'do not show') {
-                return;
-            }
-
-            // If global setting is 'custom choice', respect participant's personal preference
-            if (globalSetting === 'custom choice') {
-                const userVisSnap = await get(ref(database, `users/${userId}/participant_visibility/${tripId}/location`));
-                if (userVisSnap.exists()) {
-                    const setting = String(userVisSnap.val()).trim().toLowerCase();
-                    if (setting === 'do not show' || setting === "don't show" || setting === 'hide' || setting === 'none' || setting === 'hidden') {
-                        return;
-                    }
-                }
-            }
-        } catch (e) {
-            // Proceed if non-fatal
-        }
-
+        // Coordinates are stored privately. The server applies field visibility
+        // and accepted, expiring location grants before returning any coordinates.
+        // A hidden global setting must not prevent an explicitly accepted request.
         const locationRef = ref(database, `trips_active/${orgId}/${tripId}/locations/${userId}`);
         await set(locationRef, {
             lat: lat,
@@ -144,6 +112,63 @@ export async function requestLocationTrackingPermissions() {
     }
 }
 
+async function hasBackgroundLocationPermission() {
+    try {
+        const foreground = await Location.getForegroundPermissionsAsync();
+        const background = await Location.getBackgroundPermissionsAsync();
+        return foreground.status === 'granted' && background.status === 'granted';
+    } catch (error) {
+        console.log('[BackgroundLocation] Could not verify permission:', error);
+        return false;
+    }
+}
+
+async function stopBackgroundLocationUpdates() {
+    try {
+        if (await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK)) {
+            await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+        }
+    } catch (error) {
+        console.log('[BackgroundLocation] Error stopping background location updates:', error);
+    }
+}
+
+async function refreshBackgroundLocationTracking() {
+    // When In Use / Allow Once is foreground-only for GoMusafir. Do not rely on
+    // iOS allowing a background session with a mandatory blue indicator.
+    if (!(await hasBackgroundLocationPermission())) {
+        await stopBackgroundLocationUpdates();
+        return;
+    }
+    if (!currentTrackingTrip) return;
+
+    try {
+        // Reapply options to persisted tasks, including tasks from older builds.
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 4000,
+            distanceInterval: 5,
+            deferredUpdatesInterval: 4000,
+            deferredUpdatesDistance: 5,
+            // Apple's optional indicator for Always authorization only.
+            // Required system privacy indicators remain controlled by iOS.
+            showsBackgroundLocationIndicator: false,
+            pausesUpdatesAutomatically: false,
+            ...(Platform.OS === 'android' ? {
+                // Required foreground-service notification; keep it visible.
+                foregroundService: {
+                    notificationTitle: "GoMusafir Live Journey",
+                    notificationBody: "Sharing your live location with trip members",
+                    notificationColor: "#B99A4A",
+                    killServiceOnDestroy: false,
+                },
+            } : {}),
+        });
+    } catch (error) {
+        console.log('[BackgroundLocation] Could not start background location updates:', error);
+    }
+}
+
 /**
  * Starts continuous live location tracking (Foreground + Background Service).
  */
@@ -151,6 +176,12 @@ export async function startLiveLocationTracking(orgId, tripId) {
     if (!orgId || !tripId) return false;
     const userId = auth.currentUser?.uid;
     if (!userId) return false;
+
+    // Do not persist or start a tracking session after foreground denial.
+    if (!(await requestLocationTrackingPermissions())) {
+        await stopLiveLocationTracking();
+        return false;
+    }
 
     currentTrackingTrip = { orgId, tripId, userId };
 
@@ -162,38 +193,8 @@ export async function startLiveLocationTracking(orgId, tripId) {
         timestamp: Date.now()
     }));
 
-    // 1. Request permissions
-    await requestLocationTrackingPermissions();
-
-    // 2. Perform immediate high-accuracy location sync
+    await refreshBackgroundLocationTracking();
     await syncCurrentUserLocationNow();
-
-    // 3. Start Background Location Task
-    try {
-        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-
-        // Reapply iOS options to existing tasks so previously enabled indicators
-        // are disabled without stopping background location sharing.
-        if (!hasStarted || Platform.OS === 'ios') {
-            await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-                accuracy: Location.Accuracy.Balanced,
-                timeInterval: 4000, // Every 4 seconds
-                distanceInterval: 5, // Every 5 meters
-                deferredUpdatesInterval: 4000,
-                deferredUpdatesDistance: 5,
-                showsBackgroundLocationIndicator: false,
-                pausesLocationUpdatesAutomatically: false,
-                foregroundService: {
-                    notificationTitle: "GoMusafir Live Journey",
-                    notificationBody: "Sharing your live location with trip members",
-                    notificationColor: "#B99A4A",
-                },
-            });
-            console.log('[BackgroundLocation] Background location updates started successfully');
-        }
-    } catch (err) {
-        console.log('[BackgroundLocation] Could not start background location updates:', err);
-    }
 
     // 4. Start foreground watcher for high responsiveness when app is open
     if (!foregroundWatcher) {
@@ -217,9 +218,20 @@ export async function startLiveLocationTracking(orgId, tripId) {
 
     // 5. Setup AppState listener to immediately refresh location when returning to foreground
     if (!appStateSubscription) {
-        appStateSubscription = AppState.addEventListener('change', (nextAppState) => {
-            if (nextAppState === 'active') {
-                syncCurrentUserLocationNow();
+        appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
+            if (nextAppState !== 'active' || !currentTrackingTrip) return;
+            try {
+                const foreground = await Location.getForegroundPermissionsAsync();
+                if (foreground.status !== 'granted') {
+                    await stopLiveLocationTracking();
+                    return;
+                }
+                // Settings may have granted Always or downgraded it to When In Use.
+                // Recheck without prompting again.
+                await refreshBackgroundLocationTracking();
+                await syncCurrentUserLocationNow();
+            } catch (error) {
+                console.log('[BackgroundLocation] Could not refresh tracking:', error);
             }
         });
     }
@@ -248,15 +260,7 @@ export async function stopLiveLocationTracking() {
         appStateSubscription = null;
     }
 
-    try {
-        const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-        if (hasStarted) {
-            await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-            console.log('[BackgroundLocation] Background location updates stopped');
-        }
-    } catch (e) {
-        console.log('[BackgroundLocation] Error stopping background location updates:', e);
-    }
+    await stopBackgroundLocationUpdates();
 }
 
 /**
@@ -264,6 +268,9 @@ export async function stopLiveLocationTracking() {
  */
 export async function syncCurrentUserLocationNow() {
     try {
+        const foreground = await Location.getForegroundPermissionsAsync();
+        if (foreground.status !== 'granted') return null;
+        if (AppState.currentState !== 'active' && !(await hasBackgroundLocationPermission())) return null;
         const loc = await Location.getCurrentPositionAsync({
             accuracy: Location.Accuracy.High,
         });

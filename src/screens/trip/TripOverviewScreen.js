@@ -1,3 +1,4 @@
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
 import React, { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -24,6 +25,7 @@ import Modal from '../../components/CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ref, onValue, get, update, remove, query, limitToLast, set, push, serverTimestamp, orderByChild, startAt, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 
 import { database, auth, functions } from '../../config/firebase';
 import { httpsCallable } from 'firebase/functions';
@@ -34,16 +36,22 @@ import Svg, { Path, G, Defs, ClipPath, Rect, Circle } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import GradientBorderButton from '../../components/GradientBorderButton';
 import { responsiveFontSize } from '../../utils/responsive';
 import ParticipantDetailModal from '../../components/trip/ParticipantDetailModal';
+import { subscribeInbox } from '../../services/messaging';
+import { openConversation } from '../../utils/openConversation';
+import { detailButtonFor, threadIdFor } from '../../utils/messagingRules';
 import { updatePrayerWidget } from '../../utils/widgetHelper';
 import { useVoice } from '../../context/VoiceContext';
-import { useTracks } from '@livekit/react-native';
+import { useTracks, useParticipants } from '@livekit/react-native';
+import { isVoiceMember } from '../../utils/voiceMembership';
+import { useLanguage } from '../../context/LanguageContext';
 import { Track, RoomEvent } from 'livekit-client';
 import SpeakerGlow from '../../components/SpeakerGlow';
+import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
 import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
@@ -141,6 +149,7 @@ const TripOverviewScreen = () => {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
     const route = useRoute();
+    const { t } = useLanguage();
     const { trip, tripId: passedTripId, orgId: passedOrgId, invitationCode: directCode, isAdmin: passedIsAdmin } = route.params || {};
 
     const invitationCode = directCode || trip?.invitationCode;
@@ -164,6 +173,7 @@ const TripOverviewScreen = () => {
     // New Participant Detail States
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
+
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
     const [deleteType, setDeleteType] = useState('this'); // 'this' or 'all'
     const [isDecrypting, setIsDecrypting] = useState(false);
@@ -181,8 +191,10 @@ const TripOverviewScreen = () => {
         isGlobalMuteActive: isAllMuted,
         isMuted,
         setIsMuted,
+        wantsToSpeak,
         loading: voiceLoading,
         stopping: voiceStopping,
+        adminConnectionPending,
         connect,
         disconnect,
         stopChannel,
@@ -202,6 +214,7 @@ const TripOverviewScreen = () => {
     const [participantsList, setParticipantsList] = useState([]);
     const [participantUids, setParticipantUids] = useState([]);
     const [staffData, setStaffData] = useState({});
+    const [messageInbox, setMessageInbox] = useState({});
     const [notificationsList, setNotificationsList] = useState([]);
     const [lastChatMessage, setLastChatMessage] = useState(null);
     const [liveLocations, setLiveLocations] = useState({});
@@ -218,6 +231,14 @@ const TripOverviewScreen = () => {
     const [voicePresence, setVoicePresence] = useState({});
     const [appPresence, setAppPresence] = useState({});
     const [isHoldToTalkActive, setIsHoldToTalkActive] = useState(false);
+    const holdToTalkRef = React.useRef(false);
+    useFocusEffect(React.useCallback(() => () => {
+        if (holdToTalkRef.current) {
+            holdToTalkRef.current = false;
+            setIsHoldToTalkActive(false);
+            setIsMuted(true);
+        }
+    }, [setIsMuted]));
     const [organizerId, setOrganizerId] = useState(null);
 
     useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
@@ -248,7 +269,19 @@ const TripOverviewScreen = () => {
 
     // Stable ID resolution to avoid effect re-runs on temporary nulls
     const tripId = passedTripId || trip?.id || trip?.tripId || trip?.trip_id || liveTripData?.id;
+    const visibilityRevision = useVisibilityRevision(tripId);
+    useEffect(() => {
+        setDetailVisible(false);
+        setSelectedParticipant(null);
+    }, [visibilityRevision]);
     const orgId = resolvedOrgId || passedOrgId || trip?.orgId || trip?.org_id || liveTripData?.orgId;
+
+    // My inbox rows decide whether a participant's message icon starts a request, opens a chat or reviews a request.
+    useEffect(() => {
+        const myUid = auth.currentUser?.uid;
+        if (!orgId || !tripId || !myUid) return;
+        return subscribeInbox(orgId, tripId, myUid, setMessageInbox);
+    }, [orgId, tripId]);
 
     useEffect(() => {
         if (!tripId || !orgId) return;
@@ -316,11 +349,13 @@ const TripOverviewScreen = () => {
             return;
         }
         setIsHoldToTalkActive(true);
+        holdToTalkRef.current = true;
         setIsMuted(false);
     };
 
     const handleHoldToTalkEnd = () => {
         setIsHoldToTalkActive(false);
+        holdToTalkRef.current = false;
         setIsMuted(true);
     };
 
@@ -366,7 +401,7 @@ const TripOverviewScreen = () => {
                     setIsAdmin(adminStatus);
 
                     // Fetch profile info for notifications
-                    get(ref(database, `users/${currentU.uid}`)).then(snap => {
+                    getVisibleSnapshot(ref(database, `users/${currentU.uid}`), null).then(snap => {
                         if (snap.exists()) {
                             const uData = snap.val();
                             const profile = uData.profile || {};
@@ -386,7 +421,7 @@ const TripOverviewScreen = () => {
 
                 // S22: If no trip info passed (app start), fetch current_trip from user profile (The Secure Store)
                 if (!activeTripId && myUid) {
-                    const userSnap = await get(ref(database, `users/${myUid}`));
+                    const userSnap = await getVisibleSnapshot(ref(database, `users/${myUid}`), null);
                     const userData = userSnap.val();
 
                     if (userData?.current_trip) {
@@ -403,7 +438,7 @@ const TripOverviewScreen = () => {
 
                 // S22: If orgId is missing, resolve it from staff profile or joined trips
                 if (!activeOrgId && myUid) {
-                    const userSnap = await get(ref(database, `users/${myUid}`));
+                    const userSnap = await getVisibleSnapshot(ref(database, `users/${myUid}`), null);
                     const userData = userSnap.val();
 
                     if (userData?.staff_org_id) {
@@ -574,6 +609,7 @@ const TripOverviewScreen = () => {
 
     // 1. Fetch Real Participants with Privacy Masking
     useEffect(() => {
+        let current = true;
         if (!tripId || combinedUids.length === 0) {
             setParticipantsList([]);
             setParticipantsCount(0);
@@ -594,11 +630,12 @@ const TripOverviewScreen = () => {
         });
 
         combinedUids.forEach((uid) => {
-            if (!activeUnsubsRef.current[uid]) {
+            if (!activeUnsubsRef.current[uid] || uid !== auth.currentUser?.uid) {
                 // Mark as subscribed immediately with a no-op so duplicate calls are blocked
                 activeUnsubsRef.current[uid] = () => { };
 
                 const buildAndSetParticipant = (userData) => {
+                    if (!current) return;
                     const rawProfile = userData.profile || {};
                     const photo = rawProfile.photoURL || rawProfile.photo_url || rawProfile.photo || rawProfile.profile_photo || rawProfile.image || userData.photo_url || userData.photo || userData.image;
                     const profile = {
@@ -612,7 +649,7 @@ const TripOverviewScreen = () => {
                     const latestOrganizerId = organizerIdRef.current;
                     const targetRole = latestStaff[uid];
                     const isTargetStaff = isStaffMember(uid, latestStaff, latestOrganizerId, targetRole);
-                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, latestStaff, latestOrganizerId, userRoleRef.current) || isAdminRef.current;
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, latestStaff, latestOrganizerId, userRoleRef.current);
 
                     const displayName = getParticipantDisplayName({
                         profile,
@@ -732,7 +769,7 @@ const TripOverviewScreen = () => {
                 if (isCurrentUser) {
                     // For own profile: use a live onValue listener so updates reflect immediately
                     const userRef = ref(database, `users/${uid}`);
-                    const unsub = onValue(userRef, (snap) => {
+                    const unsub = onVisibleValue(userRef, null, (snap) => {
                         buildAndSetParticipant(snap.val() || {});
                     }, () => {
                         // Permission denied — still show self with fallback
@@ -742,10 +779,10 @@ const TripOverviewScreen = () => {
                 } else {
                     // For other participants: fetch once via get() to eliminate 4x continuous WebSocket listeners per participant
                     Promise.all([
-                        get(ref(database, `users/${uid}/profile`)).catch(() => null),
-                        get(ref(database, `users/${uid}/full_name`)).catch(() => null),
-                        get(ref(database, `users/${uid}/photo_url`)).catch(() => null),
-                        get(ref(database, `users/${uid}/participant_visibility/${tripId}`)).catch(() => null),
+                        getVisibleSnapshot(ref(database, `users/${uid}/profile`), tripId).catch(() => null),
+                        getVisibleSnapshot(ref(database, `users/${uid}/full_name`), tripId).catch(() => null),
+                        getVisibleSnapshot(ref(database, `users/${uid}/photo_url`), tripId).catch(() => null),
+                        getVisibleSnapshot(ref(database, `users/${uid}/participant_visibility/${tripId}`), tripId).catch(() => null),
                     ]).then(([pSnap, nSnap, phSnap, vSnap]) => {
                         const latestProfile = pSnap?.val() || {};
                         const latestFullName = nSnap?.val() || null;
@@ -770,7 +807,12 @@ const TripOverviewScreen = () => {
                 }
             }
         });
-    }, [combinedUids, tripId]);
+        return () => {
+            current = false;
+            Object.values(activeUnsubsRef.current).forEach(unsubscribe => unsubscribe());
+            activeUnsubsRef.current = {};
+        };
+    }, [combinedUids, tripId, visibilityRevision]);
 
     // Update participant display info when visibility config or roles change
     useEffect(() => {
@@ -785,7 +827,7 @@ const TripOverviewScreen = () => {
 
                 const targetRole = currentStaff[p.id];
                 const isTargetStaff = isStaffMember(p.id, currentStaff, currentOrganizerId, targetRole);
-                const isViewerStaff = isStaffMember(auth.currentUser?.uid, currentStaff, currentOrganizerId, currentUserRole) || currentAdmin;
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, currentStaff, currentOrganizerId, currentUserRole);
 
                 const displayName = getParticipantDisplayName({
                     profile: p.rawProfile || {},
@@ -907,7 +949,7 @@ const TripOverviewScreen = () => {
         if (!tripId || !orgId) return;
 
         const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-        const unsubscribe = onValue(speakerRef, (snapshot) => {
+        const unsubscribe = onVisibleValue(speakerRef, tripId, (snapshot) => {
             if (snapshot.exists()) {
                 setActiveSpeakerData(snapshot.val());
             } else {
@@ -919,7 +961,7 @@ const TripOverviewScreen = () => {
     }, [tripId, orgId]);
 
     const handleToggleMute = async () => {
-        const nextState = !isMuted;
+        const nextState = wantsToSpeak || !isMuted;
 
         // If the room is globally muted by the admin, participants cannot unmute themselves
         const isStaff = userRole === 'admin' || userRole === 'co-host' || userRole === 'manager';
@@ -982,7 +1024,7 @@ const TripOverviewScreen = () => {
         if (!myUid || !orgId || !tripId) return;
 
         const notificationsRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}`);
-        const unsubscribe = onValue(notificationsRef, (snapshot) => {
+        const unsubscribe = onVisibleValue(notificationsRef, tripId, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 const list = Object.entries(data ?? {}).map(([id, val]) => {
@@ -1053,10 +1095,10 @@ const TripOverviewScreen = () => {
         if (!orgId || !tripId) return;
 
         const chatRef = query(ref(database, `trips_active/${orgId}/${tripId}/chat`), limitToLast(1));
-        const unsubscribe = onValue(chatRef, (snapshot) => {
+        const unsubscribe = onVisibleValue(chatRef, tripId, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val();
-                const lastKey = Object.keys(data ?? {})[0];
+                const lastKey = Object.keys(data ?? {}).sort((a, b) => (data[b].timestamp || 0) - (data[a].timestamp || 0))[0];
                 if (lastKey) {
                     const msg = data[lastKey];
 
@@ -1101,12 +1143,12 @@ const TripOverviewScreen = () => {
                 startAt(lastRead + 1)
             );
 
-            unsubscribeUnread = onValue(unreadQuery, (chatSnap) => {
+            unsubscribeUnread = onVisibleValue(unreadQuery, tripId, (chatSnap) => {
                 if (chatSnap.exists()) {
                     const data = chatSnap.val();
                     const messagesList = Object.values(data);
                     // Filter out own messages
-                    const unread = messagesList.filter(m => m.sender_id !== myUid).length;
+                    const unread = messagesList.filter(m => m.sender_id !== myUid && m.timestamp > lastRead).length;
                     setUnreadCount(unread);
                 } else {
                     setUnreadCount(0);
@@ -1125,7 +1167,7 @@ const TripOverviewScreen = () => {
         if (!orgId || !tripId) return;
 
         const locationsRef = ref(database, `trips_active/${orgId}/${tripId}/locations`);
-        const unsubscribe = onValue(locationsRef, (snapshot) => {
+        const unsubscribe = onVisibleValue(locationsRef, tripId, (snapshot) => {
             if (snapshot.exists()) {
                 setLiveLocations(snapshot.val());
             } else {
@@ -1191,7 +1233,7 @@ const TripOverviewScreen = () => {
             // Check if participant is still active and has visibility
             const pProfile = participantsList.find(p => p.id === uid);
             const isTargetStaff = isStaffMember(uid, staffData, organizerId);
-            const isViewerStaff = isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
+            const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
             const canSee = checkPIIVisibility({
                 field: 'location',
                 targetUid: uid,
@@ -1201,7 +1243,7 @@ const TripOverviewScreen = () => {
                 globalConfig: globalVisibilityConfig,
                 personalVisibility: pProfile?.visibility || {}
             });
-            if (!canSee) continue;
+            // Presence in liveLocations is the server-authorized location grant.
 
             const dist = Math.sqrt(
                 Math.pow(lat - userLocation.latitude, 2) +
@@ -1232,39 +1274,9 @@ const TripOverviewScreen = () => {
         if (!myUid || !orgId || !tripId || !notif?.id) return;
 
         try {
-            // 1. Grant permission if it's a location request
-            const requesterUid = notif.fromUid || notif.senderUid || notif.sender_id;
-            if (requesterUid) {
-                await set(ref(database, `trips_active/${orgId}/${tripId}/location_permissions/${myUid}/${requesterUid}`), true);
-
-                // Start location tracking for current user and sync immediately
-                startLiveLocationTracking(orgId, tripId);
-                syncCurrentUserLocationNow(orgId, tripId);
-
-                // Send confirmation notification to requester
-                const senderName = auth.currentUser?.displayName || 'Participant';
-                await set(ref(database, `trips_active/${orgId}/${tripId}/notifications/${requesterUid}/${Date.now()}`), {
-                    fromUid: myUid,
-                    senderUid: myUid,
-                    name: senderName,
-                    title: 'Location Request Accepted',
-                    message: `${senderName} is now sharing their live location with you.`,
-                    type: 'alert',
-                    timestamp: serverTimestamp(),
-                });
-            }
-
-            // 2. Mark as accepted for visual feedback
-            await update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`), {
-                status: 'accepted'
-            });
-
-            // 3. Remove after delay
-            setTimeout(async () => {
-                try {
-                    await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`));
-                } catch (e) { }
-            }, 2000);
+            await respondToLocationRequest(tripId, notif.id, true);
+            await startLiveLocationTracking(orgId, tripId);
+            await syncCurrentUserLocationNow();
         } catch (error) {
             console.log("Error accepting notification:", error);
         }
@@ -1275,17 +1287,7 @@ const TripOverviewScreen = () => {
         if (!myUid || !orgId || !tripId || !notif?.id) return;
 
         try {
-            // 1. Mark as declined for visual feedback
-            await update(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`), {
-                status: 'declined'
-            });
-
-            // 2. Remove after delay
-            setTimeout(async () => {
-                try {
-                    await remove(ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}/${notif.id}`));
-                } catch (e) { }
-            }, 1000);
+            await respondToLocationRequest(tripId, notif.id, false);
         } catch (error) {
             console.log("Error declining notification:", error);
         }
@@ -1308,6 +1310,38 @@ const TripOverviewScreen = () => {
             });
         } catch (error) {
         }
+    };
+
+    const messageTargetFor = (p) => ({
+        id: p.id,
+        name: p.name,
+        image: p.image,
+        isStaff: Boolean(isStaffMember(p.id, staffData, organizerId, p.status)),
+        nameVisible: Boolean(p.canSeeFirstName),
+    });
+    const viewerIsStaffForMessages = () => Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+
+    // Same rule as the detail modal: no button for staff to staff or a hidden name.
+    const hasMessageButton = (p) => {
+        const myUid = auth.currentUser?.uid;
+        if (!myUid) return false;
+        const target = messageTargetFor(p);
+        return detailButtonFor({
+            viewerIsStaff: viewerIsStaffForMessages(),
+            targetIsStaff: target.isStaff,
+            isSelf: p.id === myUid,
+            inboxRow: (messageInbox || {})[threadIdFor(myUid, p.id)],
+            nameVisible: target.nameVisible,
+        }) !== null;
+    };
+
+    const handleParticipantMessage = (p) => {
+        openConversation(navigation, tripData, {
+            viewerUid: auth.currentUser?.uid,
+            viewerIsStaff: viewerIsStaffForMessages(),
+            target: messageTargetFor(p),
+            inbox: messageInbox,
+        });
     };
 
     const handleParticipantPress = async (participant) => {
@@ -1370,7 +1404,7 @@ const TripOverviewScreen = () => {
 
                     const targetRole = staffDataRef.current?.[participant.id];
                     const isTargetStaff = isStaffMember(participant.id, staffDataRef.current, organizerIdRef.current, targetRole);
-                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffDataRef.current, organizerIdRef.current, userRoleRef.current) || isAdminRef.current;
+                    const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffDataRef.current, organizerIdRef.current, userRoleRef.current);
 
                     const updatedDisplayName = getParticipantDisplayName({
                         profile: { firstName: rawFirstName, lastName: rawLastName },
@@ -1523,14 +1557,19 @@ const TripOverviewScreen = () => {
     }, [speakingUids, contextSpeakingUids, activeSpeakerData, contextActiveSpeakerData, participantsList, currentUserFullName, currentUserPhoto, tripData]);
 
     const voiceTracks = useTracks([Track.Source.Microphone], { onlyRemote: false });
+    const liveVoiceParticipants = useParticipants();
+    const liveParticipantIds = new Set(liveVoiceParticipants.map(participant => participant.identity));
+    const connectedToThisTrip = isConnected && room?.state === 'connected' && activeTripId === tripId;
     const participants = sortedParticipants.map(p => {
-        const isInVoice = voicePresence[p.id] === true;
         const isCurrentUser = p.id === auth.currentUser?.uid;
+        const isInVoice = isVoiceMember({ uid: p.id, currentUid: auth.currentUser?.uid,
+            connected: isConnected, roomState: room?.state, activeTripId, tripId,
+            liveParticipantIds, presence: voicePresence, channelActive: isChannelStarted });
         const isOnline = appPresence[p.id] === true || (isCurrentUser && AppState.currentState === 'active');
-        const track = voiceTracks.find(t => t.participant.identity === p.id);
+        const track = connectedToThisTrip && isInVoice ? voiceTracks.find(t => t.participant.identity === p.id) : null;
         const speakerData = activeSpeakerData || contextActiveSpeakerData;
         const currentSpeakingUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
-        const isSpeaking = currentSpeakingUids.includes(p.id) || (speakerData && speakerData.uid === p.id && speakerData.speaking !== false);
+        const isSpeaking = isInVoice && (currentSpeakingUids.includes(p.id) || (speakerData && speakerData.uid === p.id && speakerData.speaking !== false));
         
         let voiceStatus = null;
         if (track) {
@@ -2110,6 +2149,8 @@ const TripOverviewScreen = () => {
                                     <>
                                         <TouchableOpacity
                                             onPress={handleToggleMute}
+                                            accessibilityState={{ busy: wantsToSpeak && isMuted, disabled: !isChannelStarted }}
+                                            accessibilityLabel={wantsToSpeak && isMuted ? 'Unmuting microphone. Tap to cancel.' : undefined}
                                             disabled={!isChannelStarted}
                                             style={[
                                                 styles.controlButtonOutline,
@@ -2127,7 +2168,7 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, isMuted ? { color: '#FFF', fontFamily: Typography.sans.semiBold } : { color: 'rgba(255, 255, 255, 0.6)' }]}>
-                                                {isMuted ? 'Unmute Myself' : 'Mute Myself'}
+                                                {wantsToSpeak && isMuted ? 'Unmuting...' : isMuted ? 'Unmute Myself' : 'Mute Myself'}
                                             </Text>
                                         </TouchableOpacity>
                                         <TouchableOpacity
@@ -2160,14 +2201,14 @@ const TripOverviewScreen = () => {
                                             onPress={handleToggleChannel}
                                             disabled={isChannelStarted === null || voiceLoading}
                                         >
-                                            {voiceStopping ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons
+                                            {voiceStopping || voiceLoading || isChannelStarted === null || adminConnectionPending ? <ActivityIndicator color="#FFF" size="small" style={{ marginRight: 8 }} /> : <Ionicons
                                                 name={isChannelStarted ? "stop-circle-outline" : "play-circle-outline"}
                                                 size={20}
                                                 color="#FFF"
                                                 style={{ marginRight: 8 }}
                                             />}
                                             <Text style={[styles.controlText, { color: "#FFF" }]}>
-                                                {voiceStopping ? 'Stopping…' : isChannelStarted === null || voiceLoading ? 'Checking Channel…' : isChannelStarted ? 'Stop Channel' : 'Start Channel'}
+                                                {voiceStopping ? 'Stopping…' : adminConnectionPending ? 'Checking admin connection…' : isChannelStarted === null || voiceLoading ? 'Checking Channel…' : isChannelStarted ? 'Stop Channel' : 'Start Channel'}
                                             </Text>
                                         </TouchableOpacity>
 
@@ -2192,13 +2233,16 @@ const TripOverviewScreen = () => {
                                                 )}
                                             </View>
                                             <Text style={[styles.controlText, { fontSize: responsiveFontSize(16) }, isHoldToTalkActive && { color: '#FFFFFF' }]}>
-                                                {isAllMuted ? 'Muted by Organizer' : 'Hold to Talk'}
+                                                {isAllMuted ? 'Muted by Organizer' : wantsToSpeak && isMuted ? 'Waiting to Speak' : 'Hold to Talk'}
                                             </Text>
                                         </TouchableOpacity>
                                     </View>
                                 )}
                             </View>
                         </View>
+
+                        {isConnected && activeTripId === tripId && <VoiceSpeakerQueue
+                            profiles={Object.fromEntries(participantsList.map(p => [p.id, { name: p.name }]))} />}
 
                         {/* Map and Chat Row */}
                         <View style={styles.rowContainer}>
@@ -2349,7 +2393,7 @@ const TripOverviewScreen = () => {
                             <View style={styles.notificationListContainer}>
                                 {(() => {
                                     const locationRequests = notificationsList.filter(item =>
-                                        item.type === 'location_request' &&
+                                        item.type === 'location_request' && item.expiresAt > Date.now() &&
                                         item.status !== 'declined' &&
                                         item.status !== 'dismissed' &&
                                         item.status !== 'inactive'
@@ -2475,6 +2519,15 @@ const TripOverviewScreen = () => {
                                                         {p.voiceStatus ? p.voiceStatus : p.status}
                                                     </Text>
                                                 </View>
+                                                {hasMessageButton(p) && (
+                                                    <TouchableOpacity
+                                                        style={styles.participantMessageButton}
+                                                        onPress={() => handleParticipantMessage(p)}
+                                                        accessibilityLabel={t('msg_message')}
+                                                    >
+                                                        <Ionicons name="chatbubble-ellipses-outline" size={20} color="#B99A4A" />
+                                                    </TouchableOpacity>
+                                                )}
                                             </TouchableOpacity>
                                         ))
                                     ) : (
@@ -2637,6 +2690,8 @@ const TripOverviewScreen = () => {
                 staffData={staffData}
                 organizerId={organizerId}
                 userRole={userRole}
+                trip={tripData}
+                inbox={messageInbox}
             />
 
             {/* Delete Confirmation Modal */}
@@ -3191,6 +3246,15 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 16,
+    },
+    participantMessageButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        backgroundColor: '#2F3337',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginLeft: 8,
     },
     participantsScrollContainer: {
         maxHeight: 210,

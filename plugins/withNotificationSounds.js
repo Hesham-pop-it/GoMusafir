@@ -20,7 +20,9 @@ module.exports = function withNotificationSounds(config) {
         const app = config.modResults.manifest.application[0];
         const key = 'com.google.firebase.messaging.default_notification_channel_id';
         app['meta-data'] = (app['meta-data'] || []).filter(item => item.$['android:name'] !== key);
-        app['meta-data'].push({ $: { 'android:name': key, 'android:value': STANDARD.channelId } });
+        // react-native-firebase declares the same key, so the merger needs an explicit override.
+        config.modResults.manifest.$['xmlns:tools'] = 'http://schemas.android.com/tools';
+        app['meta-data'].push({ $: { 'android:name': key, 'android:value': STANDARD.channelId, 'tools:replace': 'android:value' } });
         return config;
     });
     config = withMainApplication(config, config => {

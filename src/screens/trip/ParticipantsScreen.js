@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { useVisibilityRevision, getVisibleSnapshot } from '../../services/visibilityData';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -14,6 +15,7 @@ import {
     Animated,
     ActivityIndicator,
     AppState,
+    Alert,
 } from 'react-native';
 import Modal from '../../components/CompatModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,6 +32,7 @@ import { Track, RoomEvent } from 'livekit-client';
 import { useVoice } from '../../context/VoiceContext';
 import { database, auth, functions } from '../../config/firebase';
 import { ref, onValue, get, update, onDisconnect } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
@@ -51,6 +54,7 @@ const ParticipantsScreen = () => {
     const { t } = useLanguage();
     const { isAdmin, trip } = route.params || {};
     const tripId = trip?.id || trip?.tripId;
+    const visibilityRevision = useVisibilityRevision(tripId);
     const orgId = trip?.orgId || trip?.org_id;
 
     const [participants, setParticipants] = useState([]);
@@ -79,6 +83,10 @@ const ParticipantsScreen = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedParticipant, setSelectedParticipant] = useState(null);
     const [detailVisible, setDetailVisible] = useState(false);
+    useEffect(() => {
+        setDetailVisible(false);
+        setSelectedParticipant(null);
+    }, [visibilityRevision]);
     const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
     const [globalVisibilityConfig, setGlobalVisibilityConfig] = useState({});
     const [userRole, setUserRole] = useState('participant');
@@ -252,15 +260,15 @@ const ParticipantsScreen = () => {
         let isMounted = true;
 
         const promises = combinedUids.map((uid) => {
-            const profileRef = ref(database, `users/${uid}/profile`);
-            const nameRef = ref(database, `users/${uid}/full_name`);
             const visibilityRef = ref(database, `users/${uid}/participant_visibility/${tripId}`);
 
+            const profileRef = ref(database, `users/${uid}/profile`);
+            const nameRef = ref(database, `users/${uid}/full_name`);
             return Promise.all([
-                get(profileRef),
-                get(nameRef),
-                get(visibilityRef),
-                get(ref(database, `users/${uid}/photo_url`)).catch(() => ({ val: () => null }))
+                getVisibleSnapshot(profileRef, tripId),
+                getVisibleSnapshot(nameRef, tripId),
+                getVisibleSnapshot(visibilityRef, tripId),
+                getVisibleSnapshot(ref(database, `users/${uid}/photo_url`), tripId).catch(() => ({ val: () => null }))
             ]).then(([userSnap, nameSnap, visSnap, photoSnap]) => {
                 if (!isMounted) return null;
                 const rawProfile = userSnap.val() || {};
@@ -269,11 +277,10 @@ const ParticipantsScreen = () => {
                     ...rawProfile,
                     photoURL: rawProfile.photoURL || rawProfile.photo_url || photoUrl || rawProfile.photo || rawProfile.profile_photo || rawProfile.image
                 };
-                const fullName = nameSnap.val();
-                const visibility = visSnap.val() || {};
+                const fullName = nameSnap.val();                const visibility = visSnap.val() || {};
                 const targetRole = staffData[uid];
                 const isTargetStaff = isStaffMember(uid, staffData, organizerId, targetRole);
-                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole) || isAdminState;
+                const isViewerStaff = isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole);
 
                 const displayName = getParticipantDisplayName({
                     profile,
@@ -402,7 +409,7 @@ const ParticipantsScreen = () => {
         return () => {
             isMounted = false;
         };
-    }, [participantUids, staffData, globalVisibilityConfig, organizerId, tripId, orgId, isAdminState, userRole]);
+    }, [participantUids, staffData, globalVisibilityConfig, organizerId, tripId, orgId, isAdminState, userRole, visibilityRevision]);
 
     const filteredParticipants = React.useMemo(() => {
         const activeUids = (speakingUids && speakingUids.length > 0) ? speakingUids : (contextSpeakingUids || []);
@@ -668,6 +675,7 @@ const ParticipantsScreen = () => {
                 ]}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={renderEmptyComponent}
+                keyboardShouldPersistTaps="handled"
             />
 
             {/* Participant Detail Modal (Bottom Sheet Style) */}

@@ -1,3 +1,4 @@
+import { getFieldSetting, normalizeVisibilityOption } from '../../utils/visibilityHelper';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -22,7 +23,9 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import TripBottomTabBar from '../../components/TripBottomTabBar';
 import TripDateSettings from '../../components/TripDateSettings';
+import MessageSettingsCard from '../../components/trip/MessageSettingsCard';
 import { seatUsage } from '../../utils/tripSeatMath';
+import { occupiedSeatUids, tripCapacity } from '../../utils/tripCapacity';
 import { Typography } from '../../constants/Typography';
 import { Colors } from '../../constants/Colors';
 import GradientBorderButton from '../../components/GradientBorderButton';
@@ -199,7 +202,7 @@ const TripSettingsScreen = () => {
                 if (snapshot.exists()) {
                     const data = snapshot.val();
                     // Field guess: total_seats, capacity, participants_limit
-                    const capacity = data.total_seats || data.capacity || data.participants_limit || 15;
+                    const capacity = tripCapacity(data);
                     setTotalSeats(Number(capacity));
                     setCurrentTrip(data);
                 }
@@ -208,40 +211,9 @@ const TripSettingsScreen = () => {
 
         // B. Listen for Filled Seats (Participant Count)
         const participantsRef = ref(database, `trips_participants/${resolvedTripId}`);
-        let unsubscribeParticipants;
-        if (resolvedOrgId) {
-            unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
-                const staffList = staffData;
-                const uids = snapshot.exists()
-                    ? (Array.isArray(snapshot.val()) ? snapshot.val().filter(v => v !== null) : Object.keys(snapshot.val()))
-                    : [];
-                const filtered = uids.filter(uid => {
-                    const role = staffList[uid];
-                    return !role || role === 'admin' || role === 'co-host' || role === 'manager';
-                });
-                const teamMemberUids = Object.keys(staffList).filter(uid => {
-                    const role = staffList[uid];
-                    return role === 'admin' || role === 'co-host' || role === 'manager';
-                });
-                const combined = Array.from(new Set([...filtered, ...teamMemberUids]));
-                setFilledSeats(combined.length);
-            });
-        } else {
-            unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
-                if (snapshot.exists()) {
-                    const val = snapshot.val() || {};
-                    let count = 0;
-                    if (Array.isArray(val)) {
-                        count = val.filter(v => v !== null).length;
-                    } else {
-                        count = Object.keys(val).length;
-                    }
-                    setFilledSeats(count);
-                } else {
-                    setFilledSeats(0);
-                }
-            });
-        }
+        const unsubscribeParticipants = onValue(participantsRef, (snapshot) => {
+            setFilledSeats(occupiedSeatUids(snapshot.val(), staffData).length);
+        });
 
         return () => {
             if (unsubscribeTrip) unsubscribeTrip();
@@ -473,7 +445,7 @@ const TripSettingsScreen = () => {
         } else {
             // Participant updates their personal visibility setting
             // Only if global config says "Custom choice"
-            if (globalVisibilityConfig[field] === 'Custom choice') {
+            if (normalizeVisibilityOption(getFieldSetting(globalVisibilityConfig, field)) === 'custom choice') {
                 setVisibilitySettings(prev => ({ ...prev, [field]: option }));
                 try {
                     await update(ref(database, `users/${user.uid}/participant_visibility/${currentTripId}`), {
@@ -616,6 +588,7 @@ const TripSettingsScreen = () => {
                     } catch (iapErr) {
                         console.warn("[TripSettingsScreen] purchaseSeatProduct threw error:", iapErr);
                         setIsProcessingTopup(false);
+                        Alert.alert("Purchase Failed", iapErr.message || "Could not start the App Store purchase.");
                     }
                 } else {
                     console.warn("[TripSettingsScreen] purchases array is empty!");
@@ -755,7 +728,7 @@ const TripSettingsScreen = () => {
             options = adminVisibilityOptions;
         } else {
             const adminSetting = globalVisibilityConfig[field] || 'Show to organizer';
-            if (adminSetting === 'Custom choice') {
+            if (normalizeVisibilityOption(adminSetting) === 'custom choice') {
                 currentValue = visibilitySettings[field] || 'Show to organizer';
                 options = participantVisibilityOptions;
             } else {
@@ -893,7 +866,7 @@ const TripSettingsScreen = () => {
                         )}
 
                         {['admin', 'co-host', 'manager'].includes(userRole) && (
-                            <TripDateSettings orgId={resolvedOrgId} tripId={resolvedTripId} />
+                            <TripDateSettings orgId={resolvedOrgId} tripId={resolvedTripId} participantCount={filledSeats} />
                         )}
 
                         {/* Visibility Settings */}
@@ -906,6 +879,10 @@ const TripSettingsScreen = () => {
                             <VisibilityItem label="Profile photo" field="photo" />
                             <VisibilityItem label="Location" field="location" />
                         </View>
+
+                        {!['admin', 'co-host', 'manager'].includes(userRole) && (
+                            <MessageSettingsCard orgId={resolvedOrgId} tripId={resolvedTripId} staff={staffData} />
+                        )}
 
                         {userRole === 'admin' ? null : (
                             <TouchableOpacity

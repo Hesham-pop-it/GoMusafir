@@ -1,8 +1,10 @@
+import { getVisibleSnapshot } from '../services/visibilityData';
 import { ref, update, get, set } from 'firebase/database';
 import { signOut } from 'firebase/auth';
 import { database, auth } from '../config/firebase';
 import { navigationRef } from '../navigation/RootNavigator';
 import { isLoginApprovalPayload } from './loginApproval';
+import { messagingNotificationTarget } from './messagingNotificationTarget';
 
 /**
  * Resolves the destination screen and parameters for any notification payload,
@@ -89,7 +91,7 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
     // If tripId is missing, attempt to look up user's active/current trip
     if (!tripId && auth.currentUser) {
         try {
-            const userSnap = await get(ref(database, `users/${auth.currentUser.uid}`));
+            const userSnap = await getVisibleSnapshot(ref(database, `users/${auth.currentUser.uid}`), null);
             if (userSnap.exists()) {
                 const userData = userSnap.val() || {};
                 tripId = userData.current_trip || Object.keys(userData.joined_trips || {})[0];
@@ -150,6 +152,20 @@ export const navigateToNotificationTarget = async (item, navigation = null) => {
                 }
                 break;
 
+            case 'dm_request':
+            case 'dm_message':
+            case 'team_message':
+            case 'staff_chat':
+            case 'message_report': {
+                const target = tripId ? messagingNotificationTarget(type, item, auth.currentUser?.uid) : null;
+                if (target) {
+                    performNav(target.route, { ...baseParams, ...target.params });
+                } else {
+                    performNav('Home');
+                }
+                break;
+            }
+            case 'location_response':
             case 'location_request':
                 if (tripId) {
                     performNav('LiveLocation', {

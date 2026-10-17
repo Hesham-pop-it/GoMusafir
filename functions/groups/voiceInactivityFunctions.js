@@ -98,8 +98,9 @@ exports.onVoiceInactivityChanged = onValueWritten({
     const staff = (await db.ref(`orgs/${orgId}/staff`).get()).val() || {};
     const current = (await stateRef(orgId, tripId).get()).val();
     if (current?.status !== 'pending' || current.id !== state.id) return;
-    await Promise.all(live.participants.filter(p => STAFF_ROLES.includes(staff[p.identity])).map(p =>
-      sendPushNotification(p.identity, 'Are you still using the Voice Chat?',
+    const staffIdentities = [...new Set(live.participants.map(p => p.identity))].filter(id => STAFF_ROLES.includes(staff[id]));
+    await Promise.all(staffIdentities.map(identity =>
+      sendPushNotification(identity, 'Are you still using the Voice Chat?',
         'Open GoMusāfir to choose Yes or No.',
         { type: 'voice_inactivity', tripId, orgId, promptId: state.id },
         { tripId, skipDbSave: true, androidChannelId: 'Trip Audio', interruptionLevel: 'time-sensitive',

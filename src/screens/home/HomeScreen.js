@@ -1,3 +1,4 @@
+import { onVisibleValue } from '../../services/visibilityData';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -517,7 +518,7 @@ const HomeScreen = ({ navigation }) => {
 
         // 1. Get user's org context
         const userRef = ref(database, `users/${user.uid}`);
-        const unsubscribeUser = onValue(userRef, (snapshot) => {
+        const unsubscribeUser = onVisibleValue(userRef, null, (snapshot) => {
             const userData = snapshot.val();
             if (!userData) {
                 setIsLoading(false);
@@ -757,7 +758,7 @@ const HomeScreen = ({ navigation }) => {
 
     useEffect(() => {
         if (Platform.OS === 'android') {
-            NavigationBar.setButtonStyleAsync('light');
+            NavigationBar.setStyle('light');
         }
     }, []);
 
@@ -985,6 +986,7 @@ const HomeScreen = ({ navigation }) => {
                         contentContainerStyle={[styles.listContent, { paddingBottom: 100 + insets.bottom }, filteredData.length === 0 && { flexGrow: 1, justifyContent: 'center' }]}
                         showsVerticalScrollIndicator={false}
                         ListEmptyComponent={renderEmptyComponent}
+                        keyboardShouldPersistTaps="handled"
                     />
                 </View>
 

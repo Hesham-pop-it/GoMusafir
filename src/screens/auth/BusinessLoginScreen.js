@@ -1,3 +1,4 @@
+import { getVisibleSnapshot } from '../../services/visibilityData';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -93,7 +94,7 @@ const BusinessLoginScreen = () => {
             // RBAC: Check if user has business/staff access
             // S6: Role-Based Access Control - Double check both database and Custom Claims
             const userRef = ref(database, `users/${user.uid}`);
-            const userSnap = await get(userRef);
+            const userSnap = await getVisibleSnapshot(userRef, null);
             const userData = userSnap.val();
 
             const idTokenResult = await user.getIdTokenResult(true);

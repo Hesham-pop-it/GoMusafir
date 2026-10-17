@@ -23,7 +23,7 @@ test('stale remote Firebase speaker cannot override local speech or keep the wav
 test('remote LiveKit speech works without Firebase profile delivery and never uses another avatar', () => {
     const result = resolve({ speakingUids: ['other'], activeSpeaker: { uid: 'old', name: 'Old speaker' }, avatarCache: { old: 'file://old.jpg' } });
     assert.equal(result.isSpeaking, true);
-    assert.equal(result.name, 'Ali');
+    assert.equal(result.name, 'Speaker');
     assert.equal(result.avatar, '');
 });
 test('matched remote name and cached avatar are used together', () => {
@@ -41,4 +41,8 @@ test('prefetched profile supplies the speaker name and photo before Firebase spe
     assert.equal(result.name, 'Ali Ahmed');
     assert.equal(result.avatar, 'file://shared/ali.jpg');
     assert.equal(result.isSpeaking, true);
+});
+
+test('raw LiveKit names are never a fallback for hidden participant identities', () => {
+    assert.equal(resolve({ speakingUids: ['other'], profiles: {}, activeSpeaker: null }).name, 'Speaker');
 });

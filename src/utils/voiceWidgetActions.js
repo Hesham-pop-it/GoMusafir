@@ -1,5 +1,6 @@
 export async function handleVoiceWidgetAction(event, session) {
     if (!['MyWidget', 'MyLiveActivity'].includes(event.source)) return;
+    if (!session.validate || !await session.validate()) return;
     const { tripId, orgId, connected, admin, muted, globallyMuted } = session;
     if (!tripId || !orgId) return;
     switch (event.target) {

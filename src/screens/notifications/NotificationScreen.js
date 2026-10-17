@@ -1,3 +1,5 @@
+import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
 import React, { useEffect, useState } from 'react';
 import {
     View,
@@ -7,17 +9,21 @@ import {
     TouchableOpacity,
     StatusBar,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import { ref, onValue, get } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { database, auth } from '../../config/firebase';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import { useLanguage } from '../../context/LanguageContext';
 import { navigateToNotificationTarget, extractNotificationTimestamp, formatNotificationTime } from '../../utils/notificationNavigation';
 
 const NotificationScreen = ({ navigation, route }) => {
+    const { t } = useLanguage();
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -29,7 +35,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
         const setupListener = async () => {
             try {
-                const userSnap = await get(ref(database, `users/${uid}`));
+                const userSnap = await getVisibleSnapshot(ref(database, `users/${uid}`), null);
                 const userData = userSnap.val() || {};
 
                 // Collect all trip/org pairs for this user
@@ -136,7 +142,7 @@ const NotificationScreen = ({ navigation, route }) => {
                                     const globalVis = globalVisSnap.val() || {};
 
                                     // Fetch target user's personal visibility config
-                                    const userVisSnap = await get(ref(database, `users/${targetUid}/participant_visibility/${tId}`));
+                                    const userVisSnap = await getVisibleSnapshot(ref(database, `users/${targetUid}/participant_visibility/${tId}`), tId);
                                     const userVis = userVisSnap.val() || {};
 
                                     const targetRoleSnap = await get(ref(database, `orgs/${oId}/staff/${targetUid}`));
@@ -145,7 +151,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
                                     const isViewerStaff = Boolean(orgAdminMap[oId]);
 
-                                    const profSnap = await get(ref(database, `users/${targetUid}/profile`));
+                                    const profSnap = await getVisibleSnapshot(ref(database, `users/${targetUid}/profile`), tId);
                                     const prof = profSnap.val() || {};
 
                                     resolvedName = getParticipantDisplayName({
@@ -199,7 +205,7 @@ const NotificationScreen = ({ navigation, route }) => {
 
                 // Listen to user-level push notifications (system, account, push alerts)
                 const userGlobalRef = ref(database, `users/${uid}/notifications`);
-                const unsubUserGlobal = onValue(userGlobalRef, (snapshot) => {
+                const unsubUserGlobal = onVisibleValue(userGlobalRef, null, (snapshot) => {
                     if (snapshot.exists()) {
                         allNotifsMap['user_global'] = snapshot.val();
                     } else {
@@ -212,7 +218,7 @@ const NotificationScreen = ({ navigation, route }) => {
                 // Listen to each trip's notifications path
                 tripOrgPairs.forEach(({ tripId: tId, orgId: oId }) => {
                     const notifRef = ref(database, `trips_active/${oId}/${tId}/notifications/${uid}`);
-                    const unsub = onValue(notifRef, (snapshot) => {
+                    const unsub = onVisibleValue(notifRef, tId, (snapshot) => {
                         if (snapshot.exists()) {
                             allNotifsMap[tId] = snapshot.val();
                         } else {
@@ -241,6 +247,8 @@ const NotificationScreen = ({ navigation, route }) => {
     }, [route?.params?.tripId, route?.params?.orgId]);
 
     const getTitle = (item) => {
+        if (item.type === 'dm_request' && item.name) return t('msg_notif_request_title').replace('{name}', item.name);
+        if (item.type === 'team_message') return t('msg_notif_team_title');
         if (item.title) return item.title;
         switch (item.type) {
             case 'location_request': return 'Location Request';
@@ -269,6 +277,12 @@ const NotificationScreen = ({ navigation, route }) => {
     };
 
     const getDescription = (item) => {
+        if (item.type === 'dm_request') return t('msg_notif_request_body');
+        if (item.type === 'team_message' && item.message) {
+            // The stored title reads "Name (Role) · Journey team"; the list shows who wrote it, then the text.
+            const who = String(item.title || '').replace(/\s*·\s*Journey team$/, '');
+            return who ? `${who} · ${item.message}` : item.message;
+        }
         if (item.message) {
             if (item.type === 'emergency') {
                 return `${item.name || 'Someone'} ${item.message}`;
@@ -311,6 +325,19 @@ const NotificationScreen = ({ navigation, route }) => {
         await navigateToNotificationTarget(item, navigation);
     };
 
+    const handleLocationResponse = async (item, accept) => {
+        try {
+            await respondToLocationRequest(item.tripId, item.id, accept);
+            if (accept) {
+                await startLiveLocationTracking(item.orgId, item.tripId);
+                await syncCurrentUserLocationNow();
+            }
+            setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, status: accept ? 'accepted' : 'declined' } : n));
+        } catch (error) {
+            Alert.alert('Location request', error.message || 'Could not respond. Please retry.');
+        }
+    };
+
     const rendernotificationItem = ({ item }) => {
         let iconName = 'bell-outline';
         let iconColor = '#FFF';
@@ -324,6 +351,8 @@ const NotificationScreen = ({ navigation, route }) => {
         else if (item.type === 'voice_unmute_all' || item.type === 'voice_unmuted') { iconName = 'volume-high'; iconColor = '#34C759'; }
         else if (item.type === 'voice_recording_started' || item.type === 'voice_recording_stopped') { iconName = 'record-circle-outline'; iconColor = '#FF3B30'; }
         else if (item.type === 'alert' || item.type === 'broadcast') { iconName = 'bullhorn-outline'; iconColor = '#D4AF37'; }
+        else if (item.type === 'dm_request' || item.type === 'team_message' || item.type === 'dm_message') { iconName = 'message-text-outline'; iconColor = '#B99A4A'; }
+        else if (item.type === 'message_report') { iconName = 'shield-alert-outline'; iconColor = '#FF9500'; }
         else if (item.type === 'seat_update') { iconName = 'car-seat'; iconColor = '#B99A4A'; }
         else if (item.type === 'NEW_SIGN_IN' || item.type === 'new_sign_in' || item.type === 'sign_in' || item.type === 'new_signin') { iconName = 'shield-alert-outline'; iconColor = '#FF9500'; }
 
@@ -339,6 +368,16 @@ const NotificationScreen = ({ navigation, route }) => {
                 <View style={styles.contentWrapper}>
                     <Text style={[styles.cardTitle, !item.seen && { fontWeight: 'bold' }]}>{item.title}</Text>
                     <Text style={styles.cardDescription}>{item.description}</Text>
+                    {item.type === 'location_request' && item.status === 'pending' && item.expiresAt > Date.now() && (
+                        <View style={{ flexDirection: 'row', gap: 20, marginTop: 12 }}>
+                            <TouchableOpacity accessibilityRole="button" onPress={() => handleLocationResponse(item, true)}>
+                                <Text style={{ color: '#B99A4A' }}>Share for 15 minutes</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity accessibilityRole="button" onPress={() => handleLocationResponse(item, false)}>
+                                <Text style={{ color: '#FFF' }}>Decline</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
                     {Boolean(item.timestamp) && (
                         <Text style={styles.timeText}>
                             {formatNotificationTime(item.timestamp)}

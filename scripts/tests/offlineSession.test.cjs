@@ -115,6 +115,21 @@ test('access service outage preserves participant credentials and retries withou
     assert.equal(f.state.resolved, true);
 });
 
+test('INTERNAL access failure shows recovery UI and restores automatically when the backend recovers', async () => {
+    const f = await fixture({ online: true, accessCode: 'functions/internal' });
+    assert.equal(f.state.failed, true);
+    assert.equal(f.state.resolved, false);
+    assert.equal(f.signouts(), 0);
+    const app = read('App.js');
+    assert.ok(app.includes('!sessionResolved && !offline && !profileMissing && !syncFailed'));
+    assert.ok(app.includes('isVisible={offline || profileMissing || (!sessionResolved && syncFailed)}'));
+    f.setAccessCode(null);
+    await f.retry();
+    assert.equal(f.state.resolved, true);
+    assert.equal(f.state.failed, false);
+    assert.equal(f.state.route, 'TripOverview');
+});
+
 test('genuine invalid credentials sign out; absence of a user resolves to Welcome', async () => {
     const f = await fixture({ online: true, tokenCode: 'auth/user-token-expired' });
     assert.equal(f.signouts(), 1);

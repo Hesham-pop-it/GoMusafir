@@ -15,56 +15,12 @@
 export const isStaffMember = (uid, staffData = {}, organizerId = null, role = null) => {
     if (!uid) return false;
     
-    // 1. Check if uid matches trip organizer
-    if (organizerId && String(uid).trim() === String(organizerId).trim()) {
-        return true;
-    }
-
-    // 2. Check direct role passed in (case-insensitive & whitespace/symbol agnostic)
-    if (role) {
-        const normRole = String(role).trim().toLowerCase().replace(/[^a-z]/g, '');
-        if (['admin', 'cohost', 'manager', 'organizer', 'host', 'staff'].includes(normRole)) {
-            return true;
-        }
-    }
-
-    // 3. Check staffData dictionary/array
-    if (staffData && typeof staffData === 'object') {
-        // Direct key lookup: staffData[uid]
-        const staffRole = staffData[uid];
-        if (staffRole) {
-            if (typeof staffRole === 'string') {
-                const norm = staffRole.trim().toLowerCase().replace(/[^a-z]/g, '');
-                if (['admin', 'cohost', 'manager', 'organizer', 'host', 'staff', 'member'].includes(norm)) {
-                    return true;
-                }
-            } else if (typeof staffRole === 'object') {
-                const r = staffRole.role || staffRole.type || staffRole.status;
-                if (r) {
-                    const norm = String(r).trim().toLowerCase().replace(/[^a-z]/g, '');
-                    if (['admin', 'cohost', 'manager', 'organizer', 'host', 'staff', 'member'].includes(norm)) {
-                        return true;
-                    }
-                }
-                return true; // Exists as record in staff table
-            } else if (staffRole === true) {
-                return true;
-            }
-        }
-
-        // Array format fallback: [{ uid: '...' }, ...]
-        if (Array.isArray(staffData)) {
-            const found = staffData.some(item => {
-                if (!item) return false;
-                if (typeof item === 'string' && item === uid) return true;
-                if (typeof item === 'object') {
-                    return item.uid === uid || item.id === uid || item.userId === uid;
-                }
-                return false;
-            });
-            if (found) return true;
-        }
-    }
+    // Privileged visibility requires a current role in this organization's staff
+    // table. Route flags, organizer IDs and another organization's token do not count.
+    const entry = staffData?.[uid];
+    const staffRole = typeof entry === 'string' ? entry : entry?.role;
+    const normalized = String(staffRole || '').toLowerCase().replace(/[^a-z]/g, '');
+    if (['admin', 'manager', 'cohost'].includes(normalized)) return true;
 
     return false;
 };
@@ -75,7 +31,7 @@ export const isStaffMember = (uid, staffData = {}, organizerId = null, role = nu
 export const normalizeVisibilityOption = (val) => {
     if (!val) return 'show to organizer';
     const s = String(val).trim().toLowerCase().replace(/[^a-z]/g, '');
-    if (s.includes('everyone') || s.includes('all')) {
+    if (['showtoeveryone', 'everyone', 'all'].includes(s)) {
         return 'show to everyone';
     }
     if (s.includes('notshow') || s.includes('dontshow') || s.includes('hide') || s.includes('none') || s.includes('hidden')) {
@@ -185,12 +141,11 @@ export const checkPIIVisibility = ({
     personalVisibility = {}
 }) => {
     const isCurrentUser = Boolean(targetUid && viewerUid && String(targetUid) === String(viewerUid));
-    if (isCurrentUser) return true;
 
     // 1. Resolve Global Admin / Trip-level Configuration
     const rawGlobal = getFieldSetting(globalConfig, field);
     // If not specified at global level, default to 'show to everyone' for location, 'show to organizer' for sensitive PII
-    const defaultGlobal = (field === 'location' || field === 'livelocation') ? 'show to everyone' : 'show to organizer';
+    const defaultGlobal = 'show to organizer';
     const globalSetting = normalizeVisibilityOption(rawGlobal || defaultGlobal);
 
     // If Global is explicitly "do not show", it is hidden for EVERYONE (except current user viewing their own data)
@@ -223,8 +178,7 @@ export const checkPIIVisibility = ({
     if (globalSetting === 'show to organizer') {
         if (isViewerStaff) return true;
         if (isCurrentUser) return true;
-        // Staff basic info visible to participants under "show to organizer" default
-        if (isTargetStaff && (field === 'name' || field === 'lastname' || field === 'photo')) return true;
+
         return false;
     }
 

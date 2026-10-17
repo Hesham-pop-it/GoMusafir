@@ -1,5 +1,7 @@
+import { getVisibleSnapshot, onVisibleValue } from '../../services/visibilityData';
 import React, { useState, useEffect } from 'react';
 import { ref, get, onValue } from 'firebase/database';
+import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { database, auth } from '../../config/firebase';
 import {
     View,
@@ -24,31 +26,6 @@ const { width } = Dimensions.get('window');
 
 
 
-const ALERT_DATA = [
-    {
-        id: '1',
-        title: 'Emergency Alert',
-        message: 'needs immediate assistance! Lost near Askari 4.',
-        sender: 'Sophia Bennett',
-        senderImage: 'https://randomuser.me/api/portraits/women/32.jpg',
-        time: '18:00 - 12/12/2025',
-        type: 'emergency',
-        latitude: 21.4225,
-        longitude: 39.8262
-    },
-    {
-        id: '2',
-        title: 'Emergency Alert',
-        message: 'needs immediate assistance! Medical concern near gate 4.',
-        sender: 'Liam Harper',
-        senderImage: 'https://randomuser.me/api/portraits/men/33.jpg',
-        time: '19:15 - 12/12/2025',
-        type: 'emergency',
-        latitude: 21.4235,
-        longitude: 39.8272
-    }
-];
-
 const AlertHistoryScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
@@ -68,7 +45,7 @@ const AlertHistoryScreen = () => {
 
         if (tripId && orgId) {
             const tripNotifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${myUid}`);
-            unsubTrip = onValue(tripNotifRef, (snapshot) => {
+            unsubTrip = onVisibleValue(tripNotifRef, tripId, (snapshot) => {
                 if (snapshot.exists()) {
                     const data = snapshot.val() || {};
                     const list = Object.entries(data)
@@ -87,7 +64,7 @@ const AlertHistoryScreen = () => {
         }
 
         const userNotifRef = ref(database, `users/${myUid}/notifications`);
-        unsubUser = onValue(userNotifRef, (snapshot) => {
+        unsubUser = onVisibleValue(userNotifRef, null, (snapshot) => {
             if (snapshot.exists()) {
                 const data = snapshot.val() || {};
                 const list = Object.entries(data)
@@ -110,8 +87,8 @@ const AlertHistoryScreen = () => {
         };
     }, [tripId, orgId]);
 
-    // Use liveAlerts if available, otherwise fallback to passedAlerts or ALERT_DATA. Filter only emergency alerts.
-    const rawAlerts = liveAlerts.length > 0 ? liveAlerts : (passedAlerts !== undefined ? passedAlerts : ALERT_DATA);
+    // Use liveAlerts if available, otherwise fallback to passedAlerts. Filter only emergency alerts.
+    const rawAlerts = liveAlerts.length > 0 ? liveAlerts : (passedAlerts || []);
     const alertsToDisplay = [...rawAlerts]
         .filter(item => item.type === 'emergency')
         .sort((a, b) => {
@@ -136,7 +113,7 @@ const AlertHistoryScreen = () => {
         const fetchProfiles = async () => {
             const promises = uids.map(async (uid) => {
                 try {
-                    const snap = await get(ref(database, `users/${uid}/profile`));
+                    const snap = await getVisibleSnapshot(ref(database, `users/${uid}/profile`), tripId);
                     if (snap.exists()) {
                         const profile = snap.val();
                         return { uid, avatar: profile.photoURL };

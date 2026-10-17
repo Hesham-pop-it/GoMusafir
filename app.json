@@ -1,10 +1,9 @@
 {
   "expo": {
-    "newArchEnabled": false,
     "name": "GoMusafir",
     "slug": "gomusafir",
     "scheme": "gomusafir",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/logo.png",
     "userInterfaceStyle": "dark",
@@ -48,8 +47,7 @@
         "UIBackgroundModes": [
           "location",
           "remote-notification",
-          "audio",
-          "voip"
+          "audio"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -92,6 +90,36 @@
               "scheme": "https",
               "host": "app.gomusafir.app",
               "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "app.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "www.app.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "join.gomusafir.app",
+              "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "join.gomusafir.app",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "www.join.gomusafir.app",
+              "pathPrefix": "/link"
+            },
+            {
+              "scheme": "https",
+              "host": "www.join.gomusafir.app",
+              "pathPrefix": "/join"
             }
           ],
           "category": [
@@ -139,9 +167,6 @@
       [
         "expo-build-properties",
         {
-          "android": {
-            "kotlinVersion": "1.9.24"
-          },
           "ios": {
             "deploymentTarget": "16.4",
             "useFrameworks": "static"
@@ -152,6 +177,7 @@
       "./plugins/withFirebaseSwiftFix",
       "./plugins/withXcodeBuildSettings",
       "./plugins/withNotificationSounds",
+      "./plugins/withVoiceTaskClose",
       "expo-font",
       [
         "expo-camera",
@@ -184,7 +210,8 @@
       [
         "react-native-maps",
         {
-          "iosGoogleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
+          "iosGoogleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI",
+          "androidGoogleMapsApiKey": "AIzaSyDng5xhvMyRXSTHDmBkLbn_3uHtM7doueI"
         }
       ],
       [

@@ -7,14 +7,22 @@ const { notificationSound } = require("./notificationSoundConfig");
  * @param {string} title - The notification title (ignored if silent).
  * @param {string} body - The notification body (ignored if silent).
  * @param {object} data - Optional data payload (deep links: tripId, tab, role).
- * @param {object} options - Advanced delivery rules.
+ * @param {object} options - Advanced delivery rules. `quiet` keeps the visible notification but drops the sound;
+ *   `collapseKey` replaces earlier undelivered or displayed notifications that share the key.
  */
 async function sendPushNotification(uid, title, body, data = {}, options = {}) {
     try {
+        const { redactNotification } = require('./notificationPrivacy');
+        const safe = redactNotification({ ...data, title, message: body });
+        title = safe.title || title;
+        body = safe.message || body;
+        data = safe;
         const {
             androidChannelId: requestedChannelId,
             interruptionLevel = "active", // 'active', 'time-sensitive', 'passive', 'critical'
             silent = false,
+            quiet = false,
+            collapseKey = null,
             tripId = null,
             eventId = null, // for deduplication (e.g. 'chat_trip123')
         } = options;
@@ -70,10 +78,12 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
             data: sanitizedData,
             token: fcmToken,
             android: {
+                ...(collapseKey ? { collapseKey: String(collapseKey) } : {}),
                 priority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "high" : "normal",
                 notification: silent ? undefined : {
                     channelId: androidChannelId,
-                    sound: soundProfile.sound,
+                    ...(quiet ? { defaultSound: false } : { sound: soundProfile.sound }),
+                    ...(collapseKey ? { tag: String(collapseKey) } : {}),
                     notificationPriority: (interruptionLevel === 'critical' || interruptionLevel === 'time-sensitive') ? "PRIORITY_HIGH" : "PRIORITY_DEFAULT",
                 },
             },
@@ -82,12 +92,13 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                     aps: {
                         contentAvailable: silent ? true : undefined,
                         mutableContent: true,
-                        sound: silent ? undefined : soundProfile.file,
+                        sound: (silent || quiet) ? undefined : soundProfile.file,
                         "interruption-level": interruptionLevel === 'critical' ? 'time-sensitive' : interruptionLevel,
                     },
                 },
                 headers: {
                     "apns-priority": silent ? "5" : "10",
+                    ...(collapseKey ? { "apns-collapse-id": String(collapseKey).slice(0, 64) } : {}),
                 }
             },
         };

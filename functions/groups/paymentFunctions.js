@@ -91,10 +91,13 @@ async function notifyStaffOfSeatUpdate({ orgId, tripId = null, title = "Seat Upd
         })
       );
 
-      // 3. FCM Push notification
-      promises.push(
-        sendPushNotification(staffUid, title, message, payload, options)
-      );
+      // 3. FCM Push notification. With a tripId the trips_active notification above already
+      // triggers onNotificationCreated, which sends the push, so only push directly otherwise.
+      if (!tripId) {
+        promises.push(
+          sendPushNotification(staffUid, title, message, payload, options)
+        );
+      }
     });
 
     await Promise.all(promises);

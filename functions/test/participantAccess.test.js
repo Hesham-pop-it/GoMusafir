@@ -170,3 +170,33 @@ for (const role of ['admin', 'co-host', 'manager']) {
     assert.equal(f.revocations.length,0);
   });
 }
+
+test('unauthenticated callers cannot access app, trips or fresh identity', async () => {
+  const f = fixture();
+  await assert.rejects(f.api.requireFreshIdentity({}), { code: 'unauthenticated' });
+  await assert.rejects(f.api.requireAppAccess({}), { code: 'unauthenticated' });
+  await assert.rejects(f.api.requireTripAccess({}, 't'), { code: 'unauthenticated' });
+});
+test('disabled Auth account cannot use an otherwise active trip session', async () => {
+  const f = fixture(); f.record.disabled = true;
+  await assert.rejects(f.api.requireAppAccess(f.request), { code: 'unauthenticated' });
+});
+
+test('admin revocation publishes the database cutoff and rejects an existing session', async () => {
+  const f = fixture();
+  await f.api.revokeUserSessions('p');
+  assert.ok(f.data.app_access.p.revoked_before > f.request.auth.token.auth_time);
+  assert.ok(f.data.app_access.p.expires_at > Date.now());
+  assert.equal(f.data.app_access.p.version, 1);
+  assert.deepEqual(f.revocations, ['p']);
+  await assert.rejects(f.api.requireAppAccess(f.request), { code: 'unauthenticated' });
+  await assert.rejects(f.api.requireTripAccess(f.request, 't'), { code: 'unauthenticated' });
+});
+test('admin revocation never rolls back a newer cutoff or drops staff entitlement', async () => {
+  const f = fixture();
+  f.data.app_access.p = { staff: true, revoked_before: 9999999999, version: 10 };
+  await f.api.revokeUserSessions('p');
+  assert.equal(f.data.app_access.p.revoked_before, 9999999999);
+  assert.equal(f.data.app_access.p.staff, true);
+  assert.equal(f.data.app_access.p.version, 11);
+});

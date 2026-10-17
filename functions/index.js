@@ -73,6 +73,7 @@ exports.createOrganization    = orgFunctions.createOrganization;
 exports.updateMemberRole      = orgFunctions.updateMemberRole;
 exports.deleteOrganization    = orgFunctions.deleteOrganization;
 exports.inviteTeamMember      = orgFunctions.inviteTeamMember;
+exports.leaveOrganization     = orgFunctions.leaveOrganization;
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
 exports.createTrip            = tripFunctions.createTrip;
@@ -111,13 +112,18 @@ exports.verifyAppleIAPReceipt = paymentFunctions.verifyAppleIAPReceipt;
 // ── System ────────────────────────────────────────────────────────────────────
 exports.auditLogger           = systemFunctions.auditLogger;
 exports.dataCleanupCron       = systemFunctions.dataCleanupCron;
-exports.secureCleanupPII      = systemFunctions.secureCleanupPII;
+// secureCleanupPII is intentionally not exported: it walks every user on the platform and any org admin could trigger it.
+// It stays in groups/systemFunctions.js for a one-off platform-owner migration (export temporarily, then remove again).
 
 // ── Voice Chat ────────────────────────────────────────────────────────────────
 exports.generateLiveKitToken  = voiceFunctions.generateLiveKitToken;
 exports.toggleChannelStatus   = voiceFunctions.toggleChannelStatus;
 exports.onActiveHostsUpdated  = voiceFunctions.onActiveHostsUpdated;
 exports.livekitWebhook        = voiceFunctions.livekitWebhook;
+const voiceSpeakerFunctions = require('./groups/voiceSpeakerFunctions');
+exports.updateVoiceSpeaker = voiceSpeakerFunctions.updateVoiceSpeaker;
+exports.onVoiceGlobalMuteChanged = voiceSpeakerFunctions.onVoiceGlobalMuteChanged;
+exports.reconcileVoiceSpeakers = voiceSpeakerFunctions.reconcileVoiceSpeakers;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
@@ -151,6 +157,12 @@ const scheduledAnnouncementFunctions = require('./groups/scheduledAnnouncementFu
 exports.onScheduledAnnouncementWritten = scheduledAnnouncementFunctions.onScheduledAnnouncementWritten;
 exports.sendScheduledAnnouncements = scheduledAnnouncementFunctions.sendScheduledAnnouncements;
 
+// Org membership index and trip display cards used by the database rules.
+const orgMembersFunctions = require('./groups/orgMembersFunctions');
+for (const name of ['onParticipantIndexChanged', 'onStaffIndexChanged', 'onUserProfileCardChanged', 'onUserNameCardChanged', 'onUserPhotoCardChanged']) {
+  exports[name] = orgMembersFunctions[name];
+}
+
 // Shared all-muted inactivity checks for iOS and Android.
 const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');
 exports.reportVoiceActivity = voiceInactivityFunctions.reportVoiceActivity;
@@ -166,6 +178,16 @@ for (const name of ['getTripFeatureAccess', 'onTripFeatureDatesChanged', 'onTrip
 }
 
 exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;
+exports.getVisibleTripData = tripFunctions.getVisibleTripData;
+exports.requestParticipantLocation = tripFunctions.requestParticipantLocation;
+exports.respondToLocationRequest = tripFunctions.respondToLocationRequest;
+exports.getOwnAccount = authFunctions.getOwnAccount;
+
+// Direct messaging: message requests, Journey team thread and staff chat.
+const messagingFunctions = require('./groups/messagingFunctions');
+for (const name of ['sendMessageRequest', 'respondToMessageRequest', 'unblockParticipant', 'openStaffChat', 'reportStaffChat', 'onDirectMessageCreated', 'onTeamMessageCreated', 'onStaffChatCreated']) {
+  exports[name] = messagingFunctions[name];
+}
 
 // Phase 5: passport links, codes, sessions, data and retention.
 const passportFunctions = require('./groups/passportFunctions');

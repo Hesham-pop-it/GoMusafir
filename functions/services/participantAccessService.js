@@ -82,6 +82,18 @@ async function refreshAccess(uid) {
   return (await accessRef.get()).val() || value;
 }
 
+// Publish revocation to the same server-owned record consulted by RTDB rules.
+// Refresh-token revocation alone leaves already-issued ID tokens usable there.
+async function revokeUserSessions(uid) {
+  const cutoff = Math.floor(Date.now() / 1000) + 1;
+  await guardedTransaction(db.ref(`app_access/${uid}`), current => ({
+    ...(current || {}),
+    revoked_before: Math.max(current?.revoked_before || 0, cutoff),
+    version: (current?.version || 0) + 1,
+  }));
+  await auth.revokeRefreshTokens(uid);
+}
+
 async function requireFreshIdentity(request) {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Authentication required.');
   const uid = request.auth.uid;
@@ -112,4 +124,4 @@ async function requireTripAccess(request, tripId) {
   return { orgId, trip, staff };
 }
 
-module.exports = { tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };
+module.exports = { revokeUserSessions, tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };

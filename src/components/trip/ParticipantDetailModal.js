@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator, Animated, PanResponder, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Dimensions, ScrollView, ActivityIndicator, Animated, PanResponder, Platform, Linking, Alert } from 'react-native';
 import Modal from '../CompatModal';
 import MapView, { Marker } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,9 @@ import { responsiveFontSize } from '../../utils/responsive';
 import { useLanguage } from '../../context/LanguageContext';
 import { useNavigation } from '@react-navigation/native';
 import { auth } from '../../config/firebase';
+import { detailButtonsFor, threadIdFor } from '../../utils/messagingRules';
+import { openConversation, openStaffPrivate } from '../../utils/openConversation';
+import { openStaffChat } from '../../services/messaging';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 
 const { width } = Dimensions.get('window');
@@ -26,7 +29,9 @@ const ParticipantDetailModal = ({
     globalVisibilityConfig = {},
     staffData = {},
     organizerId = null,
-    userRole = null
+    userRole = null,
+    trip = null,
+    inbox = {}
 }) => {
     const navigation = useNavigation();
     const [scrollOffset, setScrollOffset] = useState(0);
@@ -92,7 +97,7 @@ const ParticipantDetailModal = ({
     const { t } = useLanguage();
 
     const isCurrentUser = Boolean(participant?.id && auth.currentUser?.uid && participant.id === auth.currentUser?.uid);
-    const isViewerStaff = Boolean(isAdmin || isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
+    const isViewerStaff = Boolean(isStaffMember(auth.currentUser?.uid, staffData, organizerId, userRole));
     const isTargetStaff = Boolean(isStaffMember(participant?.id, staffData, organizerId, participant?.status));
     const personalVis = participant?.rawVisibility || participant?.visibility || {};
 
@@ -177,22 +182,13 @@ const ParticipantDetailModal = ({
         return null;
     };
 
-    const rawLat = parseCoord(liveLoc?.lat)
-        ?? parseCoord(liveLoc?.latitude)
-        ?? parseCoord(participant?.latitude)
-        ?? parseCoord(participant?.lat)
-        ?? parseCoord(participant?.location?.latitude)
-        ?? parseCoord(participant?.location?.lat);
-
-    const rawLng = parseCoord(liveLoc?.lng)
-        ?? parseCoord(liveLoc?.longitude)
-        ?? parseCoord(participant?.longitude)
-        ?? parseCoord(participant?.lng)
-        ?? parseCoord(participant?.location?.longitude)
-        ?? parseCoord(participant?.location?.lng);
+    // This map receives only server-authorized coordinates, including accepted
+    // temporary requests. Never resurrect coordinates from cached route/profile data.
+    const rawLat = parseCoord(liveLoc?.lat) ?? parseCoord(liveLoc?.latitude);
+    const rawLng = parseCoord(liveLoc?.lng) ?? parseCoord(liveLoc?.longitude);
 
     const hasValidLocation = Boolean(
-        (canSeeLocation || isViewerStaff || isCurrentUser) &&
+        Boolean(liveLoc) &&
         rawLat !== null &&
         rawLng !== null &&
         typeof rawLat === 'number' &&
@@ -267,6 +263,43 @@ const ParticipantDetailModal = ({
     const rawPhone = (rawProfile.phone && rawProfile.phone !== '***' ? rawProfile.phone : '') || (participant?.phone && participant.phone !== '***' ? participant.phone : '') || '';
     const displayEmail = canSeeEmail ? (rawEmail || 'N/A') : '***';
     const displayPhone = canSeePhone ? (rawPhone || 'N/A') : '***';
+
+    const viewerUid = auth.currentUser?.uid;
+    const messageButtons = participant && viewerUid ? detailButtonsFor({
+        viewerIsStaff: isViewerStaff,
+        targetIsStaff: isTargetStaff,
+        isSelf: isCurrentUser,
+        inboxRow: (inbox || {})[threadIdFor(viewerUid, participant.id)],
+        nameVisible: canSeeFirstName,
+    }) : [];
+    const messageButton = messageButtons.find((b) => b !== 'staff_private') || null;
+    const hasStaffPrivate = messageButtons.includes('staff_private');
+    const messageLabels = {
+        request: t('msg_send_request'),
+        accept: t('msg_accept_request'),
+        open_chat: t('msg_message'),
+        team: t('msg_message_team'),
+        message_staff: t('msg_message_name').replace('{name}', extractedFirst || participant?.name || ''),
+        staff_private: t('msg_message_private').replace('{name}', extractedFirst || participant?.name || ''),
+    };
+    const handleMessage = () => {
+        onClose();
+        openConversation(navigation, trip, {
+            viewerUid,
+            viewerIsStaff: isViewerStaff,
+            target: { id: participant.id, name: participant.name, image: participant.image, isStaff: isTargetStaff, nameVisible: canSeeFirstName },
+            inbox,
+        });
+    };
+
+    const handleStaffPrivate = async () => {
+        try {
+            await openStaffPrivate(navigation, trip, { viewerUid, target: { id: participant.id, name: participant.name, staffName: `${extractedFirst} ${extractedLast}`.trim() || null, image: participant.image }, openChat: openStaffChat });
+            onClose();
+        } catch (e) {
+            Alert.alert(t('msg_error_generic'));
+        }
+    };
 
     if (!participant) return null;
 
@@ -389,6 +422,25 @@ const ParticipantDetailModal = ({
                             <Text style={styles.inputText}>{displayPhone}</Text>
                         )}
                     </View>
+
+                    {messageButton && messageLabels[messageButton] && (
+                        <>
+                            <TouchableOpacity style={styles.messageButtonPill} onPress={handleMessage} activeOpacity={0.85}>
+                                <Ionicons name={messageButton === 'request' ? 'paper-plane-outline' : 'chatbubble-ellipses-outline'} size={20} color="#1E2124" style={{ marginRight: 8 }} />
+                                <Text style={styles.messageButtonText}>{messageLabels[messageButton]}</Text>
+                            </TouchableOpacity>
+                            {messageButton === 'request' && (
+                                <Text style={styles.messageNote}>{t('msg_detail_note').replace('{name}', extractedFirst || participant.name || '')}</Text>
+                            )}
+                        </>
+                    )}
+
+                    {hasStaffPrivate && (
+                        <TouchableOpacity style={[styles.editButtonPill, { flexDirection: 'row' }]} onPress={handleStaffPrivate} activeOpacity={0.85}>
+                            <Ionicons name="lock-closed-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                            <Text style={styles.editButtonText}>{messageLabels.staff_private}</Text>
+                        </TouchableOpacity>
+                    )}
 
                     {isAdmin && (
                         <>
@@ -551,6 +603,29 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
+        marginBottom: 16,
+    },
+    messageButtonPill: {
+        width: '100%',
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: '#B99A4A',
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    messageButtonText: {
+        color: '#1E2124',
+        fontSize: 16,
+        fontFamily: Typography.sans.bold,
+    },
+    messageNote: {
+        color: '#9BA1A6',
+        fontSize: 14,
+        lineHeight: 21,
+        textAlign: 'center',
+        fontFamily: Typography.sans.regular,
         marginBottom: 16,
     },
     editButtonPill: {

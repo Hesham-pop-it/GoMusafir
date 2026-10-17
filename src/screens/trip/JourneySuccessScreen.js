@@ -44,7 +44,7 @@ const PresentationIcon = () => (
 const JourneySuccessScreen = ({ route }) => {
     const navigation = useNavigation();
     const { invitationCode } = route.params;
-    const invitationLink = "https://app.gomusafir.app/link/" + invitationCode;
+    const invitationLink = "https://join.gomusafir.app/link/" + invitationCode;
     const svgRef = useRef(null);
 
     const handleShare = async () => {
@@ -117,7 +117,7 @@ const JourneySuccessScreen = ({ route }) => {
                         <View style={styles.qrCard}>
                             <View style={styles.qrWrapper}>
                                 <QRCode
-                                    value={`https://app.gomusafir.app/link/${invitationCode}`}
+                                    value={`https://join.gomusafir.app/link/${invitationCode}`}
                                     size={width * 0.5}
                                     getRef={svgRef}
                                     color="#000000"

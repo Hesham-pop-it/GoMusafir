@@ -8,7 +8,7 @@ import { seatUsage, selectedDateRange } from '../utils/tripSeatMath';
 
 const keyFor = timestamp => Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : '';
 
-export default function TripDateSettings({ orgId, tripId }) {
+export default function TripDateSettings({ orgId, tripId, participantCount }) {
     const [trip, setTrip] = useState(null);
     const [balance, setBalance] = useState(null);
     const [editing, setEditing] = useState(false);
@@ -49,7 +49,7 @@ export default function TripDateSettings({ orgId, tripId }) {
         <Text style={styles.heading}>Trip destination, dates and seat usage</Text>
         <Text style={styles.text}>{trip.location}</Text>
         <Text style={styles.text}>{keyFor(trip.start_date)} to {keyFor(trip.end_date - 1)}</Text>
-        <Text style={styles.text}>{trip.total_seats || 15} participants · {trip.seats_allocated ?? trip.total_seats ?? 15} seats allocated</Text>
+        <Text style={styles.text}>{participantCount} {participantCount === 1 ? 'participant' : 'participants'} · {trip.seats_allocated ?? trip.total_seats ?? 15} seats allocated</Text>
         {!editing ? <TouchableOpacity accessibilityRole="button" style={styles.button} onPress={() => {
             setStart(keyFor(trip.start_date)); setEnd(keyFor(trip.end_date - 1)); setDestination(trip.location || ''); setEditing(true);
         }}><Text style={styles.buttonText}>Edit trip details</Text></TouchableOpacity> : <>

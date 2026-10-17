@@ -18,6 +18,7 @@ export function stopNotificationSound() {
 
 export function playNotificationSound(notification) {
     const profile = notificationSound(notification);
+    if (!profile.sound) return;
     // A normal update must never interrupt a currently playing SOS.
     if (current?.sound === SOS.sound && profile.sound !== SOS.sound) return;
     stopNotificationSound();

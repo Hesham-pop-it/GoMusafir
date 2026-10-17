@@ -6,27 +6,40 @@ import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { database, auth } from '../config/firebase';
 import { ref, set } from 'firebase/database';
 
-import { STANDARD, SOS, notificationSound } from '../../functions/services/notificationSoundConfig';
+import { STANDARD, SOS, QUIET, notificationSound } from '../../functions/services/notificationSoundConfig';
 
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 let isForegroundListenerRegistered = false;
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isLoginApprovalPayload } from '../utils/loginApproval';
+import { createTapQueue } from '../utils/notificationTapQueue';
 import { normalizeNotification, publishForegroundNotification, resetNotificationPresentation } from './notificationPresentation';
 const PENDING_TAP = 'gomusafir.pendingNotificationTap';
-const recentTaps = new Map();
 // A login approval can be reopened soon after it was closed; other taps wait out the full window.
 const TAP_WINDOW = 30000, APPROVAL_TAP_WINDOW = 2000;
+let tapQueue = null;
+function getTapQueue() {
+    if (!tapQueue) {
+        const { navigationRef } = require('../navigation/RootNavigator');
+        tapQueue = createTapQueue({
+            isReady: () => navigationRef.isReady(),
+            navigate: async (item) => {
+                const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
+                await navigateToNotificationTarget(item);
+            },
+            windowOf: (item) => (isLoginApprovalPayload(item) ? APPROVAL_TAP_WINDOW : TAP_WINDOW),
+        });
+    }
+    return tapQueue;
+}
+// Called by the navigation container once it is ready, to deliver taps received before that.
+export function flushPendingNotificationTaps() {
+    return getTapQueue().flush();
+}
 export async function handleNotificationPress(data) {
     if (!data) return;
-    const key = data.notificationId || data.messageId || data.id || JSON.stringify(data);
-    const now = Date.now();
-    for (const [id, entry] of recentTaps) if (now - entry.time > entry.window) recentTaps.delete(id);
-    if (recentTaps.has(key)) return;
-    recentTaps.set(key, { time: now, window: isLoginApprovalPayload(data) ? APPROVAL_TAP_WINDOW : TAP_WINDOW });
-    const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
-    await navigateToNotificationTarget(data);
+    await getTapQueue().enqueue(data);
 }
 export async function saveBackgroundNotificationPress(notification) {
     await AsyncStorage.setItem(PENDING_TAP, JSON.stringify(normalizeNotification({ data: notification?.data, messageId: notification?.id, notification: { title: notification?.title, body: notification?.body } })));
@@ -52,16 +65,17 @@ export async function presentRemoteNotification(remoteMessage, fromBackgroundHan
     const item = normalizeNotification(remoteMessage);
     const soundProfile = notificationSound(item);
     const channelId = soundProfile.channelId;
-    if (Platform.OS === 'android') await notifee.createChannel({
+    if (Platform.OS === 'android') await notifee.createChannel(soundProfile.sound ? {
         id: channelId, name: soundProfile.name, sound: soundProfile.sound,
         importance: AndroidImportance.HIGH, vibration: true,
-    });
+    } : { id: channelId, name: soundProfile.name, importance: AndroidImportance.LOW, vibration: false });
     await notifee.displayNotification({
         ...(item.id ? { id: item.id } : {}), title: item.title, body: item.message,
         data: { ...(remoteMessage.data || {}), title: item.title, message: item.message,
             ...(item.id ? { id: item.id } : {}) },
-        android: { channelId, sound: soundProfile.sound, importance: AndroidImportance.HIGH, pressAction: { id: 'default' } },
-        ios: { sound: soundProfile.file, foregroundPresentationOptions: { badge: false, sound: false, banner: false, list: false } },
+        android: { channelId, ...(soundProfile.sound ? { sound: soundProfile.sound } : {}),
+            importance: soundProfile.sound ? AndroidImportance.HIGH : AndroidImportance.LOW, pressAction: { id: 'default' } },
+        ios: { ...(soundProfile.file ? { sound: soundProfile.file } : {}), foregroundPresentationOptions: { badge: false, sound: false, banner: false, list: false } },
     });
 }
 
@@ -79,7 +93,24 @@ export async function registerForPushNotificationsAsync(user = null) {
     }
 
     try {
-        // 1. Request Permission (iOS requires this explicitly for Firebase)
+        // 1. Create Android Notification Channels first (Android 13+ only shows the permission prompt once a channel exists)
+        if (Platform.OS === 'android') {
+            await Promise.all([STANDARD, SOS].map(profile => notifee.createChannel({
+                id: profile.channelId, name: profile.name, sound: profile.sound,
+                importance: AndroidImportance.HIGH, vibration: true,
+            })));
+
+            await notifee.createChannel({
+                id: QUIET.channelId,
+                name: QUIET.name,
+                importance: AndroidImportance.LOW,
+                vibration: false,
+            });
+        }
+
+
+
+        // 2. Request Permission (iOS, and POST_NOTIFICATIONS on Android 13+)
         const authStatus = await messaging().requestPermission();
         const enabled =
             authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
@@ -90,13 +121,7 @@ export async function registerForPushNotificationsAsync(user = null) {
             return null;
         }
 
-        // 2. Create Android Notification Channels (Required for Android 8.0+)
-        if (Platform.OS === 'android') {
-            await Promise.all([STANDARD, SOS].map(profile => notifee.createChannel({
-                id: profile.channelId, name: profile.name, sound: profile.sound,
-                importance: AndroidImportance.HIGH, vibration: true,
-            })));
-        }
+       
 
         // 3. Register for remote messages (Critical for iOS)
         if (Platform.OS === 'ios') {
@@ -157,7 +182,7 @@ export async function registerForPushNotificationsAsync(user = null) {
 export async function unregisterForPushNotificationsAsync({ localOnly = false } = {}) {
     if (isExpoGo) return;
     if (localOnly) {
-        recentTaps.clear();
+        tapQueue = null;
         resetNotificationPresentation();
         await notifee.cancelAllNotifications().catch(() => {});
     }

@@ -25,8 +25,8 @@ function signInFixture(access, refreshFailure = null) {
     '../middleware/participantAccessMiddleware': { onCall: (_, handler) => handler },
     'firebase-functions/v2/identity': { beforeUserCreated: (_,handler)=>handler, beforeUserSignedIn: (_,handler)=>handler },
     '../admin': { admin:{ database:{ServerValue:{TIMESTAMP:0}}},db:{ref:()=>({push:noop,get:async()=>({val:()=>({})}),update:noop})} },
-    '../services/kmsService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
-    '../services/emailService': {}, '../services/notificationService': { sendPushNotification: noop }, '../services/stripeService': {},
+    '../services/kmsService': {}, '../services/accountCleanupService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
+    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': { sendPushNotification: noop }, '../services/stripeService': {},
   }).onSignIn;
 }
 test('ordinary backend sign-in rejects participants with no eligible trip', async () => {
@@ -70,7 +70,7 @@ test('the emailed participant code matches its stored challenge and verifies wit
   const f=enrollmentFixture({coldCache:true});
   const {challengeId}=await f.begin({data:{email:'Participant@example.test',inviteCode:'JOIN'}});
   assert.equal(f.emails[0].to,'participant@example.test');
-  const code=f.emails[0].html.match(/<h1>(\d{6})<\/h1>/)[1];
+  const code=f.emails[0].html.match(/<h1\b[^>]*>(\d{6})<\/h1>/)[1];
   assert.equal(f.data[`enrollment_challenges/${challengeId}`].digest,
     crypto.createHash('sha256').update(`${challengeId}:${code}`).digest('hex'));
   assert.equal((await f.complete({data:{challengeId,code}})).customToken,'enrollment-token');

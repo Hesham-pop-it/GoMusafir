@@ -373,8 +373,9 @@ for (const uid of ['participant', 'other', 'manager']) {
     assert.equal(f.deleted.length, 0);
   });
 }
-test('multiple users dropping to one participant starts a fresh timer; no host is required', async () => {
-  const f = fixture(); f.setNow(START); await f.reserve(); await f.join();
+test('co-host leaving one participant starts a fresh solo timer', async () => {
+  const f = fixture(); f.write('orgs/o/staff/host', 'co-host');
+  f.setNow(START); await f.reserve(); await f.join();
   const session = f.state().session;
   const room = f.rooms.get(session.roomName);
   room.participants.push({ identity: 'participant', joinedAt: START / 1000 });
@@ -428,4 +429,75 @@ test('all-muted confirmation waiting for Yes/No cannot extend the solo limit', a
   f.advance(300000); await f.task();
   assert.equal(f.state().session, null);
   assert.equal(f.read('trips_active/o/t/voice_channel/endReason'), 'alone_timeout');
+});
+
+for (const role of ['co-host', 'manager', 'participant']) {
+  test(`closed ${role} loses presence without removing users still in Voice`, async () => {
+    const f = fixture();
+    await f.reserve('host');
+    await f.join('host');
+    const session = f.state().session;
+    f.write('orgs/o/staff/departed', role === 'participant' ? null : role);
+    f.write('trips_active/o/t/voice_channel/presence', { host: true, departed: true });
+    f.write('trips_active/o/t/voice_channel/active_hosts', { host: true, departed: true });
+    f.write('trips_active/o/t/voice_channel/app_presence', { host: true, departed: true });
+    f.write('trips_active/o/t/voice_channel/activeSpeaker', { uid: 'departed' });
+    await f.service.handleRoomEvent({ event: 'participant_left', createdAt: 1,
+      room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'departed' } });
+    assert.equal(f.read('trips_active/o/t/voice_channel/presence/departed'), null);
+    assert.equal(f.read('trips_active/o/t/voice_channel/active_hosts/departed'), null);
+    assert.equal(f.read('trips_active/o/t/voice_channel/app_presence/departed'), null);
+    assert.equal(f.read('trips_active/o/t/voice_channel/activeSpeaker'), null);
+    assert.equal(f.read('trips_active/o/t/voice_channel/presence/host'), true);
+  });
+}
+test('delayed leave webhook preserves a participant who has rejoined', async () => {
+  const f = fixture(); await f.reserve('host'); await f.join('host');
+  const session = f.state().session;
+  await f.service.handleRoomEvent({ event: 'participant_left', createdAt: 1,
+    room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } });
+  assert.equal(f.read('trips_active/o/t/voice_channel/presence/host'), true);
+});
+
+test('confirmed last participant departure ends the room without an extra grace period', async () => {
+  const f = fixture(); await f.reserve(); await f.join();
+  const session = f.state().session;
+  f.advance(1000);
+  f.rooms.get(session.roomName).participants = [];
+  await f.service.handleRoomEvent({ event: 'participant_left', createdAt: (MAY + 1000) / 1000,
+    room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } });
+  assert.equal(f.state().session, null);
+  assert.ok(f.deleted.includes(session.roomName));
+  assert.equal(f.read('trips_active/o/t/voice_channel/isChannelStarted'), false);
+});
+
+test('a participant leave event does not immediately end a room with a connecting participant', async () => {
+  const f = fixture(); await f.reserve(); await f.join();
+  const session = f.state().session;
+  f.rooms.get(session.roomName).participants = [{ identity: 'new-user', state: 1 }];
+  await f.service.handleRoomEvent({ event: 'participant_left', createdAt: MAY / 1000,
+    room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'participant' } });
+  assert.equal(f.state().session.status, 'active');
+  assert.equal(f.deleted.length, 0);
+});
+
+test('admin departure closes the room even while participants and another host remain', async () => {
+  const f = fixture(); await f.reserve(); await f.join();
+  const session = f.state().session;
+  f.rooms.get(session.roomName).participants = [{ identity: 'participant' }, { identity: 'other' }];
+  await f.service.handleRoomEvent({ event: 'participant_left', createdAt: MAY / 1000,
+    room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } });
+  assert.equal(f.state().session, null);
+  assert.ok(f.deleted.includes(session.roomName));
+  assert.equal(f.read('trips_active/o/t/voice_channel/endReason'), 'admin_left');
+  assert.equal(f.read('trips_active/o/t/voice_channel/presence'), null);
+});
+
+test('failed LiveKit roster check cannot falsely declare admin departure', async () => {
+  const f = fixture(); await f.reserve(); await f.join();
+  const session = f.state().session; f.failList(true);
+  await assert.rejects(f.service.handleRoomEvent({ event: 'participant_left', createdAt: MAY / 1000,
+    room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } }), /unavailable/);
+  assert.equal(f.state().session.status, 'active');
+  assert.equal(f.deleted.length, 0);
 });
