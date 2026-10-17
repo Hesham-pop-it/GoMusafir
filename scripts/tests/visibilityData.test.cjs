@@ -21,7 +21,7 @@ function fixture(){
   database:{},ref:(_,path)=>({path}),
   query:target=>target,limitToLast:()=>null,
   onValue:(target,callback,onError)=>{
-   if(/^trip_view\/|\/chat_view$|\/locations\/|\/location_permissions\//.test(target.path||'')){
+   if(/^trip_view\/|\/chat_view(_staff)?$|\/locations\/|\/location_permissions\//.test(target.path||'')){
     if(!state.views||state.deny?.has(target.path)){onError(Error('permission_denied'));return ()=>{};}
     state.listens.set(target.path,{callback,onError});return ()=>state.listens.delete(target.path);
    }
@@ -323,4 +323,68 @@ test('voice status is no longer polled: the voice node is read directly, not thr
  const f=fixture();
  await assert.rejects(f.api.getVisibleSnapshot(f.ref('trips_active/o/t/voice_channel/isAllMuted'),'t'),/raw read not allowed/);
  assert.equal(f.state.calls.length,0);
+});
+const settle=()=>new Promise(resolve=>setImmediate(resolve));
+const pending=f=>f.state.queue.filter(item=>!item.cancelled);
+test('staff overlay the location fields from chat_view_staff onto chat lines; members never attach it',async()=>{
+ const f=fixture();f.state.views=true;const seen=[];
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>seen.push(snap.val()));
+ emit(f,'trip_view/t/staff',{a:entry('Me',true),b:entry('Bee',true)});
+ assert.ok(f.state.listens.has('trips_active/o/t/chat_view_staff'));
+ emit(f,'trips_active/o/t/chat_view',{m1:{sender_id:'b',type:'text',text:'Location is private'}});await settle();
+ assert.equal(seen.at(-1).m1.lat,undefined);
+ emit(f,'trips_active/o/t/chat_view_staff',{m1:{type:'location',text:'here',lat:1,lng:2}});
+ assert.equal(seen.at(-1).m1.type,'location');assert.equal(seen.at(-1).m1.lat,1);
+ stop();assert.equal(f.state.listens.size,0);
+ const g=fixture();g.state.views=true;g.state.deny=new Set(['trip_view/t/staff']);
+ const stopMember=g.api.onVisibleValue(g.ref('trips_active/o/t/chat'),'t',()=>{});
+ emit(g,'trip_view/t/member',{b:entry('Bee',false)});emit(g,'trip_view/t/staff/a',entry('Me',true));
+ assert.ok(!g.state.listens.has('trips_active/o/t/chat_view_staff'));stopMember();
+});
+test('a location listener is detached when its grant expires while attached, and timers stop with the screen',async()=>{
+ const f=fixture();f.state.views=true;f.state.deny=new Set(['trip_view/t/staff']);const places=[];
+ const map=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>places.push(snap.val()));
+ emit(f,'trip_view/t/member',{c:entry('',false)});emit(f,'trip_view/t/staff/a',entry('Me',true));
+ emit(f,'trips_active/o/t/location_permissions/c/a',{acceptedAt:1,expiresAt:Date.now()+30});
+ emit(f,'trips_active/o/t/locations/c',{lat:3,lng:4});
+ assert.ok(f.state.listens.has('trips_active/o/t/locations/c'));assert.equal(places.at(-1).c.lat,3);
+ assert.equal(pending(f).length,1);
+ await new Promise(resolve=>setTimeout(resolve,50));
+ await f.tick();
+ assert.ok(!f.state.listens.has('trips_active/o/t/locations/c'));assert.equal(places.at(-1).c,undefined);
+ emit(f,'trips_active/o/t/location_permissions/c/a',{acceptedAt:1,expiresAt:Date.now()+60000});
+ assert.equal(pending(f).length,1);map();assert.equal(pending(f).length,0);
+});
+test('a signalled chat line that never reaches chat_view switches to the poll after a grace; one that does keeps it live',async()=>{
+ const f=fixture();f.state.views=true;f.state.deny=new Set(['trip_view/t/staff']);
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',()=>{});
+ emit(f,'trip_view/t/member',{b:entry('Bee',false)});emit(f,'trip_view/t/staff/a',entry('Me',true));
+ emit(f,'trips_active/o/t/chat_view',{m1:{sender_id:'b',text:'hi'}});await settle();
+ f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>'m2'});
+ emit(f,'trips_active/o/t/chat_view',{m1:{sender_id:'b',text:'hi'},m2:{sender_id:'b',text:'two'}});
+ assert.equal(pending(f).length,0);assert.equal(f.state.calls.length,0);
+ f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>'m3'});
+ await f.run(5000);
+ assert.ok(!f.state.listens.has('trips_active/o/t/chat_view'));assert.ok(!f.state.listens.has('trip_view/t/member'));
+ await f.run(1000);assert.equal(f.state.calls.at(-1).params.section,'chat');
+ stop();
+});
+test('a refused own staff entry still lets the member view deliver',async()=>{
+ const f=fixture();f.state.views=true;f.state.deny=new Set(['trip_view/t/staff','trip_view/t/staff/a']);const users=[];
+ const stop=f.api.onVisibleValue(f.ref('users/b'),'t',snap=>users.push(snap.val()));
+ emit(f,'trip_view/t/member',{b:entry('Bee',false)});
+ assert.equal(users.at(-1).full_name,'Bee');assert.equal(f.state.calls.length,0);
+ stop();
+});
+test('staff readers get a 60 s notifications safety net; pilgrims keep 10 min',async()=>{
+ for(const staff of [true,false]){
+  const f=fixture();f.state.views=true;if(!staff)f.state.deny=new Set(['trip_view/t/staff']);
+  const dir=f.api.onVisibleValue(f.ref('users/b/profile'),'t',()=>{});
+  if(staff)emit(f,'trip_view/t/staff',{a:entry('Me',true),b:entry('Bee',true)});
+  else{emit(f,'trip_view/t/member',{b:entry('Bee',false)});emit(f,'trip_view/t/staff/a',entry('Me',false));}
+  const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/notifications'),'t',()=>{});
+  await f.run(1000);
+  assert.equal(pending(f).at(-1).ms,staff?60000:600000);
+  stop();dir();
+ }
 });
