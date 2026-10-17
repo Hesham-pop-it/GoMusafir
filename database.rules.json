@@ -488,6 +488,9 @@
       ".write": false
     },
     "voice_rooms": {
+      ".indexOn": [
+        "tripId"
+      ],
       ".read": false,
       ".write": false
     },
