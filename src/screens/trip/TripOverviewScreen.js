@@ -1,4 +1,5 @@
-import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, respondToLocationRequest, watchDirectoryUser } from '../../services/visibilityData';
+import { watchActiveSpeaker, watchPresence, presencePath } from '../../utils/voiceChannelFields';
 import React, { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -286,14 +287,7 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const presenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`);
-        const unsubscribe = onValue(presenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setVoicePresence(snapshot.val() || {});
-            } else {
-                setVoicePresence({});
-            }
-        });
+        const unsubscribe = watchPresence(database, orgId, tripId, 'voice', setVoicePresence);
 
         return () => unsubscribe();
     }, [tripId, orgId]);
@@ -301,19 +295,13 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const appPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`);
-        const unsubscribe = onValue(appPresenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setAppPresence(snapshot.val() || {});
-            } else {
-                setAppPresence({});
-            }
-        });
+        const appPresenceRef = ref(database, presencePath(orgId, tripId, 'app'));
+        const unsubscribe = watchPresence(database, orgId, tripId, 'app', setAppPresence);
 
         // Ensure own presence is marked online in RTDB immediately when viewing trip
         const myUid = auth.currentUser?.uid;
         if (myUid && AppState.currentState === 'active') {
-            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence/${myUid}`);
+            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence/${myUid}`);
             onDisconnect(itemRef).remove().catch(() => {});
             update(appPresenceRef, {
                 [myUid]: true
@@ -948,14 +936,7 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-        const unsubscribe = onVisibleValue(speakerRef, tripId, (snapshot) => {
-            if (snapshot.exists()) {
-                setActiveSpeakerData(snapshot.val());
-            } else {
-                setActiveSpeakerData(null);
-            }
-        });
+        const unsubscribe = watchActiveSpeaker(database, orgId, tripId, watchDirectoryUser(tripId), setActiveSpeakerData);
 
         return () => unsubscribe();
     }, [tripId, orgId]);

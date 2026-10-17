@@ -29,6 +29,7 @@ import { navigateToNotificationTarget, extractNotificationTimestamp } from '../u
 
 import { notificationSound, SOS } from '../../functions/services/notificationSoundConfig';
 import { playNotificationSound, stopNotificationSound } from '../services/notificationAudio';
+import { isInVoiceChannel } from '../utils/voiceChannelFields';
 import { subscribeForegroundNotifications, claimNotification, resetNotificationPresentation } from '../services/notificationPresentation';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -41,9 +42,7 @@ function playSoundUnlessInVoice(notif) {
         playNotificationSound(notif);
         return;
     }
-    get(ref(database, `trips_active/${notif.orgId}/${notif.tripId}/voice_channel/presence/${uid}`))
-        .then((snap) => snap.val() === true)
-        .catch(() => false)
+    isInVoiceChannel(database, notif.orgId, notif.tripId, uid)
         .then((inVoice) => { if (!inVoice) playNotificationSound(notif); });
 }
 

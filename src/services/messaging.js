@@ -1,6 +1,7 @@
 import { database, functions } from '../config/firebase';
 import { ref, onValue, set, get, serverTimestamp, query, orderByChild, startAt, limitToLast } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
+import { watchPresence } from '../utils/voiceChannelFields';
 import { threadIdFor } from '../utils/messagingRules';
 
 export { threadIdFor };
@@ -47,7 +48,7 @@ export const subscribeTeamRead = (orgId, tripId, staffUid, cb) => watch(`${paths
 // Report alerts, { reportId: { reporter, reported, threadId, at, staffThread? } } (staff only).
 export const subscribeReports = (orgId, tripId, cb) => watch(paths(orgId, tripId).reports, (v) => cb(v || {}));
 // App presence map { uid: true } for the trip.
-export const subscribePresence = (orgId, tripId, cb) => watch(`${paths(orgId, tripId).base}/voice_channel/app_presence`, (v) => cb(v || {}));
+export const subscribePresence = (orgId, tripId, cb) => watchPresence(database, orgId, tripId, 'app', cb);
 // Newest n messages of a path as an array, oldest first.
 export function subscribeLastMessages(path, n, cb) {
     return onValue(query(ref(database, path), limitToLast(n)), (snap) => {

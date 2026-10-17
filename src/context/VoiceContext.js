@@ -1,4 +1,5 @@
-import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue } from '../services/visibilityData';
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, watchDirectoryUser } from '../services/visibilityData';
+import { watchVoiceChannelState, watchActiveSpeaker, clearActiveSpeakerIfMine } from '../utils/voiceChannelFields';
 import { createVoiceActivityLifecycle } from '../utils/voiceActivityLifecycle';
 import { protectedSession } from '../services/protectedSessionService';
 import useAdminVoiceConnection from '../hooks/useAdminVoiceConnection';
@@ -311,8 +312,6 @@ export const VoiceProvider = ({ children }) => {
         const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
         if (speaking) {
             const myInfo = currentUserProfileRef.current;
-            const displayName = myInfo.name || auth.currentUser?.displayName || 'Hesham';
-            const displayAvatar = myInfo.avatar || auth.currentUser?.photoURL || '';
 
             if (myInfo.localAvatar) {
                 setActiveSpeakerAvatarUri(myInfo.localAvatar);
@@ -321,9 +320,8 @@ export const VoiceProvider = ({ children }) => {
             }
 
             try {
+                // Only the id and the flag are stored; every phone looks the name up in its directory.
                 await update(speakerRef, {
-                    name: displayName,
-                    avatar: displayAvatar,
                     uid: myUid,
                     speaking: true,
                     timestamp: Date.now()
@@ -331,12 +329,7 @@ export const VoiceProvider = ({ children }) => {
             } catch (err) {}
         } else {
             try {
-                const snap = await getVisibleSnapshot(speakerRef, activeTripId);
-                if (snap.exists() && snap.val()?.uid === myUid) {
-                    await update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                        activeSpeaker: null
-                    });
-                }
+                await clearActiveSpeakerIfMine(database, orgId, tripId, myUid);
             } catch (err) {}
         }
     }, []);
@@ -385,14 +378,7 @@ export const VoiceProvider = ({ children }) => {
             const orgId = activeOrgIdRef.current || activeOrgId;
             const tripId = activeTripIdRef.current || activeTripId;
             if (myUid && orgId && tripId) {
-                const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-                getVisibleSnapshot(speakerRef, activeTripId).then((snap) => {
-                    if (snap.exists() && snap.val()?.uid === myUid) {
-                        update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel`), {
-                            activeSpeaker: null
-                        }).catch(() => {});
-                    }
-                }).catch(() => {});
+                clearActiveSpeakerIfMine(database, orgId, tripId, myUid).catch(() => {});
             }
         };
     }, [room?.localParticipant, isConnected, isMuted, auth.currentUser, activeTripId, activeOrgId, reportSpeakingState]);
@@ -484,12 +470,10 @@ export const VoiceProvider = ({ children }) => {
         setIsChannelActive(null); // Reset to loading when trip changes
 
         const unsubscribeStatus = watchVoiceChannelStatus(database, orgIdToUse, tripIdToUse, setIsChannelActive);
-        const voiceRef = ref(database, `trips_active/${orgIdToUse}/${tripIdToUse}/voice_channel`);
         let observedEnd;
         let receivedInitialState = false;
-        const unsubscribe = onVisibleValue(voiceRef, activeTripId, (snapshot) => {
-            if (snapshot.exists()) {
-                const data = snapshot.val();
+        const unsubscribe = watchVoiceChannelState(database, orgIdToUse, tripIdToUse, (data) => {
+            if (data) {
                 if (receivedInitialState && data.endedSessionId !== observedEnd && data.endReason === 'pre_trip_exhausted' && isAdminRef.current) {
                     Alert.alert('Pre-trip Voice allowance used', 'Pre-trip Voice has been used. Full Voice will become available 24 hours before your journey starts.');
                 }
@@ -504,14 +488,7 @@ export const VoiceProvider = ({ children }) => {
             }
         });
 
-        const speakerRef = ref(database, `trips_active/${orgIdToUse}/${tripIdToUse}/voice_channel/activeSpeaker`);
-        const unsubscribeSpeaker = onVisibleValue(speakerRef, activeTripId, (snapshot) => {
-            if (snapshot.exists()) {
-                setActiveSpeakerData(snapshot.val());
-            } else {
-                setActiveSpeakerData(null);
-            }
-        });
+        const unsubscribeSpeaker = watchActiveSpeaker(database, orgIdToUse, tripIdToUse, watchDirectoryUser(activeTripId), setActiveSpeakerData);
 
         return () => {
             unsubscribe();
@@ -654,9 +631,9 @@ export const VoiceProvider = ({ children }) => {
                         if (myUid && currentTripId && currentOrgId) {
                             // Keep server-side cleanup armed even in the background. A killed
                             // process cannot run JavaScript to remove its presence.
-                            const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence/${myUid}`);
+                            const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence/${myUid}`);
                             onDisconnect(myPresenceRef).remove().catch(() => {});
-                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence`), {
+                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), {
                                 [myUid]: true
                             }).catch(() => {});
 
@@ -676,7 +653,7 @@ export const VoiceProvider = ({ children }) => {
                 // Mark app_presence (foreground UI activity) as null when backgrounded
                 if (myUid && currentTripId && currentOrgId) {
                     try {
-                        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence`);
+                        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence`);
                         await update(myAppPresenceRef, {
                             [myUid]: null
                         });
@@ -688,8 +665,8 @@ export const VoiceProvider = ({ children }) => {
                 // When app becomes active in foreground, restore app_presence
                 if (myUid && currentTripId && currentOrgId) {
                     try {
-                        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence`);
-                        const itemRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence/${myUid}`);
+                        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence`);
+                        const itemRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence/${myUid}`);
                         onDisconnect(itemRef).remove().catch(() => {});
                         update(myAppPresenceRef, {
                             [myUid]: true
@@ -697,9 +674,9 @@ export const VoiceProvider = ({ children }) => {
 
                         // If connected to voice chat, re-arm presence and active_hosts onDisconnect for when app is terminated
                         if (isConnectedRef.current) {
-                            const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence/${myUid}`);
+                            const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence/${myUid}`);
                             onDisconnect(myPresenceRef).remove().catch(() => {});
-                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence`), {
+                            update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), {
                                 [myUid]: true
                             }).catch(() => {});
 
@@ -734,8 +711,8 @@ export const VoiceProvider = ({ children }) => {
         const currentTripId = activeTripId;
 
         const connectedRef = ref(database, ".info/connected");
-        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence`);
-        const itemRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/app_presence/${currentUid}`);
+        const myAppPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence`);
+        const itemRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence/${currentUid}`);
 
         const markPresenceOnline = () => {
             if (appStateRef.current === 'active') {
@@ -756,9 +733,9 @@ export const VoiceProvider = ({ children }) => {
                 markPresenceOnline();
                 if (isConnectedRef.current && auth.currentUser?.uid) {
                     const presenceUid = auth.currentUser.uid;
-                    const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence/${presenceUid}`);
+                    const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence/${presenceUid}`);
                     onDisconnect(myPresenceRef).remove().catch(() => {});
-                    update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence`), {
+                    update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), {
                         [presenceUid]: true
                     }).catch(() => {});
 
@@ -1074,9 +1051,9 @@ export const VoiceProvider = ({ children }) => {
                 // Register presence in active presence list for ALL users in the voice chat
                 if (auth.currentUser?.uid) {
                     const presenceUid = auth.currentUser.uid;
-                    const myPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence/${presenceUid}`);
+                    const myPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_presence/${presenceUid}`);
                     onDisconnect(myPresenceRef).remove().catch(() => {});
-                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`), {
+                    update(ref(database, `trips_active/${orgId}/${tripId}/voice_presence`), {
                         [presenceUid]: true
                     }).catch(() => {});
                 }
@@ -1171,21 +1148,15 @@ export const VoiceProvider = ({ children }) => {
                     [myUid]: null
                 }).catch(() => {});
 
-                const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence/${myUid}`);
+                const myPresenceRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence/${myUid}`);
                 onDisconnect(myPresenceRef).remove().catch(() => {});
-                update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/presence`), {
+                update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), {
                     [myUid]: null
                 }).catch(() => {});
 
                 // Clean up activeSpeaker if current user was speaking
-                const speakerRef = ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel/activeSpeaker`);
                 try {
-                    const snap = await getVisibleSnapshot(speakerRef, activeTripId);
-                    if (snap.exists() && snap.val()?.uid === myUid) {
-                        await update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_channel`), {
-                            activeSpeaker: null
-                        });
-                    }
+                    await clearActiveSpeakerIfMine(database, currentOrgId, currentTripId, myUid);
                 } catch (e) {}
             }
 
@@ -1219,7 +1190,7 @@ export const VoiceProvider = ({ children }) => {
             const tripId = activeTripIdRef.current;
             const orgId = activeOrgIdRef.current;
             if (uid && tripId && orgId) {
-                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`), { [uid]: null }).catch(() => {});
+                update(ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence`), { [uid]: null }).catch(() => {});
             }
             disconnect();
         });
@@ -1352,8 +1323,8 @@ export const VoiceProvider = ({ children }) => {
         const promises = [];
         if (tripId && orgId) {
             promises.push(
-                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`), { [myUid]: null }).catch(() => {}),
-                update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`), { [myUid]: null }).catch(() => {}),
+                update(ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence`), { [myUid]: null }).catch(() => {}),
+                update(ref(database, `trips_active/${orgId}/${tripId}/voice_presence`), { [myUid]: null }).catch(() => {}),
                 update(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/active_hosts`), { [myUid]: null }).catch(() => {})
             );
         }

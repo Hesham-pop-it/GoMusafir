@@ -6,6 +6,7 @@ import { RoomEvent, ConnectionState } from 'livekit-client';
 import { ref, onValue } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { database, functions } from '../config/firebase';
+import { watchOwnVoicePresence } from '../utils/voiceChannelFields';
 
 const HOST_ROLES = ['admin', 'manager', 'co-host'];
 
@@ -35,8 +36,7 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
     useEffect(() => {
         setPresenceReady(false);
         if (!connected || !orgId || !tripId || !uid || !databaseConnected) return;
-        return onValue(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence/${uid}`),
-            snapshot => setPresenceReady(snapshot.val() === true), () => setPresenceReady(false));
+        return watchOwnVoicePresence(database, orgId, tripId, uid, setPresenceReady);
     }, [connected, orgId, tripId, uid, databaseConnected]);
 
     useEffect(() => {
