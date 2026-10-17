@@ -1,5 +1,5 @@
 import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
-import { getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
+import { getVisibleSnapshot, onVisibleValue, respondToLocationRequest, resolveSos } from '../../services/visibilityData';
 import React, { useEffect, useState } from 'react';
 import {
     View,
@@ -338,6 +338,15 @@ const NotificationScreen = ({ navigation, route }) => {
         }
     };
 
+    const handleResolveSos = async (item) => {
+        try {
+            await resolveSos(item.tripId, item.id);
+            setNotifications(prev => prev.map(n => n.id === item.id ? { ...n, resolved_at: Date.now() } : n));
+        } catch (error) {
+            Alert.alert('SOS', error.message || 'Could not resolve. Please retry.');
+        }
+    };
+
     const rendernotificationItem = ({ item }) => {
         let iconName = 'bell-outline';
         let iconColor = '#FFF';
@@ -378,6 +387,13 @@ const NotificationScreen = ({ navigation, route }) => {
                             </TouchableOpacity>
                         </View>
                     )}
+                    {item.type === 'emergency' && (item.resolved_at ? (
+                        <Text style={{ color: '#34C759', marginTop: 12 }}>{t('notif_sos_resolved')}</Text>
+                    ) : (
+                        <TouchableOpacity accessibilityRole="button" style={{ marginTop: 12 }} onPress={() => handleResolveSos(item)}>
+                            <Text style={{ color: '#B99A4A' }}>{t('notif_sos_resolve')}</Text>
+                        </TouchableOpacity>
+                    ))}
                     {Boolean(item.timestamp) && (
                         <Text style={styles.timeText}>
                             {formatNotificationTime(item.timestamp)}
