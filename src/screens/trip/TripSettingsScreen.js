@@ -635,29 +635,10 @@ const TripSettingsScreen = () => {
         }
     };
 
-    const handleDeleteAccount = async () => {
-        setIsDeletingAccount(true);
-        try {
-            const { functions } = require('../../config/firebase');
-            const { httpsCallable } = require('firebase/functions');
-            const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
-            await deleteMyAccount();
-            setDeleteAccountModalVisible(false);
-            await completeAccountDeletion(auth, navigation);
-        } catch (error) {
-            setDeleteAccountModalVisible(false);
-            if (error.code === 'auth/requires-recent-login' || error.message?.includes('re-authenticate')) {
-                Alert.alert(
-                    "Security Verification",
-                    "For your security, please log out and log back in to verify your identity before proceeding.",
-                    [{ text: "OK" }]
-                );
-            } else {
-                Alert.alert("Error", error.message || "Failed to delete account");
-            }
-        } finally {
-            setIsDeletingAccount(false);
-        }
+    const handleDeleteAccount = () => {
+        // The warning and re-authentication happen on their own screen.
+        setDeleteAccountModalVisible(false);
+        navigation.navigate('DeleteAccount');
     };
 
 

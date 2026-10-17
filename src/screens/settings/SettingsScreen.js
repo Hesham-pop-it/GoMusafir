@@ -110,10 +110,9 @@ const SettingsScreen = ({ navigation }) => {
                 setDeleteVisible(false);
                 await safeSignOut(auth);
             } else {
-                const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
-                await deleteMyAccount();
+                // The warning and re-authentication happen on their own screens.
                 setDeleteVisible(false);
-                await completeAccountDeletion(auth, navigation);
+                navigation.navigate(userRole === 'admin' ? 'DeleteOrganization' : 'DeleteAccount');
             }
         } catch (error) {
             setDeleteVisible(false);
