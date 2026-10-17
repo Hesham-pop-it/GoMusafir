@@ -573,5 +573,5 @@ exports.onNotificationUpdated = onValueUpdated({
     region: "europe-west1"
 }, async (event) => {
     const { orgId, tripId, uid } = event.params;
-    await signalNotifications(db, orgId, tripId, uid, event.id);
+    await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
 });
