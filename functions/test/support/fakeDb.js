@@ -44,20 +44,25 @@ function createFakeDb(initial = {}) {
     update: async values => {
       for (const [k, v] of Object.entries(values)) write(path ? `${path}/${k}` : k, v);
     },
-    orderByChild: child => ({
-      equalTo: expected => ({ get: async () => {
-        const all = read(path) || {};
-        const hit = {};
-        Object.keys(all).forEach(k => { if (childValue(all[k], child) === expected) hit[k] = all[k]; });
-        return snapshot(Object.keys(hit).length ? hit : null);
-      } }),
-      startAt: min => ({ get: async () => {
-        const all = read(path) || {};
-        const hit = {};
-        Object.keys(all).forEach(k => { const v = childValue(all[k], child); if (typeof v === 'number' && v >= min) hit[k] = all[k]; });
-        return snapshot(Object.keys(hit).length ? hit : null);
-      } }),
-    }),
+    orderByChild: child => {
+      const filters = []; let limit = Infinity;
+      const query = {
+        equalTo: expected => { filters.push(v => v === expected); return query; },
+        startAt: min => { filters.push(v => typeof v === 'number' && v >= min); return query; },
+        endAt: max => { filters.push(v => typeof v === 'number' && v <= max); return query; },
+        limitToFirst: n => { limit = n; return query; },
+        get: async () => {
+          const all = read(path) || {};
+          const hit = {};
+          Object.keys(all)
+            .filter(k => filters.every(f => f(childValue(all[k], child))))
+            .sort((a, b) => (childValue(all[a], child) - childValue(all[b], child)) || 0)
+            .slice(0, limit).forEach(k => { hit[k] = all[k]; });
+          return snapshot(Object.keys(hit).length ? hit : null);
+        },
+      };
+      return query;
+    },
   });
   return { ref, dump: () => clone(root), read };
 }

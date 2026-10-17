@@ -163,20 +163,67 @@ test('purgeOrganization removes trips and staff but keeps payments, Stripe id an
   assert.ok(auth.calls.some(c => c[0] === 'revoke' && c[1] === 'c1'));
   assert.ok(!auth.calls.some(c => c[0] === 'delete'), 'accounts are kept');
 });
-test('findOrganizationsDueForPurge honours the 30 day grace period and skips purged orgs', async () => {
+const markDeleted = async (svc, db, orgId, at) => {
+  await svc.markOrganizationDeleted(orgId, { at, by: 'owner', tokenHash: 'h' });
+  assert.equal((await db.ref(`orgs/${orgId}/metadata/deleted_at`).get()).val(), at);
+};
+test('markOrganizationDeleted sets the three metadata fields and queues the organisation', async () => {
   const { db, svc } = setup();
-  await db.ref('orgs/org1/metadata/deleted_at').set(NOW - 29 * DAY);
-  await db.ref('orgs/org2/metadata/deleted_at').set(NOW - 31 * DAY);
+  const out = await svc.markOrganizationDeleted('org1', { at: NOW, by: 'owner', tokenHash: 'abc' });
+  const d = db.dump();
+  assert.deepEqual(out, { deleted_at: NOW, purge_after: NOW + 30 * DAY });
+  assert.equal(d.orgs.org1.metadata.deleted_at, NOW);
+  assert.equal(d.orgs.org1.metadata.purge_after, NOW + 30 * DAY);
+  assert.equal(d.orgs.org1.metadata.deleted_by, 'owner');
+  assert.equal(d.orgs.org1.metadata.stripe_customer_id, 'cus_1');
+  assert.deepEqual(d.org_deletions.org1, { deleted_at: NOW, purge_after: NOW + 30 * DAY, deleted_by: 'owner', token_hash: 'abc' });
+});
+test('restoreOrganization clears the marks and the queue entry and keeps all data', async () => {
+  const { db, svc } = setup();
+  await svc.markOrganizationDeleted('org1', { at: NOW, by: 'owner' });
+  await svc.restoreOrganization('org1');
+  const d = db.dump();
+  assert.equal(d.org_deletions, undefined);
+  assert.equal(d.orgs.org1.metadata.deleted_at, undefined);
+  assert.equal(d.orgs.org1.metadata.purge_after, undefined);
+  assert.equal(d.orgs.org1.metadata.stripe_customer_id, 'cus_1');
+  assert.ok(d.orgs.org1.trips.t1);
+});
+test('findOrganizationsDueForPurge uses the queue, honours the 30 day grace period and drops stale entries', async () => {
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 29 * DAY);
+  await markDeleted(svc, db, 'org2', NOW - 31 * DAY);
   assert.deepEqual(await svc.findOrganizationsDueForPurge(), ['org2']);
-  await db.ref('orgs/org1/metadata/deleted_at').set(NOW - 30 * DAY);
+  await db.ref('org_deletions/org1/purge_after').set(NOW);
   assert.deepEqual((await svc.findOrganizationsDueForPurge()).sort(), ['org1', 'org2']);
+  // purged or restored organisations leave the queue
   await db.ref('orgs/org2/metadata/purged_at').set(NOW);
-  assert.deepEqual(await svc.findOrganizationsDueForPurge(), ['org1']);
+  await db.ref('orgs/org1/metadata/deleted_at').remove();
+  assert.deepEqual(await svc.findOrganizationsDueForPurge(), []);
+  assert.equal(db.dump().org_deletions, undefined);
   assert.equal(ORG_PURGE_GRACE_MS, 30 * DAY);
 });
+test('findOrganizationsDueForPurge is bounded by the limit', async () => {
+  const { db, svc } = setup();
+  for (let i = 0; i < 5; i++) {
+    await db.ref(`orgs/bulk${i}/metadata/deleted_at`).set(NOW - 40 * DAY);
+    await db.ref(`org_deletions/bulk${i}`).set({ purge_after: NOW - (10 - i) * DAY });
+  }
+  assert.deepEqual(await svc.findOrganizationsDueForPurge({ limit: 2 }), ['bulk0', 'bulk1']);
+});
+test('purgeOrganization revokes the sessions of staff and participants first and leaves the queue', async () => {
+  const db = createFakeDb(seed()); const bucket = createFakeBucket(); const auth = createFakeAuth({ c1: {}, owner: {}, p1: {} });
+  const revoked = [];
+  const svc = createAccountCleanup({ db, bucket, auth, now: () => NOW, revokeSessions: async uid => revoked.push(uid) });
+  await svc.markOrganizationDeleted('org1', { at: NOW - 40 * DAY, by: 'owner' });
+  await svc.purgeOrganization('org1');
+  assert.deepEqual(revoked.sort(), ['c1', 'owner', 'p1', 'shared']);
+  assert.equal(db.dump().org_deletions, undefined);
+  assert.equal(db.dump().orgs.org1.metadata.stripe_customer_id, 'cus_1');
+});
 test('the purge job does nothing unless explicitly enabled', async () => {
-    const { db, svc } = setup();
-  await db.ref('orgs/org2/metadata/deleted_at').set(NOW - 40 * DAY);
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org2', NOW - 40 * DAY);
   const dry = await runOrganizationPurge(svc, { enabled: false });
   assert.deepEqual(dry.due, ['org2']);
   assert.deepEqual(dry.purged, []);
