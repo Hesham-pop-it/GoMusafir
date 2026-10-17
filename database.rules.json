@@ -171,6 +171,9 @@
           },
           "notifications": {
             "$targetUid": {
+              ".indexOn": [
+                "type"
+              ],
               ".read": false,
               ".write": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())))",
               "$notificationId": {
@@ -434,6 +437,13 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
+    },
+    "notification_expiry": {
+      ".indexOn": [
+        "at"
+      ],
+      ".read": false,
+      ".write": false
     },
     "trip_expirations": {
       ".indexOn": [

@@ -1,5 +1,6 @@
 const { admin, db } = require("../admin");
 const { notificationSound } = require("./notificationSoundConfig");
+const { loadTerms, visibleUntil, expiryEntry } = require("./notificationTerms");
 
 /**
  * Sends a push notification to a specific user via FCM.
@@ -112,7 +113,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                     const notificationRef = db.ref(`users/${uid}/notifications`).push();
                     sanitizedData.notificationId = notificationRef.key;
                     sanitizedData.isUserGlobal = 'true';
-                    await notificationRef.set({
+                    const record = {
                         title: title || "GoMusafir Update",
                         message: body || "",
                         type: data.type || options.type || "push",
@@ -127,7 +128,12 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
                         timestamp: Date.now(),
                         read: false,
                         senderUid: data.senderUid || data.sender_id || null
-                    });
+                    };
+                    // The server sets how long the record stays visible and lists it for the daily prune.
+                    const until = visibleUntil(record, await loadTerms(db));
+                    const path = `users/${uid}/notifications/${notificationRef.key}`;
+                    if (until) record.visible_until = until;
+                    await db.ref().update({ [path]: record, ...(until ? expiryEntry(notificationRef.key, path, until) : {}) });
                 } catch (dbErr) {
                     console.error(`[NotificationService] DB save failed for ${uid}:`, dbErr.message);
                 }
