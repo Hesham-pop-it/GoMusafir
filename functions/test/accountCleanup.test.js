@@ -23,6 +23,9 @@ const seed = () => ({
     org2: { staff: { owner2: 'admin' }, trips: { t2: { title: 'Other' } } },
   },
   trips_orgs: { t1: 'org1', t2: 'org2', t3: 'org1' },
+  trip_view: { t1: { member: { p1: { name: 'x' } } }, t3: { member: { p1: { name: 'x' } } } },
+  trip_seat_counts: { t1: 3, t3: 1 },
+  trip_voice_due: { t1: 5, t3: 6 },
   voice_speakers: { org1: { t1: { sessionId: 's' }, t3: { sessionId: 's3' } } },
   voice_rooms: { gm_t1_a: { orgId: 'org1', tripId: 't1' }, gm_t1_b: { orgId: 'org1', tripId: 't1' }, gm_t3_a: { orgId: 'org1', tripId: 't3' } },
   voice_speaker_locks: { gm_t1_a: { owner: 'x' } },
@@ -143,6 +146,10 @@ test('deleteTripData removes trip records and media, keeps a cover shared with a
   assert.equal(d.orgs.org1.trips.t1, undefined);
   assert.equal(d.trips_active.org1.t1, undefined);
   assert.equal(d.invites, undefined);
+  assert.equal(d.trip_view.t1, undefined);
+  assert.equal(d.trip_seat_counts.t1, undefined);
+  assert.equal(d.trip_voice_due.t1, undefined);
+  assert.ok(d.trip_view.t3 && d.trip_seat_counts.t3 && d.trip_voice_due.t3, 'other trips keep their derived nodes');
   assert.equal(d.voice_speakers.org1.t1, undefined);
   assert.deepEqual(Object.keys(d.voice_rooms), ['gm_t3_a']);
   assert.equal(d.voice_speaker_locks, undefined);

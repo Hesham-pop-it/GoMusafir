@@ -85,6 +85,9 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
       [`trip_feature_access/${orgId}/${tripId}`]: null,
       [`voice_inactivity/${orgId}/${tripId}`]: null,
       [`voice_speakers/${orgId}/${tripId}`]: null,
+      [`trip_view/${tripId}`]: null,
+      [`trip_seat_counts/${tripId}`]: null,
+      [`trip_voice_due/${tripId}`]: null,
     };
     Object.keys(rooms).forEach((roomName) => {
       updates[`voice_rooms/${roomName}`] = null;
