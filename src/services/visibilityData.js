@@ -72,48 +72,62 @@ export async function getVisibleSnapshot(target, tripId) {
 }
 // iOS/Android can suspend networking in the background. Screen-data polling
 // follows app visibility; location tracking is managed by its own native service.
-function startForegroundPolling(task, intervalMs = 4000) {
-    let stopped = false, timer = null, revision = 0, running = false, again = false;
+function startForegroundPolling(task, intervalMs = 4000, firstDelayMs = 0) {
+    // `running` counts polls: a foreground change can start one while an older one is in flight.
+    let stopped = false, timer = null, due = 0, revision = 0, running = 0, again = false, gap = 0, lastStart = 0;
     let state = AppState.currentState;
     const active = () => !state || state === 'active';
+    // Keeps the earliest of a pending and a new request.
+    const schedule = ms => {
+        if (timer && due <= Date.now() + ms) return;
+        clearTimeout(timer);
+        due = Date.now() + ms;
+        timer = setTimeout(poll, ms);
+    };
     const poll = async () => {
+        timer = null;
         if (stopped || !active()) return;
         const started = revision;
         const isCurrent = () => !stopped && active() && revision === started;
-        running = true; again = false;
+        running += 1; again = false; lastStart = Date.now();
         try { await task(isCurrent); }
         finally {
-            running = false;
-            if (isCurrent()) timer = setTimeout(poll, again ? 0 : intervalMs);
+            running -= 1;
+            if (isCurrent()) schedule(again ? Math.max(0, lastStart + gap - Date.now()) : intervalMs);
         }
     };
     const subscription = AppState.addEventListener('change', next => {
         if (next === state) return;
         state = next;
         revision += 1;
-        clearTimeout(timer);
-        if (active()) timer = setTimeout(poll, 0);
+        clearTimeout(timer); timer = null;
+        if (active()) schedule(0);
     });
-    if (active()) timer = setTimeout(poll, 0);
+    if (active()) schedule(firstDelayMs);
     const stop = () => {
         stopped = true;
         revision += 1;
         clearTimeout(timer);
         subscription.remove();
     };
-    // Poll as soon as possible; a poll already running is followed by one more.
-    stop.now = () => {
+    // Poll as soon as possible, but not within minGapMs of the last start; a poll
+    // already running is followed by one more.
+    stop.now = (minGapMs = 0) => {
         if (stopped || !active()) return;
-        if (running) { again = true; return; }
-        clearTimeout(timer);
-        timer = setTimeout(poll, 0);
+        if (running) { again = true; gap = minGapMs; return; }
+        schedule(Math.max(0, lastStart + minGapMs - Date.now()));
     };
+    stop.setInterval = ms => { if (ms === intervalMs) return; intervalMs = ms; stop.now(); };
     return stop;
 }
 // Chat, voice and notifications are fetched when their server-written signal
 // moves, when the directory changes (names follow privacy choices), and as a
 // slow fallback in case a signal is missed.
 const SIGNAL_FALLBACK_MS = 30000;
+// Voice presence can move several times a second; one fetch per gap is enough.
+const SIGNAL_GAP_MS = 1500;
+// The first fetch waits this long for the signal's first value.
+const SIGNAL_FIRST_WAIT_MS = 1000;
 const SIGNALLED = ['chat', 'voice', 'notifications'];
 function signalPath(request, uid) {
     const [, orgId, tripId] = request.path.split('/');
@@ -122,13 +136,16 @@ function signalPath(request, uid) {
     if (request.section === 'voice') return `${root}/voice_signal`;
     return `${root}/notification_signal/${uid}`;
 }
+// The first value also triggers a fetch: the first fetch waits for it, so no
+// line written between that fetch and the listener's start is missed. A refused
+// listener (rules not yet deployed, trip ended) falls back to the old 4 s poll.
 function watchSignal(group, uid, path) {
     let last;
     return onValue(ref(database, path), signal => {
         const next = signal.val();
-        if (last !== undefined && next !== last && auth.currentUser?.uid === uid) group.stopPolling?.now();
+        if ((last === undefined || next !== last) && auth.currentUser?.uid === uid) group.stopPolling?.now(last === undefined ? 0 : SIGNAL_GAP_MS);
         last = next;
-    }, () => {});
+    }, () => group.stopPolling?.setInterval(4000));
 }
 function subscribe(request, client) {
     const uid = auth.currentUser?.uid;
@@ -163,7 +180,7 @@ function subscribe(request, client) {
             }
         };
         const signalled = SIGNALLED.includes(request.section);
-        group.stopPolling = startForegroundPolling(poll, signalled ? SIGNAL_FALLBACK_MS : 4000);
+        group.stopPolling = startForegroundPolling(poll, signalled ? SIGNAL_FALLBACK_MS : 4000, signalled ? SIGNAL_FIRST_WAIT_MS : 0);
         if (signalled) group.stopSignal = watchSignal(group, uid, signalPath(request, uid));
     } else {
         // A screen joining a running group gets data now, not after the next interval.

@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/services/visibilityData.js'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 function fixture(){
- const state={calls:[],queue:[],signals:new Map(),data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
+ const state={calls:[],queue:[],signals:new Map(),signalErrors:new Map(),data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
  const auth={get currentUser(){return state.uid?{uid:state.uid}:null;}};
  const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible,useVisibilityRevision,visibilitySignature})',{
   auth,functions:{},URL,console,
@@ -19,9 +19,9 @@ function fixture(){
    const hash=JSON.stringify(state.data);return {data:params.knownHash===hash?{envelope:1,unchanged:true,hash}:{envelope:1,hash,data:structuredClone(state.data)}};},
   get:async()=>{throw Error('raw read not allowed');},
   database:{},ref:(_,path)=>({path}),
-  onValue:(target,callback)=>{
+  onValue:(target,callback,onError)=>{
    if(!/\/(chat_signal|voice_signal|notification_signal\/[^/]+)$/.test(target.path||''))throw Error('raw subscription not allowed');
-   state.signals.set(target.path,callback);return ()=>state.signals.delete(target.path);
+   state.signals.set(target.path,callback);state.signalErrors.set(target.path,onError);return ()=>state.signals.delete(target.path);
   },
   setTimeout:(fn,ms)=>{const item={fn,ms};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
  });
@@ -196,14 +196,61 @@ test('voice and own notifications follow their signals with the same slow fallba
  const voice=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
  const notes=f.api.onVisibleValue(f.ref('trips_active/o/t/notifications/a'),'t',()=>{});
  assert.deepEqual([...f.state.signals.keys()].sort(),['trips_active/o/t/notification_signal/a','trips_active/o/t/voice_signal']);
+ assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===1000).length,2);
+ f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>null});
+ f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>null});
  await f.run(0);await f.run(0);
+ assert.equal(f.state.calls.length,2);
  assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===30000).length,2);
  const sections=()=>f.state.calls.map(call=>call.params.section);
- f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>null});
+ const soon=async()=>{const item=f.state.queue.find(item=>!item.cancelled&&item.ms<30000);f.state.queue.splice(f.state.queue.indexOf(item),1);await item.fn();};
  f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>'e1'});
- await f.run(0);assert.equal(sections().at(-1),'voice');
- f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>null});
+ await soon();assert.equal(sections().at(-1),'voice');
  f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>'e2'});
- await f.run(0);assert.equal(sections().at(-1),'notifications');
+ await soon();assert.equal(sections().at(-1),'notifications');
  voice();notes();assert.equal(f.state.signals.size,0);
+});
+test('the first fetch waits for the signal and a late first value fetches again',async()=>{
+ const f=fixture();
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',()=>{});
+ await f.run(1000);assert.equal(f.state.calls.length,1);
+ f.state.signals.get('trips_active/o/t/chat_signal')({val:()=>'m9'});
+ await f.run(0);assert.equal(f.state.calls.length,2);
+ stop();
+});
+test('a refused signal listener falls back to the four second poll',async()=>{
+ const f=fixture();
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
+ f.state.signalErrors.get('trips_active/o/t/voice_signal')(Error('permission_denied'));
+ await f.run(0);await f.run(4000);
+ assert.equal(f.state.calls.length,2);
+ assert.ok(f.state.queue.some(item=>!item.cancelled&&item.ms===4000));
+ stop();
+});
+test('signal bursts fetch at most once per gap',async()=>{
+ const f=fixture();
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
+ const signal=f.state.signals.get('trips_active/o/t/voice_signal');
+ signal({val:()=>null});await f.run(0);
+ for(const id of ['e1','e2','e3'])signal({val:()=>id});
+ const pending=f.state.queue.filter(item=>!item.cancelled&&item.ms<30000);
+ assert.equal(pending.length,1);assert.ok(pending[0].ms>1000&&pending[0].ms<=1500);
+ stop();
+});
+test('a signal during overlapping foreground polls still fetches after both finish',async()=>{
+ const f=fixture();
+ f.state.data.m1={text:'one'};
+ const messages=[];
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>messages.push(snap.val()));
+ const signal=f.state.signals.get('trips_active/o/t/chat_signal');
+ signal({val:()=>'m1'});
+ let release;f.state.wait=new Promise(resolve=>{release=resolve;});
+ const first=f.tick();
+ f.changeState('background');f.changeState('active');
+ const second=f.tick();
+ f.state.data.m2={text:'two'};signal({val:()=>'m2'});
+ release();f.state.wait=null;await first;await second;
+ await f.tick();
+ assert.ok(messages.at(-1).m2);
+ stop();
 });
