@@ -538,9 +538,16 @@ export const VoiceProvider = ({ children }) => {
                 checking = false;
             }
         };
-        confirm();
-        const retry = setInterval(confirm, 3000);
-        return () => { stopped = true; clearInterval(retry); };
+        // Retry with growing gaps (3 s up to 60 s) instead of a fixed 3 s poll.
+        let delay = 3000, retry;
+        const attempt = async () => {
+            await confirm();
+            if (stopped) return;
+            retry = setTimeout(attempt, delay);
+            delay = Math.min(delay * 2, 60000);
+        };
+        attempt();
+        return () => { stopped = true; clearTimeout(retry); };
     }, [isConnected, activeTripId, activeOrgId, isChannelActive]);
 
     // Fetch Trip Title and Image for UI

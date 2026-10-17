@@ -79,6 +79,7 @@ function fixture({ coldCache = false } = {}) {
         if (name === '../admin') return { db };
         if (name === 'livekit-server-sdk') return livekit;
         if (name === 'firebase-functions/v2/https') return { HttpsError };
+        if (name === './comparableValue') return require('../services/comparableValue');
         if (name.includes('guardedTransaction')) return require('../services/guardedTransaction');
         if (name.includes('tripFeatureState')) return require('../services/tripFeatureState');
         if (name.includes('tripVoiceService')) return service;
@@ -500,4 +501,13 @@ test('failed LiveKit roster check cannot falsely declare admin departure', async
     room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } }), /unavailable/);
   assert.equal(f.state().session.status, 'active');
   assert.equal(f.deleted.length, 0);
+});
+test('a refresh with nothing changed does not rewrite the access node', async () => {
+  const f = fixture(); await f.refresh();
+  const before = JSON.stringify(f.state());
+  f.advance(5000); await f.refresh();
+  assert.equal(JSON.stringify(f.state()), before);
+  f.advance(5000); f.write('orgs/o/trips/t/end_date', trip.end_date + DAY_MS); await f.refresh();
+  assert.notEqual(JSON.stringify(f.state()), before);
+  assert.equal(f.state().tripEndsAt, trip.end_date + DAY_MS);
 });
