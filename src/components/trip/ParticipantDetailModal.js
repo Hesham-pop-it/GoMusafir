@@ -13,6 +13,7 @@ import { detailButtonsFor, threadIdFor } from '../../utils/messagingRules';
 import { openConversation, openStaffPrivate } from '../../utils/openConversation';
 import { openStaffChat } from '../../services/messaging';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
+import RemoteImage from '../RemoteImage';
 
 const { width } = Dimensions.get('window');
 
@@ -343,7 +344,7 @@ const ParticipantDetailModal = ({
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.detailHeader}>
-                        <Image source={{ uri: displayAvatar }} style={styles.detailAvatar} />
+                        <RemoteImage source={{ uri: displayAvatar }} style={styles.detailAvatar} />
                         <Text style={styles.detailName}>{participant.name}</Text>
                     </View>
 

@@ -21,6 +21,7 @@ import GradientBorderButton from '../../components/GradientBorderButton';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
 import { Alert } from 'react-native';
+import RemoteImage from '../../components/RemoteImage';
 
 const TrashIcon = ({ color = "#FF383C" }) => (
     <Svg width="24" height="28" viewBox="0 0 24 28" fill="none">
@@ -142,7 +143,7 @@ const JourneyTeamScreen = () => {
 
     const renderMember = ({ item }) => (
         <View style={styles.memberItem}>
-            <Image source={{ uri: item.avatar }} style={styles.avatar} />
+            <RemoteImage source={{ uri: item.avatar }} style={styles.avatar} />
             <View style={styles.memberInfo}>
                 <Text style={styles.nameText}>{item.name}</Text>
                 <Text style={styles.roleText}>{item.role}</Text>

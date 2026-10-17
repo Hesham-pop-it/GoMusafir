@@ -1473,7 +1473,7 @@ const TripChatScreen = () => {
                                         <Ionicons name="shield-outline" size={22} color="#FFF" />
                                     </View>
                                 ) : conversation?.avatar ? (
-                                    <Image source={{ uri: conversation.avatar }} style={styles.headerAvatar} />
+                                    <RemoteImage source={{ uri: conversation.avatar }} style={styles.headerAvatar} />
                                 ) : (
                                     <View style={[styles.headerAvatar, styles.headerAvatarFallback]}>
                                         <Text style={styles.headerAvatarInitials}>
