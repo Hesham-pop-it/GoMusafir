@@ -437,7 +437,11 @@ function notifications({ inVoice = [] } = {}) {
     'users/staff1': { profile: { firstName: 'Sam', lastName: 'Host' } } });
   const dependencies = {
     'firebase-functions/v2/database': { onValueCreated: (o, h) => h, onValueUpdated: (o, h) => h, onValueWritten: (o, h) => h },
-    '../services/notificationService': { sendPushNotification: async (uid, t, b, p, o) => pushes.push({ uid, o }) },
+    '../services/notificationService': {
+      sendPushNotification: async (uid, t, b, p, o) => pushes.push({ uid, o }),
+      sendPushToMany: async (uids, t, b, p, o, quietFor) => { for (const uid of uids) pushes.push({ uid, o: await quietFor(uid) ? { ...o, quiet: true } : o }); },
+    },
+    '../services/notificationStamp': { stampNotification: async () => null, onlyStamped: () => false },
     '../services/tripSignals': {
       signalChat: async (d, o, t, id) => signals.push(['chat', id]),
       signalVoice: async (d, o, t, id) => signals.push(['voice', id]),

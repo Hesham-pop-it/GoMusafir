@@ -2,7 +2,7 @@
 // Handles Realtime Database triggers for push notifications.
 
 const { onValueCreated, onValueUpdated, onValueWritten } = require("firebase-functions/v2/database");
-const { sendPushNotification } = require("../services/notificationService");
+const { sendPushNotification, sendPushToMany } = require("../services/notificationService");
 const { admin, db } = require("../admin");
 const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
@@ -78,15 +78,10 @@ exports.onChatCreated = onValueCreated({
             skipDbSave: true
         };
 
-        // 1. Dispatch push notification to all recipients directly
-        const pushPromises = allRecipientUids.map(async recipientUid => {
-            // Quiet (no sound) while the recipient is in the voice channel.
-            const quiet = await isInVoice(orgId, tripId, recipientUid);
-            return sendPushNotification(recipientUid, title, body, payload, quiet ? { ...options, quiet: true } : options);
-        });
-
+        // One push for everyone, sent in groups of at most 500 tokens; quiet (no sound) while the recipient is in the voice channel.
+        await sendPushToMany(allRecipientUids, title, body, payload, options,
+            recipientUid => isInVoice(orgId, tripId, recipientUid));
         // Group chat messages leave no notification record: the chat is the history, the push stays.
-        await Promise.all(pushPromises);
     } catch (error) {
         console.log("Error in onChatCreated:", error);
     }
