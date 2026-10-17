@@ -438,6 +438,20 @@
         ".write": false
       }
     },
+    "otp_codes": {
+      ".indexOn": [
+        "expiresAt"
+      ],
+      ".read": false,
+      ".write": false
+    },
+    "otp_email_rate": {
+      ".indexOn": [
+        "start"
+      ],
+      ".read": false,
+      ".write": false
+    },
     "trip_expirations": {
       ".indexOn": [
         "expires_at"
