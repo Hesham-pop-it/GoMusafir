@@ -110,13 +110,21 @@ function startForegroundPolling(task, intervalMs = 4000) {
     };
     return stop;
 }
-// Chat is fetched when the server-written chat signal moves, when the
-// directory changes (names in messages follow privacy choices), and as a
+// Chat, voice and notifications are fetched when their server-written signal
+// moves, when the directory changes (names follow privacy choices), and as a
 // slow fallback in case a signal is missed.
-const CHAT_FALLBACK_MS = 30000;
-function watchChatSignal(group, uid, request, orgId) {
+const SIGNAL_FALLBACK_MS = 30000;
+const SIGNALLED = ['chat', 'voice', 'notifications'];
+function signalPath(request, uid) {
+    const [, orgId, tripId] = request.path.split('/');
+    const root = `trips_active/${orgId}/${tripId}`;
+    if (request.section === 'chat') return `${root}/chat_signal`;
+    if (request.section === 'voice') return `${root}/voice_signal`;
+    return `${root}/notification_signal/${uid}`;
+}
+function watchSignal(group, uid, path) {
     let last;
-    return onValue(ref(database, `trips_active/${orgId}/${request.tripId}/chat_signal`), signal => {
+    return onValue(ref(database, path), signal => {
         const next = signal.val();
         if (last !== undefined && next !== last && auth.currentUser?.uid === uid) group.stopPolling?.now();
         last = next;
@@ -140,7 +148,9 @@ function subscribe(request, client) {
                     }
                     if (request.section === 'directory') {
                         const people = visibilitySignature(data?.users);
-                        if (group.people !== undefined && group.people !== people) subscriptions.get(`${uid}:${request.tripId}:chat`)?.stopPolling?.now();
+                        if (group.people !== undefined && group.people !== people) {
+                            for (const section of SIGNALLED) subscriptions.get(`${uid}:${request.tripId}:${section}`)?.stopPolling?.now();
+                        }
                         group.people = people;
                     }
                 }
@@ -152,9 +162,9 @@ function subscribe(request, client) {
                 }
             }
         };
-        const chat = request.section === 'chat' && request.path.split('/')[1];
-        group.stopPolling = startForegroundPolling(poll, chat ? CHAT_FALLBACK_MS : 4000);
-        if (chat) group.stopSignal = watchChatSignal(group, uid, request, chat);
+        const signalled = SIGNALLED.includes(request.section);
+        group.stopPolling = startForegroundPolling(poll, signalled ? SIGNAL_FALLBACK_MS : 4000);
+        if (signalled) group.stopSignal = watchSignal(group, uid, signalPath(request, uid));
     } else {
         // A screen joining a running group gets data now, not after the next interval.
         group.stopPolling.now();

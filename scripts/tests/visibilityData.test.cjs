@@ -20,7 +20,7 @@ function fixture(){
   get:async()=>{throw Error('raw read not allowed');},
   database:{},ref:(_,path)=>({path}),
   onValue:(target,callback)=>{
-   if(!target.path?.endsWith('/chat_signal'))throw Error('raw subscription not allowed');
+   if(!/\/(chat_signal|voice_signal|notification_signal\/[^/]+)$/.test(target.path||''))throw Error('raw subscription not allowed');
    state.signals.set(target.path,callback);return ()=>state.signals.delete(target.path);
   },
   setTimeout:(fn,ms)=>{const item={fn,ms};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
@@ -190,4 +190,20 @@ test('a screen joining a running chat poll gets data at once',async()=>{
  const next=f.state.queue.find(item=>!item.cancelled);assert.equal(next.ms,0);
  await f.tick();assert.equal(second.length,1);assert.equal(first.length,1);
  a();b();
+});
+test('voice and own notifications follow their signals with the same slow fallback',async()=>{
+ const f=fixture();
+ const voice=f.api.onVisibleValue(f.ref('trips_active/o/t/voice_channel/activeSpeaker'),'t',()=>{});
+ const notes=f.api.onVisibleValue(f.ref('trips_active/o/t/notifications/a'),'t',()=>{});
+ assert.deepEqual([...f.state.signals.keys()].sort(),['trips_active/o/t/notification_signal/a','trips_active/o/t/voice_signal']);
+ await f.run(0);await f.run(0);
+ assert.equal(f.state.queue.filter(item=>!item.cancelled&&item.ms===30000).length,2);
+ const sections=()=>f.state.calls.map(call=>call.params.section);
+ f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>null});
+ f.state.signals.get('trips_active/o/t/voice_signal')({val:()=>'e1'});
+ await f.run(0);assert.equal(sections().at(-1),'voice');
+ f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>null});
+ f.state.signals.get('trips_active/o/t/notification_signal/a')({val:()=>'e2'});
+ await f.run(0);assert.equal(sections().at(-1),'notifications');
+ voice();notes();assert.equal(f.state.signals.size,0);
 });
