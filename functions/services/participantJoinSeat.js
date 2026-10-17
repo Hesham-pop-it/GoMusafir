@@ -3,55 +3,61 @@ const { HttpsError } = require('firebase-functions/v2/https');
 const { tripExpiry } = require('./participantAccessService');
 const { occupiedSeatUids, tripCapacity } = require('./tripCapacity');
 
-// Membership and user indexes live in separate top-level branches. Their common
-// ancestor transaction is necessary to check capacity and publish the entire join
-// together. A read followed by a multi-path update can oversubscribe the last seat.
+// The seat check and the membership write are one transaction on the trip's
+// membership node, so two people cannot take the last seat. The remaining paths
+// (user records, consent, seat counter) are written right after in one update; if
+// that update fails, the membership added here is taken out again.
 async function commitParticipantJoin(orgId, tripId, uid, updates) {
-  let failure;
-  const result = await db.ref().transaction(root => {
-    failure = null;
-    // The SDK initially calls this with an empty local cache.
-    if (root === null) return null;
-    const org = root.orgs?.[orgId];
-    const trip = org?.trips?.[tripId];
-    if (!tripExpiry(trip)) {
-      failure = new HttpsError('permission-denied', 'This trip has ended or is invalid.');
-      return;
-    }
-    const occupied = occupiedSeatUids(root.trips_participants?.[tripId], org.staff);
-    const capacity = tripCapacity(trip);
+  const joinedPath = `users/${uid}/joined_trips/${tripId}`;
+  const tripPath = `orgs/${orgId}/trips/${tripId}`;
+  const [tripSnap, staffSnap, previousSnap] = await Promise.all([
+    db.ref(tripPath).get(), db.ref(`orgs/${orgId}/staff`).get(), db.ref(joinedPath).get(),
+  ]);
+  const trip = tripSnap.val();
+  if (!tripExpiry(trip)) throw new HttpsError('permission-denied', 'This trip has ended or is invalid.');
+  const staff = staffSnap.val() || {};
+  const capacity = tripCapacity(trip);
+
+  let failure, added;
+  const result = await db.ref(`trips_participants/${tripId}`).transaction(current => {
+    failure = null; added = false;
+    // The SDK first calls this with an empty local cache; a wrong guess is retried by the server.
+    const members = Array.isArray(current)
+      ? Object.fromEntries(occupiedSeatUids(current).map(member => [member, true]))
+      : { ...(current || {}) };
+    const occupied = occupiedSeatUids(members, staff);
     if (!occupied.includes(uid) && occupied.length >= capacity) {
       failure = new HttpsError('resource-exhausted', `This trip is full. Maximum capacity is ${capacity} participants.`);
       return;
     }
-    // Preserve the original enrollment timestamp when concurrent requests retry.
-    const previousMembership = root.users?.[uid]?.joined_trips?.[tripId];
-    if (Array.isArray(root.trips_participants?.[tripId])) {
-      root.trips_participants[tripId] = Object.fromEntries(
-        occupiedSeatUids(root.trips_participants[tripId]).map(member => [member, true]));
-    }
-    for (const [path, value] of Object.entries(updates)) {
-      const parts = path.split('/');
-      const key = parts.pop();
-      const parent = parts.reduce((node, part) => (node[part] ||= {}), root);
-      if (value === null) delete parent[key];
-      else parent[key] = value;
-    }
-    if (previousMembership) {
-      root.users[uid].joined_trips[tripId] = {
-        ...previousMembership,
-        ...root.users[uid].joined_trips[tripId],
-        ...(previousMembership.joined_at != null ? {joined_at: previousMembership.joined_at} : {}),
-      };
-    }
-    trip.participants = occupiedSeatUids(root.trips_participants?.[tripId], org.staff).length;
-    // Old interrupted reservations must not consume seats or bypass capacity.
-    delete trip.participant_join_seats;
-    return root;
+    added = members[uid] !== true;
+    members[uid] = true;
+    return members;
   });
-  if (result.committed && !tripExpiry(result.snapshot.val()?.orgs?.[orgId]?.trips?.[tripId])) {
-    throw new HttpsError('permission-denied', 'This trip has ended or is invalid.');
-  }
   if (!result.committed) throw failure || new HttpsError('aborted', 'Please retry joining the trip.');
+
+  try {
+    const next = { ...updates };
+    // Preserve the original enrollment timestamp when a participant retries.
+    const previous = previousSnap.val();
+    if (previous && next[joinedPath]) {
+      next[joinedPath] = { ...previous, ...next[joinedPath],
+        ...(previous.joined_at != null ? { joined_at: previous.joined_at } : {}) };
+    }
+    // Old interrupted reservations must not consume seats or bypass capacity.
+    if (trip.participant_join_seats) next[`${tripPath}/participant_join_seats`] = null;
+    await db.ref().update(next);
+    const members = (await db.ref(`trips_participants/${tripId}`).get()).val();
+    await db.ref(`${tripPath}/participants`).set(occupiedSeatUids(members, staff).length);
+  } catch (error) {
+    if (added) {
+      await db.ref(`trips_participants/${tripId}`).transaction(current => {
+        if (!current || current[uid] !== true) return current ?? null;
+        delete current[uid];
+        return Object.keys(current).length ? current : null;
+      }).catch(() => {});
+    }
+    throw error;
+  }
 }
 module.exports = { commitParticipantJoin };

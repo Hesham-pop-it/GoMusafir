@@ -414,6 +414,9 @@
       }
     },
     "invites": {
+      ".indexOn": [
+        "expires_at"
+      ],
       "$inviteCode": {
         ".read": false
       }
@@ -440,6 +443,31 @@
         ".read": "auth != null && auth.uid === $uid",
         ".write": false
       }
+    },
+    "otp_codes": {
+      ".indexOn": [
+        "expiresAt"
+      ],
+      ".read": false,
+      ".write": false
+    },
+    "otp_email_rate": {
+      ".indexOn": [
+        "start"
+      ],
+      ".read": false,
+      ".write": false
+    },
+    "trip_voice_due": {
+      ".indexOn": [
+        "dueAt"
+      ],
+      ".read": false,
+      ".write": false
+    },
+    "trip_seat_counts": {
+      ".read": false,
+      ".write": false
     },
     "trip_expirations": {
       ".indexOn": [
@@ -477,6 +505,9 @@
       ".write": false
     },
     "voice_rooms": {
+      ".indexOn": [
+        "tripId"
+      ],
       ".read": false,
       ".write": false
     },

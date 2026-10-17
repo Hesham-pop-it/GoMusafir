@@ -71,6 +71,8 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
     const tripRecord = trip || (await val(`orgs/${orgId}/trips/${tripId}`));
     const participants = (await val(`trips_participants/${tripId}`)) || {};
     const participantIds = Object.keys(participants).filter((pid) => participants[pid]);
+    // Every voice room of this trip (one per session), found by the tripId index.
+    const rooms = (await db.ref("voice_rooms").orderByChild("tripId").equalTo(tripId).get()).val() || {};
 
     // Storage first: if it fails the DB is still intact and the call can be retried.
     await deleteTripMedia(orgId, tripId, tripRecord);
@@ -82,7 +84,12 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
       [`trips_active/${orgId}/${tripId}`]: null,
       [`trip_feature_access/${orgId}/${tripId}`]: null,
       [`voice_inactivity/${orgId}/${tripId}`]: null,
+      [`voice_speakers/${orgId}/${tripId}`]: null,
     };
+    Object.keys(rooms).forEach((roomName) => {
+      updates[`voice_rooms/${roomName}`] = null;
+      updates[`voice_speaker_locks/${roomName}`] = null;
+    });
     if (tripRecord && tripRecord.invitation_code) updates[`invites/${tripRecord.invitation_code}`] = null;
     participantIds.forEach((pid) => { updates[`users/${pid}/joined_trips/${tripId}`] = null; });
     await flush(updates);

@@ -49,6 +49,23 @@ exports.dataCleanupCron = onSchedule(
     } catch (e) {
       console.log("Error cleaning up invites:", e.message);
     }
+
+    // 2. Remove expired one-time codes (a live lockout keeps its record) and
+    // finished email send windows, both by index.
+    try {
+      const day = 24 * 60 * 60 * 1000;
+      const codesSnap = await db.ref("otp_codes").orderByChild("expiresAt").endAt(now - day).once("value");
+      const updates = {};
+      codesSnap.forEach((child) => {
+        const record = child.val();
+        if (!(record?.lockedUntil > now)) updates[`otp_codes/${child.key}`] = null;
+      });
+      const ratesSnap = await db.ref("otp_email_rate").orderByChild("start").endAt(now - day).once("value");
+      ratesSnap.forEach((child) => { updates[`otp_email_rate/${child.key}`] = null; });
+      if (Object.keys(updates).length > 0) await db.ref().update(updates);
+    } catch (e) {
+      console.log("Error cleaning up OTP records:", e.message);
+    }
   }
 );
 // ── Secure Cleanup PII (Maintenance) ──────────────────────────────────────────

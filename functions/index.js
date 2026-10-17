@@ -75,6 +75,7 @@ exports.redeemInvitation      = inviteFunctions.redeemInvitation;
 exports.redeemTeamInvitation  = inviteFunctions.redeemTeamInvitation;
 exports.getInviteMetadata     = inviteFunctions.getInviteMetadata;
 exports.getTeamInviteMetadata = inviteFunctions.getTeamInviteMetadata;
+exports.onTripMembersCounted   = require("./groups/tripSeatCountFunctions").onTripMembersCounted;
 
 // ── Payments (replaces GoMusafir-Website/server/server.js) ───────────────────
 exports.createCheckoutSession = paymentFunctions.createCheckoutSession;

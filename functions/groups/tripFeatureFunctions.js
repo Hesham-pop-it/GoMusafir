@@ -10,6 +10,7 @@ const { getFunctions } = require('firebase-admin/functions');
 const { requireTripAccess } = require('../services/participantAccessService');
 const { db } = require('../admin');
 const { refreshFeatures, accessRef, reconcileSession } = require('../services/tripVoiceService');
+const { voiceDueAt } = require('../services/tripFeatureState');
 const region = 'europe-west1';
 
 exports.getTripFeatureAccess = onCall({ region }, async request => {
@@ -31,6 +32,13 @@ exports.onTripFeatureDatesChanged = onValueWritten({ region, ref: 'orgs/{orgId}/
 
 exports.onTripFeatureAccessChanged = onValueWritten({ region, ref: 'trip_feature_access/{orgId}/{tripId}', retry: true }, async event => {
   const state = event.data.after.val(), before = event.data.before.val();
+  // Keep the minute job's work list in step with the state; most writes change nothing here.
+  const dueAt = voiceDueAt(state);
+  if (dueAt !== voiceDueAt(before)) {
+    const dueRef = db.ref(`trip_voice_due/${event.params.tripId}`);
+    if (dueAt === null) await dueRef.remove();
+    else await dueRef.set({ orgId: event.params.orgId, dueAt });
+  }
   if (!state?.nextCheckAt || (state.nextCheckAt === before?.nextCheckAt && state.session?.id === before?.session?.id)) return;
   // Cap scheduling at 28 days; the next task advances toward distant trips.
   await getFunctions().taskQueue(`locations/${region}/functions/checkTripVoiceAccess`).enqueue(
@@ -49,18 +57,33 @@ exports.checkTripVoiceAccess = onTaskDispatched({ region,
 });
 
 // Recovery for lost/delayed webhooks/tasks, including crashed host devices.
-// Also initializes existing trips without resetting historical usage.
+// Reads only the trips on the trip_voice_due list that are due, not every trip.
+// Once a day it also initializes trips that have no feature state yet, without
+// resetting historical usage, and lists trips the trigger missed.
 exports.reconcileTripVoiceAccess = onSchedule({ region, schedule: 'every 1 minutes', retryCount: 3 }, async () => {
-  const mapping = (await db.ref('trips_orgs').get()).val() || {};
-  for (const [tripId, orgId] of Object.entries(mapping)) {
+  const now = new Date();
+  if (now.getUTCHours() === 3 && now.getUTCMinutes() === 0) await backfillVoiceDue();
+  const due = (await db.ref('trip_voice_due').orderByChild('dueAt').endAt(now.getTime()).get()).val() || {};
+  for (const [tripId, { orgId }] of Object.entries(due)) {
     try {
-      const state = (await accessRef(orgId, tripId).get()).val();
-      if (!state || state.nextCheckAt && state.nextCheckAt <= Date.now() || state.session) {
-        await reconcileSession(orgId, tripId);
-      }
+      await reconcileSession(orgId, tripId);
     } catch (error) {
       // One bad trip must not abort the rest; the next minute run retries it.
       console.error('Voice reconcile failed', { tripId, orgId, code: error.code, message: error.message });
     }
   }
 });
+
+async function backfillVoiceDue() {
+  const mapping = (await db.ref('trips_orgs').get()).val() || {};
+  for (const [tripId, orgId] of Object.entries(mapping)) {
+    try {
+      const state = (await accessRef(orgId, tripId).get()).val();
+      if (!state) await reconcileSession(orgId, tripId);
+      const dueAt = voiceDueAt(state);
+      if (dueAt !== null) await db.ref(`trip_voice_due/${tripId}`).set({ orgId, dueAt });
+    } catch (error) {
+      console.error('Voice backfill failed', { tripId, orgId, code: error.code, message: error.message });
+    }
+  }
+}

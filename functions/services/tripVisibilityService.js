@@ -157,28 +157,28 @@ async function respondToLocationRequest(request) {
   const members = (await db.ref(`trips_participants/${tripId}`).get()).val() || {};
   if (members[uid] !== true || members[notification.senderUid] !== true) throw new HttpsError('permission-denied', 'Participant no longer belongs to this trip.');
   const now = Date.now();
-  // Transaction binds acceptance to this request once, so retries cannot extend a grant.
-  const result = await db.ref(root).transaction(current => {
-    if (current === null) return null;
-    const pending = current.notifications?.[uid]?.[notificationId];
+  // Transaction on the one request binds the answer to it once, so retries cannot extend a grant.
+  const result = await notificationRef.transaction(pending => {
+    if (pending === null) return null;
     if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
     pending.status = accept ? 'accepted' : 'declined';
     pending.respondedAt = now;
-    current.notifications[notification.senderUid] ||= {};
-    current.notifications[notification.senderUid][`location_response_${notificationId}`] = {
+    return pending;
+  });
+  if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
+  const updates = {
+    [`${root}/notifications/${notification.senderUid}/location_response_${notificationId}`]: {
       type: 'location_response', senderUid: uid, tripId, orgId, timestamp: now,
       status: accept ? 'accepted' : 'declined', name: 'Participant',
       title: accept ? 'Location Request Accepted' : 'Location Request Declined',
       message: accept ? 'Location is shared with you for 15 minutes.' : 'The participant declined your request.',
-    };
-    if (accept) {
-      current.location_permissions ||= {};
-      current.location_permissions[uid] ||= {};
-      current.location_permissions[uid][notification.senderUid] = { acceptedAt: now, expiresAt: now + 15 * 60 * 1000, requestId: notificationId };
-    }
-    return current;
-  });
-  if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
+    },
+  };
+  if (accept) {
+    updates[`${root}/location_permissions/${uid}/${notification.senderUid}`] =
+      { acceptedAt: now, expiresAt: now + 15 * 60 * 1000, requestId: notificationId };
+  }
+  await db.ref().update(updates);
   return { status: accept ? 'accepted' : 'declined', expiresAt: accept ? now + 15 * 60 * 1000 : null };
 }
 module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, directory };
