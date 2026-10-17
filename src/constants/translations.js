@@ -1,5 +1,6 @@
 export const translations = {
   en: {
+    sign_in_deletion_pending: "This account is disabled. If you asked to delete it, it is scheduled for deletion and you can cancel using the link in the email we sent you.",
     participants: "Participants",
     tagline: "May Allah Guide Every Step",
     search_placeholder: "Search your trip",
