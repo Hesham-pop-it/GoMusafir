@@ -203,7 +203,9 @@ async function respondToLocationRequest(request) {
   const now = Date.now();
   // Transaction on the one request binds the answer to it once, so retries cannot extend a grant.
   const result = await notificationRef.transaction(pending => {
-    if (pending === null) return;
+    // The first call may see an empty local cache: keep null so the server retries with the real value;
+    // a request that is really gone commits as null and is reported as not found below.
+    if (pending === null) return null;
     if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
     pending.status = wanted;
     pending.respondedAt = now;
