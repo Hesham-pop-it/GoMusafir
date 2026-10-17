@@ -34,6 +34,8 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
     'firebase-functions/v2/https':{HttpsError}, '../admin':{db,auth:{getUser:async()=>({email:'fallback@test.invalid'})}},
     './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy,
     './unchangedResponse':require('../services/unchangedResponse'),
+    // The shared cache has its own test; these tests change records between calls.
+    './userRecordCache':{cachedUser:(store,uid)=>store.ref(`users/${uid}`).get()},
   };
   function load(file) {
     const module={exports:{}};

@@ -4,6 +4,7 @@ const { requireTripAccess } = require('./participantAccessService');
 const { getParticipantProfile } = require('./participantProfileService');
 const { visible, activeGrant } = require('./visibilityPolicy');
 const { respond } = require('./unchangedResponse');
+const { cachedUser } = require('./userRecordCache');
 const roles = ['admin', 'manager', 'co-host'];
 const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
@@ -22,7 +23,7 @@ async function directory(request, access, only = null) {
   if (only) for (const uid of uids) if (!only.has(uid)) uids.delete(uid);
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
-    const userSnap = await db.ref(`users/${uid}`).get();
+    const userSnap = await cachedUser(db, uid);
     const personal = userSnap.val()?.participant_visibility?.[tripId] || {};
     let result;
     try { result = await getParticipantProfile({ ...request, data: { tripId, targetUid: uid } }, { access, snapshots: [
