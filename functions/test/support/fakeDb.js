@@ -37,7 +37,15 @@ function createFakeDb(initial = {}) {
     forEach: fn => { Object.keys(value || {}).forEach(k => fn({ key: k, val: () => clone(value[k]) })); },
   });
   const childValue = (obj, childPath) => parts(childPath).reduce((n, p) => (n && typeof n === 'object' ? n[p] : undefined), obj);
+  let pushCount = 0;
   const ref = (path = '') => ({
+    push: value => {
+      const key = `push${String(++pushCount).padStart(4, '0')}`;
+      const child = ref(path ? `${path}/${key}` : key);
+      child.key = key;
+      if (value !== undefined) write(path ? `${path}/${key}` : key, value);
+      return child;
+    },
     get: async () => snapshot(read(path)),
     set: async value => write(path, value),
     remove: async () => write(path, null),
@@ -80,10 +88,11 @@ function createFakeAuth(users = {}) {
   const calls = [];
   return {
     calls,
-    getUser: async uid => { if (!users[uid]) { const e = new Error('nf'); e.code = 'auth/user-not-found'; throw e; } return { customClaims: { ...(users[uid].claims || {}) } }; },
+    getUser: async uid => { if (!users[uid]) { const e = new Error('nf'); e.code = 'auth/user-not-found'; throw e; } return { uid, email: users[uid].email, disabled: !!users[uid].disabled, customClaims: { ...(users[uid].claims || {}) } }; },
+    updateUser: async (uid, patch) => { calls.push(['update', uid, patch]); Object.assign(users[uid], patch); },
     setCustomUserClaims: async (uid, claims) => { calls.push(['claims', uid, claims]); },
     revokeRefreshTokens: async uid => { calls.push(['revoke', uid]); },
-    deleteUser: async uid => { calls.push(['delete', uid]); },
+    deleteUser: async uid => { calls.push(['delete', uid]); delete users[uid]; },
   };
 }
 
