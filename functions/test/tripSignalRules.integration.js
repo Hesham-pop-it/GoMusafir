@@ -16,7 +16,7 @@ async function main() {
     assert.ok(uid && token);
     return { uid, token };
   };
-  const [pilgrim, staff, outsider] = [await signup('pilgrim'), await signup('staff'), await signup('outsider')];
+  const [pilgrim, other, staff, outsider] = [await signup('pilgrim'), await signup('other'), await signup('staff'), await signup('outsider')];
   const owner = async (path, value) => {
     const response = await fetch(`${base}/${path}.json?ns=${ns}`, { method: 'PUT',
       headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
@@ -31,10 +31,12 @@ async function main() {
   const now = Date.now();
   const S = 'trips_active/o/t/chat_signal';
   await owner('', {
-    app_access: { [pilgrim.uid]: { expires_at: now + 60000 }, [staff.uid]: { expires_at: now + 60000 }, [outsider.uid]: { expires_at: now + 60000 } },
+    app_access: Object.fromEntries([pilgrim, other, staff, outsider].map(user => [user.uid, { expires_at: now + 60000 }])),
     orgs: { o: { staff: { [staff.uid]: 'admin' }, trips: { t: { status: 'active', end_date: now + 60000 } } } },
-    trips_orgs: { t: 'o' }, trips_participants: { t: { [pilgrim.uid]: true } },
-    trips_active: { o: { t: { chat_signal: 'm1', chat: { m1: { sender_id: pilgrim.uid, timestamp: now, text: 'hi' } } } } },
+    trips_orgs: { t: 'o' }, trips_participants: { t: { [pilgrim.uid]: true, [other.uid]: true } },
+    trips_active: { o: { t: { chat_signal: 'm1', voice_signal: 'e1',
+      notification_signal: { [pilgrim.uid]: 'e2', [other.uid]: 'e3' },
+      chat: { m1: { sender_id: pilgrim.uid, timestamp: now, text: 'hi' } } } } },
   });
   // Members and staff may read the signal, which holds only a message id.
   await allow(pilgrim, S);
@@ -46,10 +48,26 @@ async function main() {
   await deny(pilgrim, S, 'DELETE');
   // The chat itself stays server-read only.
   await deny(pilgrim, 'trips_active/o/t/chat');
+  // Voice signal: same audience as the chat signal.
+  const V = 'trips_active/o/t/voice_signal';
+  await allow(pilgrim, V);
+  await allow(staff, V);
+  await deny(outsider, V);
+  await deny(pilgrim, V, 'PUT', 'forged');
+  // Notification signals: each person reads only their own.
+  const N = 'trips_active/o/t/notification_signal';
+  await allow(pilgrim, `${N}/${pilgrim.uid}`);
+  await deny(pilgrim, `${N}/${other.uid}`);
+  await deny(pilgrim, N);
+  await deny(staff, `${N}/${pilgrim.uid}`);
+  await deny(outsider, `${N}/${outsider.uid}`);
+  await deny(pilgrim, `${N}/${pilgrim.uid}`, 'PUT', 'forged');
   // An ended trip closes the signal to participants.
   await owner('orgs/o/trips/t/end_date', now - 1);
   await deny(pilgrim, S);
+  await deny(pilgrim, V);
+  await deny(pilgrim, `${N}/${pilgrim.uid}`);
   await allow(staff, S);
-  console.log(`PASS: ${checks} direct RTDB checks for the chat signal.`);
+  console.log(`PASS: ${checks} direct RTDB checks for the trip signals.`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

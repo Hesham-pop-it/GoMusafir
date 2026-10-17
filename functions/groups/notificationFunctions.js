@@ -1,12 +1,12 @@
 // ─── Notification Functions ──────────────────────────────────────────────────
 // Handles Realtime Database triggers for push notifications.
 
-const { onValueCreated, onValueWritten } = require("firebase-functions/v2/database");
+const { onValueCreated, onValueUpdated, onValueWritten } = require("firebase-functions/v2/database");
 const { sendPushNotification } = require("../services/notificationService");
 const { admin, db } = require("../admin");
 const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
-const { signalChat } = require("../services/chatSignal");
+const { signalChat, signalVoice, signalNotifications } = require("../services/tripSignals");
 
 /**
  * Triggered when a new chat message is created.
@@ -119,6 +119,7 @@ exports.onNotificationCreated = onValueCreated({
 
     // Only proceed if there's real notification data to notify
     if (!data) return;
+    await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
 
     // CRITICAL FIX: Ignore updates/nodes that only mark read/seen or have no valid payload
     if (data.read === true && !data.message && !data.title) return;
@@ -253,6 +254,10 @@ exports.onVoiceChannelUpdated = onValueWritten({
     const before = event.data.before.val() || {};
     const after = event.data.after.val() || {};
     const { orgId, tripId } = event.params;
+    // A removed channel (trip deletion) must not leave a signal behind.
+    if (event.data.after.exists()) {
+        await signalVoice(db, orgId, tripId, event.id).catch(error => console.log("Error signalling voice:", error));
+    }
 
     // Group chat system line on a real start/end, independent of who gets notified below.
     const wasStarted = before.isChannelStarted === true || before.isChannelActive === true;
@@ -559,3 +564,14 @@ exports.onPrepaidSeatsUpdated = onValueWritten({
     }
 });
 
+/**
+ * Status changes of an existing notification (read, accepted, declined) tell
+ * that person's open screens to refetch. Deletions do not fire this trigger.
+ */
+exports.onNotificationUpdated = onValueUpdated({
+    ref: "trips_active/{orgId}/{tripId}/notifications/{uid}/{notifId}",
+    region: "europe-west1"
+}, async (event) => {
+    const { orgId, tripId, uid } = event.params;
+    await signalNotifications(db, orgId, tripId, uid, event.id);
+});

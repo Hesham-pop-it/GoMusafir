@@ -107,6 +107,7 @@ exports.reconcileVoiceSpeakers = voiceSpeakerFunctions.reconcileVoiceSpeakers;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
+exports.onNotificationUpdated = notificationFunctions.onNotificationUpdated;
 exports.onChatCreated         = notificationFunctions.onChatCreated;
 exports.onVoiceChannelUpdated = notificationFunctions.onVoiceChannelUpdated;
 exports.onParticipantJoined   = notificationFunctions.onParticipantJoined;
