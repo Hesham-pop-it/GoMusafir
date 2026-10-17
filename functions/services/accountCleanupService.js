@@ -22,6 +22,8 @@ const DELETED_USER_ID = "deleted_user";
 const ORG_PURGE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 const MEDIA_FIELDS = ["image_url", "media_url", "audio_url", "video_url", "thumbnail_url"];
 const CHUNK = 400;
+// Per-user direct messaging nodes under trips_active/{org}/{trip}/, keyed by the user's uid.
+const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read", "team", "team_meta"];
 
 function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
   const val = async (path) => {
@@ -126,6 +128,11 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
       [`trips_participants/${tripId}/${uid}`]: null,
       [`users/${uid}/joined_trips/${tripId}`]: null,
     };
+    // Direct messages and staff chat: the user's own branches go, and so does the
+    // admin report access of the threads they were part of.
+    MESSAGING_NODES.forEach((node) => { updates[`${base}/${node}/${uid}`] = null; });
+    const inbox = (await val(`${base}/inbox/${uid}`)) || {};
+    Object.keys(inbox).forEach((threadId) => { updates[`${base}/report_access/${threadId}`] = null; });
     // Permissions other users granted to or requested from this user.
     const perms = (await val(`${base}/location_permissions`)) || {};
     Object.keys(perms).forEach((target) => {
@@ -290,5 +297,5 @@ function getAccountCleanup() {
 
 module.exports = {
   createAccountCleanup, getAccountCleanup, runOrganizationPurge,
-  DELETED_USER_NAME, DELETED_USER_ID, ORG_PURGE_GRACE_MS,
+  DELETED_USER_NAME, DELETED_USER_ID, ORG_PURGE_GRACE_MS, MESSAGING_NODES,
 };

@@ -190,3 +190,24 @@ test('cleanup code never references Stripe deletion or payment nodes', () => {
     .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
   assert.ok(!/deleteStripeCustomer|stripe_customer_id|payments|invoice|prepaid_seats/.test(source));
 });
+test('removeUserCompletely clears the direct message and staff chat branches and report access of the user', async () => {
+  const { db, svc } = setup();
+  const base = 'trips_active/org1/t1';
+  await db.ref(`${base}/inbox/p1/thr1`).set({ last: 1 });
+  await db.ref(`${base}/inbox/shared/thr1`).set({ last: 1 });
+  await db.ref(`${base}/dm_private/p1/x`).set({ text: 'secret' });
+  await db.ref(`${base}/blocks/p1/shared`).set(true);
+  await db.ref(`${base}/message_settings/p1`).set({ muted: true });
+  await db.ref(`${base}/team/p1/m`).set({ text: 'to staff' });
+  await db.ref(`${base}/team_meta/p1`).set({ n: 1 });
+  await db.ref(`${base}/team_read/c1/p1`).set(1);
+  await db.ref(`${base}/team_read/p1/c1`).set(1);
+  await db.ref(`${base}/report_access/thr1`).set({ admin: true });
+  await svc.removeUserCompletely('p1');
+  const t1 = db.dump().trips_active.org1.t1;
+  for (const node of ['dm_private', 'blocks', 'message_settings', 'team', 'team_meta']) assert.equal(t1[node], undefined, node);
+  assert.equal(t1.inbox.p1, undefined);
+  assert.ok(t1.inbox.shared, 'the other person keeps their own branch');
+  assert.equal(t1.report_access, undefined);
+  assert.equal(t1.team_read.p1, undefined);
+});
