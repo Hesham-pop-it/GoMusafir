@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const policy = require('../services/visibilityPolicy');
 const { redactNotification } = require('../services/notificationPrivacy');
 
-function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null } = {}) {
+function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null, realCache = false } = {}) {
   const fields = ['name','lastname','email','phone','location'];
   const state = {
     orgs: { o: { staff: viewerRole ? { a: viewerRole } : {}, trips: { t: { visibility_config: Object.fromEntries(fields.map(f => [f, mode])) } } } },
@@ -18,7 +18,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const read = path => path.split('/').filter(Boolean).reduce((v,k)=>v?.[k],state);
   const write = (path, value) => { const keys = path.split('/'); const last = keys.pop(); keys.reduce((v,k)=>v[k] ||= {},state)[last] = value; };
   const snap = v => ({val:()=>v, exists:()=>v != null});
-  const reads = [];
+  const reads = [], cached = [];
   const db = {ref(path) { return {
     get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
     orderByChild(){return this;},limitToLast(){return this;},
@@ -34,18 +34,19 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
     'firebase-functions/v2/https':{HttpsError}, '../admin':{db,auth:{getUser:async()=>({email:'fallback@test.invalid'})}},
     './participantAccessService':{requireTripAccess:access}, './notificationPrivacy':{redactNotification}, './kmsService':{decrypt:v=>v}, './visibilityPolicy':policy,
     './unchangedResponse':require('../services/unchangedResponse'),
-    // The shared cache has its own test; these tests change records between calls.
-    './userRecordCache':{cachedUser:(store,uid)=>store.ref(`users/${uid}`).get()},
+    // The shared cache has its own test; most tests here change records between calls.
+    './userRecordCache':{cachedUser:(store,uid)=>{cached.push(uid);return store.ref(`users/${uid}`).get();}},
   };
   function load(file) {
     const module={exports:{}};
     vm.runInNewContext(fs.readFileSync(require.resolve(file),'utf8'),{module,exports:module.exports,require:name=>{if(deps[name])return deps[name];throw Error(name);},console});
     return module.exports;
   }
+  if (realCache) deps['./userRecordCache']=load('../services/userRecordCache');
   deps['./participantProfileService']=load('../services/participantProfileService');
   const service=load('../services/tripVisibilityService');
   const call = (method, data={}, uid='a') => service[method]({auth:{uid,token:{role:'admin',orgId:'forged'}},data:{tripId:'t',...data}});
-  return {state,call,reads,root:()=>state.trips_active.o.t};
+  return {state,call,reads,cached,root:()=>state.trips_active.o.t};
 }
 for (const role of [null,'admin','manager','co-host']) {
   test(`organizer visibility uses current organization membership: ${role}`, async()=>{
@@ -155,4 +156,22 @@ test('directory polls with known parts receive only the parts that changed',asyn
   const gone=await f.call('getVisibleTripData',{knownParts:{...moved.parts,extra:'x'}});
   assert.equal(gone.unchanged,undefined);assert.deepEqual(gone.data,{});
   assert.equal((await f.call('getVisibleTripData',{knownParts:{a:1}})).envelope,undefined);
+});
+test('the directory reads the viewer\'s own record fresh and shares only the other records',async()=>{
+  const f=fixture({mode:'Show to Everyone'});
+  await f.call('getVisibleTripData');
+  assert.deepEqual(f.cached.sort(),['b','c']);
+  assert.ok(f.reads.includes('users/a'));
+});
+test('shared records are redacted per viewer and the viewer\'s own record is never shared',async()=>{
+  const f=fixture({mode:'Show to organizers',viewerRole:'admin',realCache:true});
+  const staff=await f.call('getVisibleTripData',{},'a');
+  const pilgrim=await f.call('getVisibleTripData',{},'b');
+  assert.equal(staff.users.c.profile.email,'c@test.invalid');
+  assert.equal(pilgrim.users.c.profile.email,'');
+  assert.equal(f.reads.filter(path=>path==='users/c').length,1);
+  assert.equal(f.state.users.c.profile.email,'c@test.invalid');
+  const count=path=>f.reads.filter(read=>read===path).length,own=count('users/b'),other=count('users/c');
+  await f.call('getVisibleTripData',{},'b');
+  assert.equal(count('users/b'),own+1);assert.equal(count('users/c'),other);
 });

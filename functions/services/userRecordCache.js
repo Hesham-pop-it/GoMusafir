@@ -2,7 +2,8 @@
 // record of every member. Raw records are shared for a few seconds inside one
 // function instance, so a trip of N pilgrims reads each record about once per
 // TTL instead of N times. The per-viewer redaction still runs on every call.
-// Privacy changes therefore show at most TTL_MS later than before.
+// Privacy changes of others therefore show at most TTL_MS later than before;
+// callers read the viewer's own record uncached.
 const TTL_MS = 3000;
 const MAX_ENTRIES = 5000;
 const entries = new Map();

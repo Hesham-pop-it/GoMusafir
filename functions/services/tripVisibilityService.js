@@ -23,7 +23,8 @@ async function directory(request, access, only = null) {
   if (only) for (const uid of uids) if (!only.has(uid)) uids.delete(uid);
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
-    const userSnap = await cachedUser(db, uid);
+    // The viewer's own record is read fresh so their own privacy choices show at once.
+    const userSnap = uid === request.auth.uid ? await db.ref(`users/${uid}`).get() : await cachedUser(db, uid);
     const personal = userSnap.val()?.participant_visibility?.[tripId] || {};
     let result;
     try { result = await getParticipantProfile({ ...request, data: { tripId, targetUid: uid } }, { access, snapshots: [
