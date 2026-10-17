@@ -1,5 +1,6 @@
 const { admin, db } = require("../admin");
 const { notificationSound } = require("./notificationSoundConfig");
+const { getPushGate } = require("./pushGate");
 
 /**
  * Sends a push notification to a specific user via FCM.
@@ -29,6 +30,9 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
 
         const soundProfile = notificationSound(data, { ...options, androidChannelId: requestedChannelId });
         const androidChannelId = soundProfile.channelId;
+
+        // 0. Nothing goes to an account or about an organisation that is scheduled for deletion.
+        if (await getPushGate().blocked(uid, { orgId: options.orgId || data.orgId || null, tripId: tripId || data.tripId || null })) return;
 
         // 1. Fetch User Preferences & Token
         const [tokenSnap, prefsSnap] = await Promise.all([
