@@ -21,14 +21,17 @@ async function tripContext(tripId) {
 async function writeTripView(tripId, uids = null) {
   const context = await tripContext(tripId);
   if (!context) return { written: 0 };
-  const [members, staff] = await Promise.all([db.ref(`trips_participants/${tripId}`).get(), db.ref(`orgs/${context.orgId}/staff`).get()]);
-  const everyone = new Set(Object.keys(members.val() || {}));
-  Object.keys(staff.val() || {}).forEach(uid => everyone.add(uid));
-  const only = new Set(uids || everyone);
+  let only;
+  if (uids) only = new Set(uids);
+  else {
+    const [members, staff] = await Promise.all([db.ref(`trips_participants/${tripId}`).get(), db.ref(`orgs/${context.orgId}/staff`).get()]);
+    only = new Set(Object.keys(members.val() || {}));
+    Object.keys(staff.val() || {}).forEach(uid => only.add(uid));
+  }
   const update = {};
   for (const [audience, viewer] of Object.entries(AUDIENCES)) {
     const data = await directory({ auth: { uid: viewer.uid }, data: { tripId } },
-      { orgId: context.orgId, trip: context.trip, staff: viewer.staff }, only, true);
+      { orgId: context.orgId, trip: context.trip, staff: viewer.staff }, only, true, true);
     for (const uid of only) update[`${audience}/${uid}`] = data.users[uid] || null;
   }
   await db.ref(`trip_view/${tripId}`).update(update);

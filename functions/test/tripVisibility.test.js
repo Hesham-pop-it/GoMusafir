@@ -234,3 +234,16 @@ test('an answered location request leaves the list for the asked pilgrim',async(
   await f.call('respondToLocationRequest',{notificationId:id,accept:false},'b');
   assert.equal(id in await f.call('getVisibleTripData',{section:'notifications'},'b'),false);
 });
+test('rewriting a few trip view entries reads neither the member list nor location grants',async()=>{
+  const f=fixture({mode:'Show to organizers'});
+  f.reads.length=0;
+  await f.views.writeTripView('t',['c']);
+  assert.ok(!f.reads.includes('trips_participants/t'));
+  assert.ok(!f.reads.some(path=>path.endsWith('/location_permissions')||path.endsWith('/locations')));
+  assert.ok(f.reads.includes('trips_participants/t/c'));
+  assert.equal(f.state.trip_view.t.member.c.profile.firstName,'');
+  assert.equal(f.state.trip_view.t.staff.c.profile.firstName,'First-c');
+  delete f.state.trips_participants.t.c;
+  await f.views.writeTripView('t',['c']);
+  assert.equal(f.state.trip_view.t.member.c,undefined);
+});

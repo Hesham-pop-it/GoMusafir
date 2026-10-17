@@ -12,16 +12,23 @@ const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 // `only` limits the result to the people a chat, voice or notification payload
 // names; those sections need no coordinates, only names and location visibility.
 // `fresh` skips the shared record cache (server-written views must not lag).
-async function directory(request, access, only = null, fresh = false) {
+// `synthetic` marks a server-side audience viewer: it holds no grants, and with
+// `only` just those people's membership is read instead of the whole lists.
+async function directory(request, access, only = null, fresh = false, synthetic = false) {
   const { tripId } = request.data;
   const { orgId, trip, staff } = access;
   const root = `trips_active/${orgId}/${tripId}`;
-  const [members, staffSnap, locations, permissions] = await Promise.all([
-    db.ref(`trips_participants/${tripId}`).get(), db.ref(`orgs/${orgId}/staff`).get(),
-    only ? { val: () => null } : db.ref(`${root}/locations`).get(), db.ref(`${root}/location_permissions`).get(),
+  const none = { val: () => null };
+  const narrow = synthetic && only;
+  const entries = async path => Object.fromEntries(await Promise.all([...only].map(async uid => [uid, (await db.ref(`${path}/${uid}`).get()).val()])));
+  const [memberMap, staffMap, locations, permissions] = await Promise.all([
+    narrow ? entries(`trips_participants/${tripId}`) : db.ref(`trips_participants/${tripId}`).get().then(snap => snap.val() || {}),
+    narrow ? entries(`orgs/${orgId}/staff`) : db.ref(`orgs/${orgId}/staff`).get().then(snap => snap.val() || {}),
+    only ? none : db.ref(`${root}/locations`).get(), synthetic ? none : db.ref(`${root}/location_permissions`).get(),
   ]);
-  const uids = new Set(Object.keys(members.val() || {}).filter(uid => members.val()[uid] === true));
-  Object.entries(staffSnap.val() || {}).forEach(([uid, role]) => { if (roles.includes(role)) uids.add(uid); });
+  const members = { val: () => memberMap }, staffSnap = { val: () => staffMap };
+  const uids = new Set(Object.keys(memberMap).filter(uid => memberMap[uid] === true));
+  Object.entries(staffMap).forEach(([uid, role]) => { if (roles.includes(role)) uids.add(uid); });
   if (only) for (const uid of uids) if (!only.has(uid)) uids.delete(uid);
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
