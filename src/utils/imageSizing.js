@@ -13,6 +13,12 @@ export function longSideResize(width, height, max) {
 }
 
 async function resizeTo(uri, width, height, max, compress) {
+    if (!(width > 0) || !(height > 0)) {
+        // Dimensions unknown: a no-op manipulation reports them.
+        const probe = await manipulateAsync(uri, [], { format: SaveFormat.JPEG, compress: 1 });
+        width = probe.width;
+        height = probe.height;
+    }
     const action = longSideResize(width, height, max);
     return manipulateAsync(uri, action ? [action] : [], { compress, format: SaveFormat.JPEG });
 }

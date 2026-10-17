@@ -42,3 +42,10 @@ test('avatars are made at 256 px with a 96 px variant', async () => {
     assert.equal(calls[0].actions[0].resize.width, 256);
     assert.equal(calls[1].actions[0].resize.width, 96);
 });
+
+test('unknown dimensions are probed before resizing', async () => {
+    const { api, calls } = load();
+    await api.preparePhoto('file://p');
+    assert.equal(calls[0].actions.length, 0);
+    assert.equal(calls[1].actions[0].resize.width, 1280);
+});
