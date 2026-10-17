@@ -10,6 +10,12 @@ function tripExpiry(trip, now = Date.now()) {
     ? trip.end_date : 0;
 }
 
+// An organisation scheduled for deletion is refused everywhere (staff, participants, pushes, rules).
+async function organizationDeleted(orgId) {
+  if (!orgId) return false;
+  return Number.isFinite((await db.ref(`orgs/${orgId}/metadata/deleted_at`).get()).val());
+}
+
 async function calculateAccess(uid, now = Date.now()) {
   const [userSnap, record] = await Promise.all([db.ref(`users/${uid}`).get(), auth.getUser(uid)]);
   const user = userSnap.val() || {};
@@ -19,13 +25,23 @@ async function calculateAccess(uid, now = Date.now()) {
     const staffSnap = await db.ref(`orgs/${orgId}/staff/${uid}`).get();
     staff = STAFF_ROLES.includes(staffSnap.val());
   }
+  // Staff of a deleted organisation have no access. Its owner may still sign in to restore it.
+  if (staff && await organizationDeleted(orgId)) {
+    const owner = (await db.ref(`orgs/${orgId}/metadata/admin_uid`).get()).val() === uid;
+    return { staff: false, trips: {}, current_trip: null, participant: false, expires_at: 0, record,
+      orgDeleted: true, orgOwner: owner };
+  }
   // Staff login/app access never depends on participant trip records.
   if (staff) return { staff: true, trips: {}, current_trip: user.current_trip || null,
     participant: false, expires_at: 0, record };
   const trips = {};
+  const deletedOrgs = {};
   await Promise.all(Object.entries(user.joined_trips || {}).map(async ([tripId, membership]) => {
     const tripOrgId = membership?.org_id || membership?.orgId;
     if (!tripOrgId) return;
+    // Trips of an organisation scheduled for deletion are not eligible.
+    deletedOrgs[tripOrgId] = deletedOrgs[tripOrgId] || organizationDeleted(tripOrgId);
+    if (await deletedOrgs[tripOrgId]) return;
     const [participant, trip] = await Promise.all([
       db.ref(`trips_participants/${tripId}/${uid}`).get(),
       db.ref(`orgs/${tripOrgId}/trips/${tripId}`).get(),
@@ -45,6 +61,8 @@ async function refreshAccess(uid) {
   for (let attempt = 0; attempt < 8; attempt++) {
     const old = (await accessRef.get()).val() || {};
     const access = await calculateAccess(uid);
+    // The owner of a deleted organisation keeps the session they need to restore it.
+    if (access.orgDeleted && access.orgOwner) return (await accessRef.get()).val() || {};
     const result = await guardedTransaction(accessRef, current => {
       current = current || {};
       if ((current.version || 0) !== (old.version || 0)) return;
@@ -108,6 +126,7 @@ async function requireFreshIdentity(request) {
 async function requireAppAccess(request) {
   await requireFreshIdentity(request);
   const access = await calculateAccess(request.auth.uid);
+  if (access.orgDeleted) throw new HttpsError('permission-denied', 'This organization is scheduled for deletion.');
   if (!access.staff && !access.expires_at) {
     throw new HttpsError('permission-denied', 'Join a valid trip before using the app.');
   }
@@ -124,4 +143,4 @@ async function requireTripAccess(request, tripId) {
   return { orgId, trip, staff };
 }
 
-module.exports = { revokeUserSessions, tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };
+module.exports = { organizationDeleted, revokeUserSessions, tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };

@@ -25,7 +25,7 @@ function signInFixture(access, refreshFailure = null) {
     '../middleware/participantAccessMiddleware': { onCall: (_, handler) => handler },
     'firebase-functions/v2/identity': { beforeUserCreated: (_,handler)=>handler, beforeUserSignedIn: (_,handler)=>handler },
     '../admin': { admin:{ database:{ServerValue:{TIMESTAMP:0}}},db:{ref:()=>({push:noop,get:async()=>({val:()=>({})}),update:noop})} },
-    '../services/kmsService': {}, '../services/accountCleanupService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
+    '../services/kmsService': {}, '../services/accountCleanupService': {}, '../services/deletionService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
     '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': { sendPushNotification: noop }, '../services/stripeService': {},
   }).onSignIn;
 }
@@ -37,6 +37,21 @@ test('ordinary backend sign-in admits valid participants and staff', async () =>
   for (const access of [{participant:true,staff:false,expires_at:Date.now()+10000},{participant:false,staff:true,expires_at:0}]) {
     await signInFixture(access)({data:{uid:'p',email:'p@example.test'}});
   }
+});
+test('sign-in is refused for staff of a deleted organisation but allowed for its owner, who then skips the access refresh', async () => {
+  let refreshed = false;
+  const fixture = (orgOwner) => load('authFunctions.js', {
+    '../services/participantAccessService': { calculateAccess: async () => ({ staff: false, orgDeleted: true, orgOwner, expires_at: 0 }), refreshAccess: async () => { refreshed = true; return {}; } },
+    'firebase-functions/v2': {}, 'firebase-functions/v2/https': { HttpsError },
+    '../middleware/participantAccessMiddleware': { onCall: (_, handler) => handler },
+    'firebase-functions/v2/identity': { beforeUserCreated: (_, handler) => handler, beforeUserSignedIn: (_, handler) => handler },
+    '../admin': { admin: { database: { ServerValue: { TIMESTAMP: 0 } } }, db: { ref: () => ({ push: async () => {}, get: async () => ({ val: () => ({}) }), update: async () => {} }) } },
+    '../services/kmsService': {}, '../services/accountCleanupService': {}, '../services/deletionService': {}, '../services/auditService': {}, '../middleware/appCheckMiddleware': {},
+    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': { sendPushNotification: async () => {} }, '../services/stripeService': {},
+  }).onSignIn;
+  await assert.rejects(fixture(false)({ data: { uid: 'c1', email: 'c@example.test' } }), e => e.code === 'permission-denied' && /scheduled for deletion/.test(e.message));
+  await fixture(true)({ data: { uid: 'owner', email: 'o@example.test' } });
+  assert.equal(refreshed, false);
 });
 function enrollmentFixture({ coldCache = false } = {}) {
   const challengeId = 'a'.repeat(64);const code = '123456';let tokens=0;

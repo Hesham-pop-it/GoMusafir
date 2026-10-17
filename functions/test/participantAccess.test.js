@@ -200,3 +200,31 @@ test('admin revocation never rolls back a newer cutoff or drops staff entitlemen
   assert.equal(f.data.app_access.p.staff, true);
   assert.equal(f.data.app_access.p.version, 11);
 });
+test('participants of an organisation scheduled for deletion lose access at once but keep their account', async () => {
+  const f = fixture();
+  assert.ok((await f.api.requireAppAccess(f.request)).expires_at > Date.now());
+  f.data.orgs.o.metadata = { deleted_at: Date.now() };
+  await assert.rejects(f.api.requireAppAccess(f.request), { code: 'permission-denied' });
+  await assert.rejects(f.api.requireTripAccess(f.request, 't'), { code: 'permission-denied' });
+  // a trip of another, healthy organisation still works
+  f.data.orgs.o2 = { trips: { t2: { status: 'active', end_date: Date.now() + 60000 } }, staff: {} };
+  f.data.users.p.joined_trips.t2 = { org_id: 'o2' }; f.data.trips_participants.t2 = { p: true };
+  assert.equal((await f.api.requireAppAccess(f.request)).trips.t2 > Date.now(), true);
+  f.data.orgs.o2.trips.t2.end_date = Date.now() - 1;
+  assert.equal((await f.api.refreshAccess('p')).expires_at, 0);
+  assert.ok(f.data.users.p);
+});
+test('staff of an organisation scheduled for deletion are refused; the owner is marked so sign-in can let them restore', async () => {
+  const f = fixture();
+  f.record.customClaims = { role: 'co-host', orgId: 'o' }; f.data.orgs.o.staff.p = 'co-host';
+  f.data.orgs.o.metadata = { deleted_at: Date.now(), admin_uid: 'owner' };
+  await assert.rejects(f.api.requireAppAccess(f.request), { code: 'permission-denied', message: /scheduled for deletion/ });
+  const staff = await f.api.calculateAccess('p');
+  assert.deepEqual([staff.staff, staff.orgDeleted, staff.orgOwner], [false, true, false]);
+  f.data.orgs.o.metadata.admin_uid = 'p';
+  assert.equal((await f.api.calculateAccess('p')).orgOwner, true);
+  const before = JSON.stringify(f.data.app_access);
+  await f.api.refreshAccess('p');
+  assert.equal(JSON.stringify(f.data.app_access), before, 'the owner session is not revoked by a refresh');
+  assert.equal(f.revocations.length, 0);
+});

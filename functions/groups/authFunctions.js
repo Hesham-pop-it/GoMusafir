@@ -43,9 +43,14 @@ exports.onSignIn = beforeUserSignedIn({ region: "europe-west1" }, async (event) 
     // Verify staff from Auth plus organization membership without depending on
     // participant reconciliation availability during staff sign-in.
     const identityAccess = await calculateAccess(user.uid);
-    const access = identityAccess.staff ? identityAccess : await refreshAccess(user.uid);
-    if (!access.staff && !access.expires_at && (access.participant || user.customClaims?.role !== 'pending')) {
-      throw new HttpsError('permission-denied', 'Your trip has ended. Join a valid trip to sign in again.');
+    if (identityAccess.orgDeleted) {
+      // An organisation scheduled for deletion: only its owner may sign in, to restore it.
+      if (!identityAccess.orgOwner) throw new HttpsError('permission-denied', 'This organization is scheduled for deletion.');
+    } else {
+      const access = identityAccess.staff ? identityAccess : await refreshAccess(user.uid);
+      if (!access.staff && !access.expires_at && (access.participant || user.customClaims?.role !== 'pending')) {
+        throw new HttpsError('permission-denied', 'Your trip has ended. Join a valid trip to sign in again.');
+      }
     }
   } catch (error) {
     // beforeSignIn can run before a newly created account is visible to Admin.
