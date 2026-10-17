@@ -140,3 +140,17 @@ test('polls that send the hash they hold get an unchanged answer until the redac
   assert.notEqual(changed.hash,first.hash);assert.equal(changed.data.users.b.profile.firstName,'');
   assert.equal((await f.call('getVisibleTripData',{knownHash:'x'.repeat(65)})).envelope,undefined);
 });
+test('directory polls with known parts receive only the parts that changed',async()=>{
+  const f=fixture({mode:'Show to Everyone'});
+  const first=await f.call('getVisibleTripData',{knownParts:{}});
+  assert.deepEqual(Object.keys(first.data).sort(),['location_permissions','locations','users']);
+  const same=await f.call('getVisibleTripData',{knownParts:first.parts});
+  assert.equal(same.unchanged,true);assert.equal(same.data,undefined);
+  f.root().locations.b.lat=32;
+  const moved=await f.call('getVisibleTripData',{knownParts:first.parts});
+  assert.deepEqual(Object.keys(moved.data),['locations']);assert.equal(moved.data.locations.b.lat,32);
+  assert.equal(moved.parts.users,first.parts.users);
+  const gone=await f.call('getVisibleTripData',{knownParts:{...moved.parts,extra:'x'}});
+  assert.equal(gone.unchanged,undefined);assert.deepEqual(gone.data,{});
+  assert.equal((await f.call('getVisibleTripData',{knownParts:{a:1}})).envelope,undefined);
+});

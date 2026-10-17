@@ -45,7 +45,7 @@ async function load(request, group = null) {
     if (request.section === 'account' && request.path.split('/')[1] !== uid) throw new Error('A trip is required for another participant.');
     const key = `${uid}:${request.tripId}:${request.section}${group ? ':group' : ''}`;
     if (!inFlight.has(key)) {
-        const known = group ? { knownHash: group.hash || '' } : {};
+        const known = !group ? {} : request.section === 'directory' ? { knownParts: group.parts || {} } : { knownHash: group.hash || '' };
         const pending = (request.section === 'account'
             ? httpsCallable(functions, 'getOwnAccount')(known)
             : httpsCallable(functions, 'getVisibleTripData')({ tripId: request.tripId, section: request.section, ...known }))
@@ -53,7 +53,12 @@ async function load(request, group = null) {
                 if (auth.currentUser?.uid !== uid) throw new Error('Account changed.');
                 const data = result.data;
                 if (!group || data?.envelope !== 1) return data;
-                if (!data.unchanged) { group.data = data.data; group.hash = data.hash; }
+                if (data.parts) {
+                    // Keys the server left out are unchanged; keys it no longer lists are gone.
+                    if (!data.unchanged) group.data = Object.fromEntries(Object.keys(data.parts)
+                        .map(part => [part, part in data.data ? data.data[part] : group.data?.[part]]));
+                    group.parts = data.parts;
+                } else if (!data.unchanged) { group.data = data.data; group.hash = data.hash; }
                 return group.data;
             }).finally(() => { if (inFlight.get(key) === pending) inFlight.delete(key); });
         inFlight.set(key, pending);
@@ -142,7 +147,7 @@ function subscribe(request, client) {
             } catch (error) {
                 // Access loss must clear old coordinates/profile data, never retain it.
                 if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
-                    group.hash = null; group.data = undefined; group.people = undefined;
+                    group.hash = null; group.parts = null; group.data = undefined; group.people = undefined;
                     for (const client of group.clients) { client.signature = undefined; client.callback(snapshot(null)); client.onError(error); }
                 }
             }

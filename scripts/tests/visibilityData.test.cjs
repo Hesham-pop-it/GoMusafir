@@ -13,6 +13,8 @@ function fixture(){
     state.stateListeners.add(listener);return {remove:()=>state.stateListeners.delete(listener)};
   }},
   httpsCallable:(_,name)=>async params=>{state.calls.push({name,params});if(state.wait)await state.wait;if(state.fail)throw Error('denied');
+   if(state.hashes&&params.knownParts){const parts={},data={};for(const [key,value] of Object.entries(state.data)){parts[key]=JSON.stringify(value);if(params.knownParts[key]!==parts[key])data[key]=structuredClone(value);}
+    return {data:Object.keys(data).length?{envelope:1,parts,data}:{envelope:1,unchanged:true,parts}};}
    if(!state.hashes||params.knownHash===undefined)return {data:state.data};
    const hash=JSON.stringify(state.data);return {data:params.knownHash===hash?{envelope:1,unchanged:true,hash}:{envelope:1,hash,data:structuredClone(state.data)}};},
   get:async()=>{throw Error('raw read not allowed');},
@@ -134,14 +136,26 @@ test('revision hooks share the screen directory poll instead of polling on their
  first();second();stop();
  assert.equal(f.state.queue.filter(item=>!item.cancelled).length,0);
 });
+test('directory polls send held part hashes and merge only the parts that changed',async()=>{
+ const f=fixture(),values=[],users=[];f.state.hashes=true;
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
+ const people=f.api.onVisibleValue(f.ref('users/b/profile'),'t',snap=>users.push(snap.val()));
+ await f.tick();assert.equal(JSON.stringify(f.state.calls[0].params.knownParts),'{}');
+ assert.equal(values.at(-1).b.lat,1);assert.equal(users.at(-1).firstName,'Visible');
+ f.state.data.locations.b.lat=7;await f.tick();
+ assert.equal(f.state.calls[1].params.knownParts.users,JSON.stringify(f.state.data.users));
+ assert.equal(values.at(-1).b.lat,7);assert.equal(users.length,1);
+ await f.tick();assert.equal(values.length,2);
+ stop();people();
+});
 test('polls send the held hash and unchanged answers keep the held data',async()=>{
  const f=fixture(),values=[];f.state.hashes=true;
- const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>values.push(snap.val()));
- await f.tick();assert.equal(f.state.calls[0].params.knownHash,'');assert.equal(values.at(-1).b.lat,1);
+ const stop=f.api.onVisibleValue(f.ref('users/a'),null,snap=>values.push(snap.val()));
+ await f.tick();assert.equal(f.state.calls[0].params.knownHash,'');assert.equal(values.at(-1).locations.b.lat,1);
  await f.tick();assert.equal(f.state.calls[1].params.knownHash,JSON.stringify(f.state.data));assert.equal(values.length,1);
- f.state.data.locations.b.lat=9;await f.tick();assert.equal(values.at(-1).b.lat,9);
+ f.state.data.locations.b.lat=9;await f.tick();assert.equal(values.at(-1).locations.b.lat,9);
  f.state.fail=true;await f.tick();assert.equal(values.at(-1),null);
- f.state.fail=false;await f.tick();assert.equal(f.state.calls.at(-1).params.knownHash,'');assert.equal(values.at(-1).b.lat,9);
+ f.state.fail=false;await f.tick();assert.equal(f.state.calls.at(-1).params.knownHash,'');assert.equal(values.at(-1).locations.b.lat,9);
  const one=await f.api.getVisibleSnapshot(f.ref('users/b/profile'),'t');
  assert.equal(one.val().firstName,'Visible');assert.equal(f.state.calls.at(-1).params.knownHash,undefined);
  stop();
