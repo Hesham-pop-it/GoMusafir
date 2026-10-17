@@ -18,8 +18,9 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const read = path => path.split('/').filter(Boolean).reduce((v,k)=>v?.[k],state);
   const write = (path, value) => { const keys = path.split('/'); const last = keys.pop(); keys.reduce((v,k)=>v[k] ||= {},state)[last] = value; };
   const snap = v => ({val:()=>v, exists:()=>v != null});
+  const reads = [];
   const db = {ref(path) { return {
-    get:async()=>snap(read(path)), set:async value=>write(path,value),
+    get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
     orderByChild(){return this;},limitToLast(){return this;},
     push(){const key=`request-${++nextId}`;return {key,set:async value=>write(`${path}/${key}`,value)};},
     transaction:async fn=>{const result=fn(structuredClone(read(path)));if(result===undefined)return {committed:false,snapshot:snap(read(path))};write(path,result);return {committed:true,snapshot:snap(result)};},
@@ -41,7 +42,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   deps['./participantProfileService']=load('../services/participantProfileService');
   const service=load('../services/tripVisibilityService');
   const call = (method, data={}, uid='a') => service[method]({auth:{uid,token:{role:'admin',orgId:'forged'}},data:{tripId:'t',...data}});
-  return {state,call,root:()=>state.trips_active.o.t};
+  return {state,call,reads,root:()=>state.trips_active.o.t};
 }
 for (const role of [null,'admin','manager','co-host']) {
   test(`organizer visibility uses current organization membership: ${role}`, async()=>{
@@ -104,4 +105,23 @@ test('notification history and push payloads contain no copied participant PII',
   const result=redactNotification({type:'emergency',senderUid:'b',name:'Hidden Name',message:'Hidden Name needs help',title:'Hidden Name',lat:1,lng:2,senderImage:'private'});
   assert.equal(result.name,'Participant');assert.equal(result.lat,undefined);assert.equal(result.senderImage,undefined);
   assert.ok(!JSON.stringify(result).includes('Hidden Name'));
+});
+test('chat, voice and notifications read only the profiles they name and no coordinates',async()=>{
+  const f=fixture({mode:'Show to Everyone'});
+  f.reads.length=0;
+  const chat=await f.call('getVisibleTripData',{section:'chat'});
+  assert.equal(chat.message.sender_name,'First-b Last-b');
+  assert.deepEqual(f.reads.filter(path=>path.startsWith('users/')),['users/b']);
+  assert.ok(!f.reads.some(path=>path.endsWith('/locations')));
+  f.root().voice_channel={activeSpeaker:{uid:'c'}};f.reads.length=0;
+  assert.equal((await f.call('getVisibleTripData',{section:'voice'})).activeSpeaker.name,'First-c Last-c');
+  assert.deepEqual(f.reads.filter(path=>path.startsWith('users/')),['users/c']);
+  f.root().voice_channel={};f.reads.length=0;
+  await f.call('getVisibleTripData',{section:'voice'});
+  assert.deepEqual(f.reads.filter(path=>path.startsWith('users/')),[]);
+  const {id}=await f.call('requestParticipantLocation',{targetUid:'b'});f.reads.length=0;
+  assert.equal((await f.call('getVisibleTripData',{section:'notifications'},'b'))[id].name,'First-a Last-a');
+  assert.deepEqual(f.reads.filter(path=>path.startsWith('users/')),['users/a']);
+  f.reads.length=0;await f.call('getVisibleTripData');
+  assert.equal(f.reads.filter(path=>path.startsWith('users/')).length,3);
 });

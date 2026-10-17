@@ -6,16 +6,19 @@ const { visible, activeGrant } = require('./visibilityPolicy');
 const roles = ['admin', 'manager', 'co-host'];
 const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
-async function directory(request, access) {
+// `only` limits the result to the people a chat, voice or notification payload
+// names; those sections need no coordinates, only names and location visibility.
+async function directory(request, access, only = null) {
   const { tripId } = request.data;
   const { orgId, trip, staff } = access;
   const root = `trips_active/${orgId}/${tripId}`;
   const [members, staffSnap, locations, permissions] = await Promise.all([
     db.ref(`trips_participants/${tripId}`).get(), db.ref(`orgs/${orgId}/staff`).get(),
-    db.ref(`${root}/locations`).get(), db.ref(`${root}/location_permissions`).get(),
+    only ? { val: () => null } : db.ref(`${root}/locations`).get(), db.ref(`${root}/location_permissions`).get(),
   ]);
   const uids = new Set(Object.keys(members.val() || {}).filter(uid => members.val()[uid] === true));
   Object.entries(staffSnap.val() || {}).forEach(([uid, role]) => { if (roles.includes(role)) uids.add(uid); });
+  if (only) for (const uid of uids) if (!only.has(uid)) uids.delete(uid);
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
     const userSnap = await db.ref(`users/${uid}`).get();
@@ -50,9 +53,21 @@ async function directory(request, access) {
 }
 
 function displayName(users, uid) { return users[uid]?.full_name || 'Participant'; }
+const senderOf = message => message.sender_id || message.senderUid || message.fromUid || message.senderId;
+// Everyone sanitizeMessage looks up, including the author of a quoted reply.
+function sendersOf(messages) {
+  const uids = new Set();
+  const add = message => {
+    if (!message || typeof message !== 'object') return;
+    for (const key of ['sender_id', 'senderUid', 'fromUid', 'senderId']) if (typeof message[key] === 'string') uids.add(message[key]);
+    add(message.replyTo);
+  };
+  Object.values(messages).forEach(add);
+  return uids;
+}
 function sanitizeMessage(message, users) {
   if (!message || typeof message !== 'object') return message;
-  const uid = message.sender_id || message.senderUid || message.fromUid || message.senderId;
+  const uid = senderOf(message);
   const result = { ...message };
   // Older messages carried denormalized profile data. Never return those copies.
   for (const key of ['sender','sender_name','senderName','name','full_name','firstName','lastName','email','phone','sender_email','sender_phone']) {
@@ -72,23 +87,25 @@ async function getVisibleTripData(request) {
   const { tripId, section = 'directory' } = request.data || {};
   if (!id(tripId) || !['directory','chat','voice','notifications'].includes(section)) throw new HttpsError('invalid-argument', 'Invalid visibility request.');
   const access = await requireTripAccess(request, tripId);
-  const data = await directory(request, access);
-  if (section === 'directory') return data;
+  if (section === 'directory') return directory(request, access);
   const root = `trips_active/${access.orgId}/${tripId}`;
   if (section === 'chat') {
     const messages = (await db.ref(`${root}/chat`).orderByChild('timestamp').limitToLast(500).get()).val() || {};
+    const data = await directory(request, access, sendersOf(messages));
     return Object.fromEntries(Object.entries(messages).map(([key, value]) => [key, sanitizeMessage(value, data.users)]));
   }
   if (section === 'voice') {
     const voice = (await db.ref(`${root}/voice_channel`).get()).val() || {};
     if (voice.activeSpeaker && typeof voice.activeSpeaker === 'object') {
       const uid = voice.activeSpeaker.uid || voice.activeSpeaker.id;
+      const data = await directory(request, access, new Set(typeof uid === 'string' ? [uid] : []));
       voice.activeSpeaker = { uid: uid || '', name: displayName(data.users, uid),
         photoURL: data.users[uid]?.profile?.photoURL || '', avatar: data.users[uid]?.profile?.photoURL || '' };
     }
     return voice;
   }
   const notifications = (await db.ref(`${root}/notifications/${request.auth.uid}`).get()).val() || {};
+  const data = await directory(request, access, sendersOf(notifications));
   return Object.fromEntries(Object.entries(notifications).map(([key, value]) => {
     const result = sanitizeMessage(value, data.users);
     // Notification text may embed a now-hidden name; render structured events instead.
