@@ -54,7 +54,7 @@ import { Track, RoomEvent } from 'livekit-client';
 import SpeakerGlow from '../../components/SpeakerGlow';
 import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
-import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow, syncLocationToFirebase } from '../../services/locationTrackingService';
 import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
 
 
@@ -1695,13 +1695,7 @@ const TripOverviewScreen = () => {
 
             // 2. Update trips_active locations path with accurate emergency coordinates
             if (lat && lng && auth.currentUser?.uid) {
-                set(ref(database, `trips_active/${orgId}/${tripId}/locations/${auth.currentUser.uid}`), {
-                    lat: lat,
-                    lng: lng,
-                    latitude: lat,
-                    longitude: lng,
-                    updated_at: timestamp
-                }).catch(e => console.log("Failed to sync location for emergency:", e));
+                syncLocationToFirebase({ latitude: lat, longitude: lng }, { force: true, trip: { orgId, tripId, userId: auth.currentUser.uid } });
             }
 
             // 3. Send notification to each staff member (Manager, Co-Host, Admin, Organizer)
