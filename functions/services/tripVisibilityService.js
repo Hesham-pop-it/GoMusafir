@@ -181,4 +181,4 @@ async function respondToLocationRequest(request) {
   if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
   return { status: accept ? 'accepted' : 'declined', expiresAt: accept ? now + 15 * 60 * 1000 : null };
 }
-module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, directory };
+module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, directory };

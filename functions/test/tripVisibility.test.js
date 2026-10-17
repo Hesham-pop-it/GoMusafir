@@ -22,6 +22,7 @@ function fixture({ mode = 'Show to organizers', personal = {}, viewerRole = null
   const reads = [], cached = [];
   const db = {ref(path) { return {
     get:async()=>{reads.push(path);return snap(read(path));}, set:async value=>write(path,value),
+    remove:async()=>{const keys=path.split('/');const last=keys.pop();delete read(keys.join('/'))?.[last];},
     update:async values=>{for(const [key,value] of Object.entries(values)){if(value===null){const keys=`${path}/${key}`.split('/');const last=keys.pop();delete read(keys.join('/'))?.[last];}else write(`${path}/${key}`,value);}},
     orderByChild(){return this;},limitToLast(){return this;},
     push(){const key=`request-${++nextId}`;return {key,set:async value=>write(`${path}/${key}`,value)};},
@@ -193,4 +194,16 @@ test('trip views hold the member and staff redaction and drop people who left',a
   delete f.state.trips_participants.t.c;
   await f.views.writeTripView('t',['c']);
   assert.equal(f.state.trip_view.t.member.c,undefined);assert.equal(f.state.trip_view.t.staff.c,undefined);
+});
+test('the chat mirror holds the member view of a line and is removed with it',async()=>{
+  const f=fixture({mode:'Show to organizers'});
+  await f.views.writeTripView('t');
+  const line=f.root().chat.message;
+  await f.views.mirrorChat('o','t','message',line);
+  const mirrored=f.root().chat_view.message;
+  assert.equal(mirrored.sender_name,'Participant');assert.equal(mirrored.avatar,'');
+  assert.equal(mirrored.latitude,undefined);assert.equal(mirrored.type,'text');
+  assert.equal(mirrored.replyTo.sender,'Participant');
+  await f.views.mirrorChat('o','t','message',null);
+  assert.equal(f.root().chat_view.message,undefined);
 });

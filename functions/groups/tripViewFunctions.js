@@ -33,3 +33,5 @@ exports.onOwnAccountChanged = onValueWritten({ ref: '/users/{uid}', region: 'eur
   require('../admin').db.ref(`account_signal/${event.params.uid}`).set(event.id)
     .catch(error => console.log('Error signalling account:', error)));
 
+exports.onChatViewChanged = onValueWritten(options('/trips_active/{orgId}/{tripId}/chat/{messageId}'), event =>
+  views.mirrorChat(event.params.orgId, event.params.tripId, event.params.messageId, event.data.after.val()));
