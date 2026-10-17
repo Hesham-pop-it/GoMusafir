@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../../src/services/visibilityData.js'),'utf8').replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
 function fixture(){
- const state={calls:[],queue:[],signals:new Map(),signalErrors:new Map(),data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
+ const state={calls:[],queue:[],signals:new Map(),signalErrors:new Map(),listens:new Map(),views:false,data:{users:{b:{profile:{firstName:'Visible'}}},locations:{b:{lat:1,lng:2}}},uid:'a',fail:false,appState:'active',stateListeners:new Set(),revisions:[]};
  const auth={get currentUser(){return state.uid?{uid:state.uid}:null;}};
  const api=vm.runInNewContext(source+'\n({getVisibleSnapshot,onVisibleValue,offVisible,useVisibilityRevision,visibilitySignature})',{
   auth,functions:{},URL,console,
@@ -17,10 +17,15 @@ function fixture(){
     return {data:Object.keys(data).length?{envelope:1,parts,data}:{envelope:1,unchanged:true,parts}};}
    if(!state.hashes||params.knownHash===undefined)return {data:state.data};
    const hash=JSON.stringify(state.data);return {data:params.knownHash===hash?{envelope:1,unchanged:true,hash}:{envelope:1,hash,data:structuredClone(state.data)}};},
-  get:async()=>{throw Error('raw read not allowed');},
+  get:async target=>{if(target?.path?.startsWith('trip_view/')){if(target.path.includes('/staff/'))throw Error('permission_denied');return {val:()=>state.viewEntries?.[target.path]??null};}throw Error('raw read not allowed');},
   database:{},ref:(_,path)=>({path}),
+  query:target=>target,limitToLast:()=>null,
   onValue:(target,callback,onError)=>{
-   if(!/\/(chat_signal|voice_signal|notification_signal\/[^/]+)$/.test(target.path||''))throw Error('raw subscription not allowed');
+   if(/^trip_view\/|\/chat_view$|\/locations\/|\/location_permissions\//.test(target.path||'')){
+    if(!state.views||state.deny?.has(target.path)){onError(Error('permission_denied'));return ()=>{};}
+    state.listens.set(target.path,{callback,onError});return ()=>state.listens.delete(target.path);
+   }
+   if(!/\/(chat_signal|voice_signal|notification_signal\/[^/]+)$|^account_signal\/[^/]+$/.test(target.path||''))throw Error('raw subscription not allowed');
    state.signals.set(target.path,callback);state.signalErrors.set(target.path,onError);return ()=>state.signals.delete(target.path);
   },
   setTimeout:(fn,ms)=>{const item={fn,ms};state.queue.push(item);return item;},clearTimeout:item=>{if(item)item.cancelled=true;},
@@ -253,4 +258,64 @@ test('a signal during overlapping foreground polls still fetches after both fini
  await f.tick();
  assert.ok(messages.at(-1).m2);
  stop();
+});
+const emit=(f,path,value)=>f.state.listens.get(path).callback({val:()=>value??null});
+const entry=(name,canSeeLocation)=>({full_name:name,profile:{firstName:name,photoURL:''},visibility:{canSeeLocation}});
+test('staff get the directory from the staff view and listen only to visible coordinates while a map is open',async()=>{
+ const f=fixture();f.state.views=true;
+ const seen=[];
+ const map=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>seen.push(snap.val()));
+ emit(f,'trip_view/t/staff',{a:entry('Me',true),b:entry('Bee',true),c:entry('Cee',false)});
+ assert.ok(f.state.listens.has('trips_active/o/t/locations/b'));
+ assert.ok(!f.state.listens.has('trips_active/o/t/locations/c'));
+ assert.ok(f.state.listens.has('trips_active/o/t/location_permissions/c/a'));
+ emit(f,'trips_active/o/t/locations/b',{lat:1,lng:2,email:'leak@test.invalid'});
+ assert.equal(JSON.stringify(seen.at(-1)),JSON.stringify({b:{lat:1,lng:2}}));
+ assert.equal(f.state.calls.length,0);
+ map();
+ assert.equal(f.state.listens.size,0);
+});
+test('pilgrims combine the member view with their own entry and follow an accepted grant',async()=>{
+ const f=fixture();f.state.views=true;f.state.deny=new Set(['trip_view/t/staff']);
+ const users=[],places=[];
+ const people=f.api.onVisibleValue(f.ref('users/a'),'t',snap=>users.push(snap.val()));
+ const map=f.api.onVisibleValue(f.ref('trips_active/o/t/locations'),'t',snap=>places.push(snap.val()));
+ emit(f,'trip_view/t/member',{a:entry('',false),c:entry('',false)});
+ emit(f,'trip_view/t/staff/a',entry('Me',true));
+ assert.equal(users.at(-1).full_name,'Me');
+ assert.ok(!f.state.listens.has('trips_active/o/t/locations/c'));
+ emit(f,'trips_active/o/t/location_permissions/c/a',{acceptedAt:1,expiresAt:Date.now()+60000});
+ assert.ok(f.state.listens.has('trips_active/o/t/locations/c'));
+ emit(f,'trips_active/o/t/locations/c',{lat:3,lng:4});
+ assert.equal(JSON.stringify(places.at(-1).c),JSON.stringify({lat:3,lng:4}));
+ map();
+ assert.ok(!f.state.listens.has('trips_active/o/t/locations/c'));
+ assert.ok(f.state.listens.has('trip_view/t/member'));
+ people();assert.equal(f.state.listens.size,0);
+ assert.equal(f.state.calls.length,0);
+});
+test('a trip without a view keeps the old directory poll',async()=>{
+ const f=fixture();f.state.views=true;
+ const stop=f.api.onVisibleValue(f.ref('users/b/profile'),'t',()=>{});
+ emit(f,'trip_view/t/staff',null);
+ await f.run(0);
+ assert.equal(f.state.calls[0].params.section,'directory');
+ stop();
+});
+test('chat lines come from chat_view with names from the reader\'s directory',async()=>{
+ const f=fixture();f.state.views=true;f.state.deny=new Set(['trip_view/t/staff']);
+ const seen=[];
+ const stop=f.api.onVisibleValue(f.ref('trips_active/o/t/chat'),'t',snap=>seen.push(snap.val()));
+ emit(f,'trip_view/t/member',{b:entry('Bee',false)});emit(f,'trip_view/t/staff/a',entry('Me',true));
+ emit(f,'trips_active/o/t/chat_view',{m1:{sender_id:'b',sender_name:'Participant',text:'hi'}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(seen.at(-1).m1.sender_name,'Bee');
+ assert.equal(f.state.calls.length,0);
+ stop();assert.equal(f.state.listens.size,0);
+});
+test('one-shot profile reads use the person\'s view entry instead of the callable',async()=>{
+ const f=fixture();
+ f.state.viewEntries={'trip_view/t/member/b':entry('Bee',false)};
+ const snap=await f.api.getVisibleSnapshot(f.ref('users/b/full_name'),'t');
+ assert.equal(snap.val(),'Bee');assert.equal(f.state.calls.length,0);
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
-import { get, onValue, ref } from 'firebase/database';
+import { get, limitToLast, onValue, query, ref } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { auth, database, functions } from '../config/firebase';
 
@@ -65,9 +65,23 @@ async function load(request, group = null) {
     }
     return inFlight.get(key);
 }
+// One person's directory entry: the staff view (staff, or one's own entry), else
+// the member view. Null when the trip has no view yet.
+async function viewEntry(tripId, person) {
+    const staffEntry = await get(ref(database, `trip_view/${tripId}/staff/${person}`)).then(snap => snap.val(), () => null);
+    if (staffEntry) return staffEntry;
+    return get(ref(database, `trip_view/${tripId}/member/${person}`)).then(snap => snap.val(), () => null);
+}
 export async function getVisibleSnapshot(target, tripId) {
     const request = resolve(target, tripId);
     if (!request) return get(target);
+    if (request.section === 'directory' && request.path.startsWith('users/')) {
+        const held = subscriptions.get(`${auth.currentUser?.uid}:${request.tripId}:directory`)?.last;
+        if (held?.users) return select(held, request);
+        const person = request.path.split('/')[1];
+        const entry = await viewEntry(request.tripId, person);
+        if (entry) return select({ users: { [person]: entry } }, request);
+    }
     return select(await load(request), request);
 }
 // iOS/Android can suspend networking in the background. Screen-data polling
@@ -128,8 +142,9 @@ const SIGNAL_FALLBACK_MS = 30000;
 const SIGNAL_GAP_MS = 1500;
 // The first fetch waits this long for the signal's first value.
 const SIGNAL_FIRST_WAIT_MS = 1000;
-const SIGNALLED = ['chat', 'voice', 'notifications'];
+const SIGNALLED = ['chat', 'voice', 'notifications', 'account'];
 function signalPath(request, uid) {
+    if (request.section === 'account') return `account_signal/${uid}`;
     const [, orgId, tripId] = request.path.split('/');
     const root = `trips_active/${orgId}/${tripId}`;
     if (request.section === 'chat') return `${root}/chat_signal`;
@@ -147,6 +162,143 @@ function watchSignal(group, uid, path) {
         last = next;
     }, () => group.stopPolling?.setInterval(4000));
 }
+const LOCATION_KEYS = ['lat', 'lng', 'latitude', 'longitude', 'speed', 'heading', 'accuracy', 'updated_at'];
+const CHAT_VIEW_LIMIT = 200;
+const wantsLocations = group => [...group.clients].some(client => /\/(locations|location_permissions)(\/|$)/.test(client.request.path));
+function ownLocationFields(value) {
+    if (!value || typeof value !== 'object') return null;
+    const kept = Object.fromEntries(LOCATION_KEYS.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
+    return Object.keys(kept).length ? kept : null;
+}
+// The directory comes from the server-written trip_view: staff read the staff
+// view; pilgrims read the member view plus their own entry. Coordinates and
+// grants are listened to per person, and only while a screen shows locations.
+// Trips without a view yet (not backfilled) use the old poll.
+function watchDirectory(group, request, uid) {
+    const tripId = request.tripId;
+    let staffView, memberView, self, mode = null;
+    const people = new Map();
+    const stops = [];
+    const data = () => {
+        const users = mode === 'staff' ? { ...(staffView || {}) } : { ...(memberView || {}) };
+        if (mode === 'member' && self) users[uid] = self;
+        const locations = {}, grants = {};
+        for (const [person, state] of people) {
+            if (state.grant && isLocationGrantActive(state.grant)) grants[person] = { [uid]: state.grant };
+            if (state.location && (users[person]?.visibility?.canSeeLocation || person === uid || grants[person])) locations[person] = state.location;
+        }
+        return { users, locations, location_permissions: grants };
+    };
+    const syncLocations = () => {
+        const orgId = group.orgId;
+        const { users } = data();
+        const wanted = new Set();
+        if (orgId && wantsLocations(group)) for (const person of Object.keys(users)) wanted.add(person);
+        for (const [person, state] of people) {
+            if (wanted.has(person)) continue;
+            state.stopLocation?.(); state.stopGrant?.(); people.delete(person);
+        }
+        const root = `trips_active/${orgId}/${tripId}`;
+        for (const person of wanted) {
+            const state = people.get(person) || {};
+            people.set(person, state);
+            const visible = person === uid || users[person]?.visibility?.canSeeLocation;
+            if (!visible && !state.stopGrant) {
+                state.stopGrant = onValue(ref(database, `${root}/location_permissions/${person}/${uid}`), snap => {
+                    state.grant = snap.val(); syncLocations(); publish();
+                }, () => { state.grant = null; });
+            }
+            const allowed = visible || isLocationGrantActive(state.grant);
+            if (allowed && !state.stopLocation) {
+                state.stopLocation = onValue(ref(database, `${root}/locations/${person}`), snap => {
+                    state.location = ownLocationFields(snap.val()); publish();
+                }, () => { state.location = null; state.stopLocation = null; publish(); });
+            } else if (!allowed && state.stopLocation) {
+                state.stopLocation(); state.stopLocation = null; state.location = null;
+            }
+        }
+    };
+    const publish = () => { if (mode === 'staff' || mode === 'member') group.deliver(data()); };
+    const legacy = () => {
+        if (mode === 'legacy') return;
+        mode = 'legacy';
+        stops.splice(0).forEach(stop => stop());
+        for (const state of people.values()) { state.stopLocation?.(); state.stopGrant?.(); }
+        people.clear();
+        group.startPolling();
+    };
+    const listenMember = () => {
+        mode = 'member';
+        let seen = 0;
+        const ready = () => { if (++seen >= 2) { if (!memberView) return legacy(); syncLocations(); publish(); } };
+        let first = [true, true];
+        stops.push(onValue(ref(database, `trip_view/${tripId}/member`), snap => {
+            memberView = snap.val();
+            if (first[0]) { first[0] = false; return ready(); }
+            if (!memberView) return group.fail(new Error('Trip directory unavailable.'));
+            syncLocations(); publish();
+        }, () => legacy()));
+        stops.push(onValue(ref(database, `trip_view/${tripId}/staff/${uid}`), snap => {
+            self = snap.val();
+            if (first[1]) { first[1] = false; return ready(); }
+            syncLocations(); publish();
+        }, () => { self = null; }));
+    };
+    let firstStaff = true;
+    stops.push(onValue(ref(database, `trip_view/${tripId}/staff`), snap => {
+        staffView = snap.val();
+        if (firstStaff) { firstStaff = false; if (!staffView) return legacy(); mode = 'staff'; }
+        syncLocations(); publish();
+    }, () => { if (mode === null || mode === 'staff') { staffView = undefined; listenMember(); } }));
+    group.onClients = () => { if (mode === 'staff' || mode === 'member') { syncLocations(); publish(); } };
+    return () => {
+        stops.splice(0).forEach(stop => stop());
+        for (const state of people.values()) { state.stopLocation?.(); state.stopGrant?.(); }
+        people.clear();
+    };
+}
+// Names and photos in chat lines follow the reader's own directory, as on the server.
+function chatLine(message, users) {
+    if (!message || typeof message !== 'object') return message;
+    const uid = message.sender_id || message.senderUid || message.fromUid || message.senderId;
+    const result = { ...message };
+    for (const key of ['sender', 'sender_name', 'senderName', 'name', 'full_name']) if (key in result) result[key] = users[uid]?.full_name || 'Participant';
+    for (const key of ['avatar', 'senderImage', 'photoURL', 'photo_url']) if (key in result) result[key] = users[uid]?.profile?.photoURL || '';
+    if (result.replyTo) result.replyTo = chatLine(result.replyTo, users);
+    if (!users[uid]?.visibility?.canSeeLocation) {
+        for (const key of ['lat', 'lng', 'latitude', 'longitude', 'location', 'coordinates', 'address']) delete result[key];
+        if (result.type === 'location') { result.type = 'text'; result.text = 'Location is private'; }
+    }
+    return result;
+}
+// The newest chat lines from the server-written chat_view. Trips whose chat has
+// lines but no view yet (not backfilled) use the signalled poll.
+function watchChat(group, request, uid) {
+    const [, orgId, tripId] = request.path.split('/');
+    const root = `trips_active/${orgId}/${tripId}`;
+    let users, messages, live = false, legacy = false;
+    const publish = () => {
+        if (!live || users === undefined || messages === undefined) return;
+        group.deliver(Object.fromEntries(Object.entries(messages || {}).map(([key, value]) => [key, chatLine(value, users)])));
+    };
+    const directoryRequest = { path: 'users', tripId: request.tripId, section: 'directory' };
+    const stopDirectory = subscribe(directoryRequest, { request: directoryRequest,
+        callback: snap => { users = snap.val() || {}; publish(); }, onError: () => { users = {}; publish(); } });
+    let first = true;
+    const stopChat = onValue(query(ref(database, `${root}/chat_view`), limitToLast(CHAT_VIEW_LIMIT)), async snap => {
+        messages = snap.val();
+        if (first) {
+            first = false;
+            if (!messages) {
+                const signal = await get(ref(database, `${root}/chat_signal`)).catch(() => null);
+                if (signal?.val()) { legacy = true; stopChat(); stopDirectory(); return group.startPolling(); }
+            }
+            live = true;
+        }
+        publish();
+    }, () => { if (!legacy) { legacy = true; stopDirectory(); group.startPolling(); } });
+    return () => { stopChat(); stopDirectory(); };
+}
 function subscribe(request, client) {
     const uid = auth.currentUser?.uid;
     const key = `${uid}:${request.tripId}:${request.section}`;
@@ -154,44 +306,61 @@ function subscribe(request, client) {
     if (!group) {
         group = { clients: new Set(), stopPolling: null, stopped: false, hash: null, data: undefined };
         subscriptions.set(key, group);
+        group.deliver = data => {
+            if (group.stopped || auth.currentUser?.uid !== uid) return;
+            group.last = data;
+            for (const client of group.clients) {
+                const next = select(data, client.request);
+                const signature = visibilitySignature(next.val());
+                if (client.signature !== signature) { client.signature = signature; client.callback(next); }
+            }
+            if (request.section === 'directory') {
+                const people = visibilitySignature(data?.users);
+                if (group.people !== undefined && group.people !== people) {
+                    for (const section of SIGNALLED) subscriptions.get(`${uid}:${request.tripId}:${section}`)?.stopPolling?.now();
+                }
+                group.people = people;
+            }
+        };
+        // Access loss must clear old coordinates/profile data, never retain it.
+        group.fail = error => {
+            if (group.stopped || auth.currentUser?.uid !== uid) return;
+            group.hash = null; group.parts = null; group.data = undefined; group.people = undefined; group.last = undefined;
+            for (const client of group.clients) { client.signature = undefined; client.callback(snapshot(null)); client.onError(error); }
+        };
         const poll = async isCurrent => {
             try {
                 const data = await load(request, group);
-                if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
-                    for (const client of group.clients) {
-                        const next = select(data, client.request);
-                        const signature = visibilitySignature(next.val());
-                        if (client.signature !== signature) { client.signature = signature; client.callback(next); }
-                    }
-                    if (request.section === 'directory') {
-                        const people = visibilitySignature(data?.users);
-                        if (group.people !== undefined && group.people !== people) {
-                            for (const section of SIGNALLED) subscriptions.get(`${uid}:${request.tripId}:${section}`)?.stopPolling?.now();
-                        }
-                        group.people = people;
-                    }
-                }
+                if (isCurrent()) group.deliver(data);
             } catch (error) {
-                // Access loss must clear old coordinates/profile data, never retain it.
-                if (isCurrent() && !group.stopped && auth.currentUser?.uid === uid) {
-                    group.hash = null; group.parts = null; group.data = undefined; group.people = undefined;
-                    for (const client of group.clients) { client.signature = undefined; client.callback(snapshot(null)); client.onError(error); }
-                }
+                if (isCurrent()) group.fail(error);
             }
         };
         const signalled = SIGNALLED.includes(request.section);
-        group.stopPolling = startForegroundPolling(poll, signalled ? SIGNAL_FALLBACK_MS : 4000, signalled ? SIGNAL_FIRST_WAIT_MS : 0);
-        if (signalled) group.stopSignal = watchSignal(group, uid, signalPath(request, uid));
-    } else {
+        group.startPolling = () => {
+            if (group.stopPolling || group.stopped) return;
+            group.stopPolling = startForegroundPolling(poll, signalled ? SIGNAL_FALLBACK_MS : 4000, signalled ? SIGNAL_FIRST_WAIT_MS : 0);
+            if (signalled) group.stopSignal = watchSignal(group, uid, signalPath(request, uid));
+        };
+        if (request.section === 'directory') group.stopListening = watchDirectory(group, request, uid);
+        else if (request.section === 'chat') group.stopListening = watchChat(group, request, uid);
+        else group.startPolling();
+    } else if (group.stopPolling) {
         // A screen joining a running group gets data now, not after the next interval.
         group.stopPolling.now();
     }
+    if (request.section === 'directory' && request.path.startsWith('trips_active/')) group.orgId = request.path.split('/')[1];
     group.clients.add(client);
+    group.onClients?.();
+    // A screen joining a listening group gets the data it already holds.
+    if (!group.stopPolling && group.last !== undefined) group.deliver(group.last);
     return () => {
-        if (!group.clients.delete(client) || group.clients.size) return;
+        if (!group.clients.delete(client)) return;
+        if (group.clients.size) { group.onClients?.(); return; }
         group.stopped = true;
-        group.stopPolling();
+        group.stopPolling?.();
         group.stopSignal?.();
+        group.stopListening?.();
         if (subscriptions.get(key) === group) subscriptions.delete(key);
     };
 }
