@@ -6,6 +6,7 @@ const { sendPushNotification } = require("../services/notificationService");
 const { admin, db } = require("../admin");
 const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
+const { signalChat } = require("../services/chatSignal");
 
 /**
  * Triggered when a new chat message is created.
@@ -16,8 +17,11 @@ exports.onChatCreated = onValueCreated({
     region: "europe-west1"
 }, async (event) => {
     const data = event.data.val();
-    const { orgId, tripId } = event.params;
-    if (!data || !data.sender_id) return;
+    const { orgId, tripId, messageId } = event.params;
+    if (!data) return;
+    // Every line, system lines included, tells open chats to refetch.
+    await signalChat(db, orgId, tripId, messageId).catch(error => console.log("Error signalling chat:", error));
+    if (!data.sender_id) return;
     // System lines (voice started/ended) are shown in the chat but never pushed.
     if (data.type === 'system') return;
 
