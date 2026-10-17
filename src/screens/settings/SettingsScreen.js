@@ -22,7 +22,6 @@ import { ref, onValue, set } from 'firebase/database';
 import { Alert } from 'react-native';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
 import { safeSignOut } from '../../utils/authUtils';
-import { completeAccountDeletion } from '../../utils/accountDeletion';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MyLiveActivity } from '../../components/Widget';
 

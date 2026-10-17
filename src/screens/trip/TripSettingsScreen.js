@@ -36,7 +36,6 @@ import { unregisterForPushNotificationsAsync } from '../../services/notification
 import { stopLiveLocationTracking } from '../../services/locationTrackingService';
 import { ref, onValue, update, get, set, push } from 'firebase/database';
 import { safeSignOut } from '../../utils/authUtils';
-import { completeAccountDeletion } from '../../utils/accountDeletion';
 
 
 const { width } = Dimensions.get('window');
@@ -76,7 +75,6 @@ const TripSettingsScreen = () => {
     const [isDeletingTrip, setIsDeletingTrip] = useState(false);
     const [logoutModalVisible, setLogoutModalVisible] = useState(false);
     const [deleteAccountModalVisible, setDeleteAccountModalVisible] = useState(false);
-    const [isDeletingAccount, setIsDeletingAccount] = useState(false);
     const [seatModalVisible, setSeatModalVisible] = useState(false);
     const [requestSentVisible, setRequestSentVisible] = useState(false);
     const [seatCount, setSeatCount] = useState(1);
@@ -1043,15 +1041,10 @@ const TripSettingsScreen = () => {
                         </Text>
 
                         <TouchableOpacity
-                            style={[styles.deleteConfirmButton, isDeletingAccount && { opacity: 0.5 }]}
+                            style={styles.deleteConfirmButton}
                             onPress={handleDeleteAccount}
-                            disabled={isDeletingAccount}
                         >
-                            {isDeletingAccount ? (
-                                <ActivityIndicator color="#fff" size="small" />
-                            ) : (
-                                <Text style={styles.deleteConfirmButtonText}>Delete Account</Text>
-                            )}
+                            <Text style={styles.deleteConfirmButtonText}>Delete Account</Text>
                         </TouchableOpacity>
 
                         <TouchableOpacity
