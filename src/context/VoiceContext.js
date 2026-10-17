@@ -10,6 +10,7 @@ import { configureIOSVoiceAudio, restoreIOSVoiceAudio } from '../utils/voiceAudi
 import { isVoiceStaff } from '../utils/voiceRole';
 import { monitorVoiceSpeaking } from '../utils/voiceSpeakingMonitor';
 import { watchVoiceChannelStatus } from '../utils/voiceChannelStatus';
+import { voiceRoomOptions } from '../utils/voiceRoomOptions';
 import { requestVoiceToken } from '../utils/requestVoiceToken';
 import { createVoiceSpeakerController } from '../utils/voiceSpeakerController';
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
@@ -139,9 +140,7 @@ export const VoiceProvider = ({ children }) => {
     useEffect(() => { isConnectedRef.current = isConnected; }, [isConnected]);
     useEffect(() => { isAdminRef.current = isAdmin; }, [isAdmin]);
     useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-    const room = useRef(new Room({
-        audioLevelInterval: 20, // More frequent updates for more responsive UI
-    })).current;
+    const room = useRef(new Room(voiceRoomOptions())).current;
     const adminConnectionPending = useAdminVoiceConnection(room, activeOrgId, isConnected);
 
     useEffect(() => {
