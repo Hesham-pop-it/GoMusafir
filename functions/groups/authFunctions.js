@@ -17,6 +17,7 @@ const { sendPushNotification } = require("../services/notificationService");
 const { createEmailOtpService, generateCode } = require("../services/emailOtpService");
 const emailOtp = createEmailOtpService(db);
 const { getAccountCleanup } = require("../services/accountCleanupService");
+const { getDeletionService } = require("../services/deletionService");
 
 // ── S6 + S12: On user signup — set custom claims and encrypt PII ──────────────
 // This trigger fires when the org admin account is created via the website.
@@ -229,6 +230,7 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
     await admin.auth().updateUser(uid, { emailVerified: true });
     // Clean up any leftover OTP record (best-effort)
     await db.ref(`otp_codes/${uid}`).remove().catch(() => {});
+    if (request.data.purpose === 'delete_account') await getDeletionService().stampEmailCodeVerified(uid);
     return { verified: true };
   }
   // ─────────────────────────────────────────────────────────────────────────────
@@ -256,6 +258,9 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
   });
 
   // The matching transaction already deleted the used code (no multi-use).
+
+  // A participant confirms a deletion request with a fresh code; the server accepts it for 5 minutes.
+  if (request.data.purpose === 'delete_account') await getDeletionService().stampEmailCodeVerified(uid);
 
   return { verified: true };
 });
@@ -331,43 +336,30 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
   return { success: true, scope };
 });
 
-// ── Delete My Account (Bypasses recent login requirement by using Admin SDK) ───
-// Deletion requires a valid identity, even when the user has no active trip.
-exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, async (request) => {
+// ── Delete My Account (request) ───────────────────────────────────────────────
+// This is the request, not the deletion: the account is deactivated at once (Auth user
+// disabled, sessions revoked), a confirmation mail with a cancel link goes out, and the
+// real wipe runs 30 days later (purgeDeletedAccounts). The identity must have been
+// confirmed again in the last 5 minutes (sign-in, or an email code for participants).
+// An owner who still owns an organisation is refused. The response keeps its old shape
+// ({ success: true }, plus purge_after) so older app builds still sign out.
+exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireAuth(request);
 
   const uid = request.auth.uid;
-  const role = request.auth.token.role;
-  const orgId = request.auth.token.orgId;
-
-  let stage = "organization";
   try {
-    const cleanup = getAccountCleanup();
-    // 1. If admin, mark org for deletion (soft delete; purged after the grace period)
-    if (role === 'admin' && orgId) {
-      await cleanup.markOrganizationDeleted(orgId, admin.database.ServerValue.TIMESTAMP);
-      await writeAuditLog(orgId, {
-        action: "ORG_DELETED_BY_OWNER",
-        byUid: uid,
-        targetId: orgId,
-      });
-    }
-
-    // 2. Cleanup user data (chat anonymised, media/presence/notifications wiped;
-    //    Stripe customers and payment records are retained)
-    stage = "profile-cleanup";
-    await cleanup.removeUserCompletely(uid, { staffOrgId: orgId });
-
-    stage = "auth-delete";
-    await auth.deleteUser(uid);
+    return await getDeletionService().requestAccountDeletion({
+      uid,
+      claimOrgId: request.auth.token.orgId || null,
+      authTime: request.auth.token.auth_time,
+      ip: request.rawRequest?.ip,
+    });
   } catch (error) {
-    console.error("Account deletion failed", { uid, stage, code: error.code, message: error.message });
     if (error instanceof HttpsError) throw error;
+    console.error("Account deletion failed", { uid, code: error.code, message: error.message });
     throw new HttpsError("internal", "We couldn't finish deleting your account. Please try again. If this continues, contact support.");
   }
-
-  return { success: true };
 });
 
 // ── Web-to-App Secure Authentication Handoff ──────────────────────────────────

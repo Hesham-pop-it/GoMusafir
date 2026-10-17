@@ -32,18 +32,14 @@ const seed = () => ({
     } },
   },
 });
-function fixture({ cleanupFails = false } = {}) {
-  const calls = []; const logs = []; let options;
+function fixture({ serviceFails = null } = {}) {
+  const calls = []; const logs = []; let options; const requests = [];
   const noop = async () => {};
   const db = createFakeDb(seed());
   const bucket = createFakeBucket();
   const authFake = createFakeAuth({ self: {}, single: {}, shared: {}, c1: {}, owner: {}, o2: {} });
   const realRef = db.ref;
-  const guardedDb = { ref: key => {
-    const r = realRef(key);
-    if (cleanupFails) r.update = async () => { calls.push('profile'); throw new Error('RTDB unavailable'); };
-    return r;
-  } };
+  const guardedDb = { ref: key => realRef(key) };
   const svc = createAccountCleanup({ db: guardedDb, bucket, auth: authFake, now: () => 1 });
   const auth = { deleteUser: async uid => { calls.push(`auth:${uid}`); }, };
   const dependencies = {
@@ -55,17 +51,21 @@ function fixture({ cleanupFails = false } = {}) {
       return handler;
     } },
     'firebase-functions/v2/identity': { beforeUserCreated: noop, beforeUserSignedIn: noop },
-    '../admin': { admin: { database: { ServerValue: { TIMESTAMP: 'TS' } } }, auth, db: guardedDb },
+    '../admin': { admin: { database: { ServerValue: { TIMESTAMP: 'TS' } }, auth: () => ({ updateUser: async () => {} }) }, auth, db: guardedDb },
     '../services/kmsService': {},
     '../services/auditService': { writeAuditLog: async (orgId, entry) => logs.push({ orgId, ...entry }) },
     '../services/accountCleanupService': { getAccountCleanup: () => svc },
+    '../services/deletionService': { getDeletionService: () => ({
+      requestAccountDeletion: async args => { requests.push(args); if (serviceFails) throw serviceFails; return { success: true, purge_after: 42 }; },
+      stampEmailCodeVerified: async uid => calls.push(`stamp:${uid}`),
+    }) },
     '../middleware/appCheckMiddleware': { verifyAppCheck: noop,
       requireAuth: request => { if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in'); },
       requireRole: (request, roles) => {
         if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in');
         if (!roles.includes(request.auth.token.role)) throw new HttpsError('permission-denied', 'role');
       } },
-    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': {},
+    '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({ checkCode: async () => ({ outcome: 'ok' }) }), generateCode: () => '' }, '../services/notificationService': {},
     '../services/stripeService': { deleteStripeCustomer: async () => calls.push('stripe-delete') },
     crypto: require('node:crypto'),
   };
@@ -77,22 +77,19 @@ function fixture({ cleanupFails = false } = {}) {
       return dependencies[key];
     }, console: { error: (...args) => errorLogs.push(args), warn: (...args) => errorLogs.push(args) },
   });
-  return { exports: module.exports, calls, logs, errorLogs, db, bucket, options: () => options,
+  return { exports: module.exports, calls, logs, errorLogs, requests, db, bucket, options: () => options,
     self: (request = { auth: { uid: 'self', token: {} } }) => module.exports.deleteMyAccount(request),
     admin: targetUid => module.exports.deleteUserGlobally({ auth: { uid: 'owner', token: { role: 'admin', orgId: 'org' } }, data: { targetUid } }) };
 }
-test('self deletion uses the fresh identity gate without requiring a current trip', async () => {
+test('deleteMyAccount is an enrollment-class request that hands the sign-in time and organisation to the deletion service', async () => {
   const f = fixture(); assert.equal(f.options().enrollment, true);
-  await f.self();
-  assert.deepEqual(f.calls, ['auth:self']);
-  const d = f.db.dump();
-  assert.equal(d.users.self, undefined);
-  assert.equal(d.app_access.self, undefined);
-  assert.equal(d.trips_active.org.trip.locations.self, undefined);
-  assert.equal(d.trips_participants.trip.self, undefined);
-  assert.ok(!f.calls.includes('stripe-delete'));
-  assert.equal(d.orgs.org.payments.p.amount, 1);
-  assert.equal(d.orgs.org.metadata.stripe_customer_id, 'cus_org');
+  assert.deepEqual([...f.options().secrets], ['SENDGRID_API_KEY']);
+  const out = await f.self({ auth: { uid: 'self', token: { auth_time: 7, orgId: 'org' } }, rawRequest: { ip: '1.1.1.1' } });
+  assert.deepEqual(JSON.parse(JSON.stringify(f.requests)), [{ uid: 'self', claimOrgId: 'org', authTime: 7, ip: '1.1.1.1' }]);
+  // older builds only look for success and then sign out
+  assert.equal(out.success, true);
+  assert.deepEqual(f.calls, [], 'nothing is deleted at request time');
+  assert.deepEqual(f.db.dump().users.self.stripe_customer_id, 'cus_self');
 });
 test('no deletion path references the Stripe delete helper', () => {
   for (const file of ['authFunctions.js', 'orgFunctions.js', 'tripFunctions.js']) {
@@ -100,26 +97,26 @@ test('no deletion path references the Stripe delete helper', () => {
     assert.ok(!/deleteStripeCustomer/.test(source), `${file} still deletes Stripe customers`);
   }
 });
-test('RTDB cleanup failure stops Auth deletion and produces an actionable error', async () => {
-  const f = fixture({ cleanupFails: true });
+test('an unexpected failure becomes an actionable error, a deliberate one passes through unchanged', async () => {
+  const f = fixture({ serviceFails: new Error('RTDB unavailable') });
   await assert.rejects(f.self(), error => error.code === 'internal' && error.message.includes('Please try again'));
-  assert.ok(!f.calls.includes('auth:self'));
-  assert.equal(f.errorLogs[0][1].stage, 'profile-cleanup');
+  assert.equal(f.errorLogs[0][0], 'Account deletion failed');
+  const blocked = Object.assign(new HttpsError('failed-precondition', 'You own an organisation.'), { details: { reason: 'owns-organization' } });
+  const g = fixture({ serviceFails: blocked });
+  await assert.rejects(g.self(), error => error === blocked);
 });
 test('unauthenticated calls cannot delete an account', async () => {
   const f = fixture();
   await assert.rejects(f.self({}), { code: 'unauthenticated' });
-  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.requests, []);
 });
-test('an owner deleting their account soft-deletes the organisation and keeps its payment data', async () => {
+test('a verified email code stamps the re-confirmation only when asked for the delete purpose', async () => {
   const f = fixture();
-  await f.self({ auth: { uid: 'owner', token: { role: 'admin', orgId: 'org' } } });
-  const d = f.db.dump();
-  assert.equal(d.orgs.org.metadata.deleted_at, 'TS');
-  assert.equal(d.orgs.org.staff.owner, undefined);
-  assert.equal(d.orgs.org.payments.p.amount, 1);
-  assert.deepEqual(f.logs.map(l => l.action), ['ORG_DELETED_BY_OWNER']);
-  assert.ok(f.calls.includes('auth:owner'));
+  const verify = data => f.exports.verifyCustomEmailOTP({ auth: { uid: 'self', token: { email: 'p@example.test' } }, data });
+  await verify({ otp: '123456' });
+  assert.deepEqual(f.calls, []);
+  await verify({ otp: '123456', purpose: 'delete_account' });
+  assert.deepEqual(f.calls, ['stamp:self']);
 });
 test('admin removal of a single-org user wipes the account and anonymises chat', async () => {
   const f = fixture();

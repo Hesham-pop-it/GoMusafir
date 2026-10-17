@@ -80,7 +80,7 @@ function createDeletionService({
       await db.ref(`deletion_reauth/${uid}`).remove();
       return;
     }
-    throw new HttpsError("failed-precondition", "Please confirm your identity again before deleting.", { reason: "reauth-required" });
+    throw new HttpsError("failed-precondition", "Please re-authenticate to confirm your identity before deleting.", { reason: "reauth-required" });
   }
 
   async function stampEmailCodeVerified(uid) {
