@@ -39,22 +39,24 @@ async function main() {
     orgs: { o: { metadata: { name: 'Org O' }, staff: { [staff.uid]: 'co-host' }, trips: { t: trip } },
       p: { metadata: { name: 'Org P' }, staff: {}, trips: { u: trip } } },
     trips_orgs: { t: 'o', u: 'p' }, trips_participants: { t: { [pilgrim.uid]: true }, u: { [bystander.uid]: true } },
-    trips_active: { o: { t: { chat: { m: { sender_id: 'x', timestamp: now, text: 'hello' } } } }, p: { u: { chat: { m: { sender_id: 'x', timestamp: now, text: 'hello' } } } } },
+    trips_active: { o: { t: { pinned_location: { latitude: 1, longitude: 2 }, chat: { m: { sender_id: 'x', timestamp: now, text: 'hello' } } } }, p: { u: { chat: { m: { sender_id: 'x', timestamp: now, text: 'hello' } } } } },
   });
 
   // Active organisation: both can work.
   await allow(pilgrim, 'orgs/o/trips/t');
   await allow(pilgrim, `trips_active/o/t/locations/${pilgrim.uid}`, 'PUT', { lat: 1 });
-  await allow(staff, 'trips_active/o/t/chat');
+  // The chat itself is read only by the server; the pinned location is the trip-level read.
+  await allow(pilgrim, 'trips_active/o/t/pinned_location');
+  await allow(staff, 'trips_active/o/t/pinned_location');
   await allow(staff, 'orgs/o/staff');
 
   // Deactivated organisation: staff and participants can neither read nor write.
   await owner('orgs/o/metadata/deleted_at', now);
   await deny(pilgrim, 'orgs/o/trips/t');
-  await deny(pilgrim, 'trips_active/o/t/chat');
+  await deny(pilgrim, 'trips_active/o/t/pinned_location');
   await deny(pilgrim, `trips_active/o/t/locations/${pilgrim.uid}`, 'PUT', { lat: 2 });
   await deny(pilgrim, 'trips_active/o/t/chat/new', 'PUT', { sender_id: pilgrim.uid, timestamp: Date.now(), text: 'hi', type: 'text' });
-  await deny(staff, 'trips_active/o/t/chat');
+  await deny(staff, 'trips_active/o/t/pinned_location');
   await deny(staff, 'orgs/o/staff');
   await deny(staff, 'orgs/o/trips/t');
   await deny(staff, 'trips_active/o/t/chat/new', 'PUT', { sender_id: staff.uid, timestamp: Date.now(), text: 'hi', type: 'text' });
@@ -68,7 +70,7 @@ async function main() {
   // Restored: the same people work again with the same tokens.
   await owner('orgs/o/metadata/deleted_at', null);
   await allow(pilgrim, 'orgs/o/trips/t');
-  await allow(staff, 'trips_active/o/t/chat');
+  await allow(staff, 'trips_active/o/t/pinned_location');
 
   // Deletion queues, the audit and the re-confirmation stamps are server-only.
   for (const node of ['account_deletions', 'org_deletions', 'deletion_audit', 'deletion_reauth']) {
