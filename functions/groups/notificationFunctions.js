@@ -1,11 +1,13 @@
 // ─── Notification Functions ──────────────────────────────────────────────────
 // Handles Realtime Database triggers for push notifications.
 
-const { onValueCreated, onValueWritten } = require("firebase-functions/v2/database");
-const { sendPushNotification } = require("../services/notificationService");
+const { onValueCreated, onValueUpdated, onValueWritten } = require("firebase-functions/v2/database");
+const { sendPushNotification, sendPushToMany } = require("../services/notificationService");
 const { admin, db } = require("../admin");
 const { decrypt } = require("../services/kmsService");
 const { isInVoice } = require("../services/voicePresenceService");
+const { signalChat, signalVoice, signalNotifications } = require("../services/tripSignals");
+const { stampNotification, onlyStamped } = require("../services/notificationStamp");
 
 /**
  * Triggered when a new chat message is created.
@@ -16,8 +18,11 @@ exports.onChatCreated = onValueCreated({
     region: "europe-west1"
 }, async (event) => {
     const data = event.data.val();
-    const { orgId, tripId } = event.params;
-    if (!data || !data.sender_id) return;
+    const { orgId, tripId, messageId } = event.params;
+    if (!data) return;
+    // Every line, system lines included, tells open chats to refetch.
+    await signalChat(db, orgId, tripId, messageId).catch(error => console.log("Error signalling chat:", error));
+    if (!data.sender_id) return;
     // System lines (voice started/ended) are shown in the chat but never pushed.
     if (data.type === 'system') return;
 
@@ -73,30 +78,10 @@ exports.onChatCreated = onValueCreated({
             skipDbSave: true
         };
 
-        // 1. Dispatch push notification to all recipients directly
-        const pushPromises = allRecipientUids.map(async recipientUid => {
-            // Quiet (no sound) while the recipient is in the voice channel.
-            const quiet = await isInVoice(orgId, tripId, recipientUid);
-            return sendPushNotification(recipientUid, title, body, payload, quiet ? { ...options, quiet: true } : options);
-        });
-
-        // 2. Also log in trip-level notifications for in-trip history
-        const tripNotifPromises = allRecipientUids.map(pUid =>
-            db.ref(`trips_active/${orgId}/${tripId}/notifications/${pUid}`).push().set({
-                type: "chat_message",
-                title: title,
-                message: messageText,
-                name: senderName,
-                senderUid: data.sender_id,
-                tripId,
-                orgId,
-                timestamp: timestamp,
-                read: false,
-                seen: false
-            })
-        );
-
-        await Promise.all([...pushPromises, ...tripNotifPromises]);
+        // One push for everyone, sent in groups of at most 500 tokens; quiet (no sound) while the recipient is in the voice channel.
+        await sendPushToMany(allRecipientUids, title, body, payload, options,
+            recipientUid => isInVoice(orgId, tripId, recipientUid));
+        // Group chat messages leave no notification record: the chat is the history, the push stays.
     } catch (error) {
         console.log("Error in onChatCreated:", error);
     }
@@ -115,6 +100,10 @@ exports.onNotificationCreated = onValueCreated({
 
     // Only proceed if there's real notification data to notify
     if (!data) return;
+    await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
+    // The server decides how long the record stays visible (config/notification_terms).
+    await stampNotification(db, { orgId, tripId, uid, notifId: event.params.notifId, record: data })
+        .catch(error => console.log("Error stamping notification:", error));
 
     // CRITICAL FIX: Ignore updates/nodes that only mark read/seen or have no valid payload
     if (data.read === true && !data.message && !data.title) return;
@@ -249,6 +238,10 @@ exports.onVoiceChannelUpdated = onValueWritten({
     const before = event.data.before.val() || {};
     const after = event.data.after.val() || {};
     const { orgId, tripId } = event.params;
+    // A removed channel (trip deletion) must not leave a signal behind.
+    if (event.data.after.val() !== null) {
+        await signalVoice(db, orgId, tripId, event.id).catch(error => console.log("Error signalling voice:", error));
+    }
 
     // Group chat system line on a real start/end, independent of who gets notified below.
     const wasStarted = before.isChannelStarted === true || before.isChannelActive === true;
@@ -555,3 +548,16 @@ exports.onPrepaidSeatsUpdated = onValueWritten({
     }
 });
 
+/**
+ * Status changes of an existing notification (read, accepted, declined) tell
+ * that person's open screens to refetch. Deletions do not fire this trigger.
+ */
+exports.onNotificationUpdated = onValueUpdated({
+    ref: "trips_active/{orgId}/{tripId}/notifications/{uid}/{notifId}",
+    region: "europe-west1"
+}, async (event) => {
+    const { orgId, tripId, uid } = event.params;
+    // Stamping the end date is not a change the person needs to refetch for.
+    if (onlyStamped(event.data.before.val(), event.data.after.val())) return;
+    await signalNotifications(db, orgId, tripId, uid, event.id).catch(error => console.log("Error signalling notifications:", error));
+});

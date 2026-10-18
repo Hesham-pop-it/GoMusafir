@@ -1,0 +1,7 @@
+{
+  "note": "Per pilgrim per day with the app open 4 h (data usage plan v5). run.mjs compares against these; --enforce makes it exit 1 when one is exceeded.",
+  "phoneTotalMB": 5,
+  "coldStartKB": 200,
+  "serverDatabaseReadsMB": 1,
+  "functionCalls": 300
+}

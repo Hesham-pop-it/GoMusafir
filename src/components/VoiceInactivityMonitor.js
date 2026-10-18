@@ -6,6 +6,8 @@ import { RoomEvent, ConnectionState } from 'livekit-client';
 import { ref, onValue } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
 import { database, functions } from '../config/firebase';
+import { createActivityReporter } from '../utils/voiceActivityReporter';
+import { watchOwnVoicePresence } from '../utils/voiceChannelFields';
 
 const HOST_ROLES = ['admin', 'manager', 'co-host'];
 
@@ -35,8 +37,7 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
     useEffect(() => {
         setPresenceReady(false);
         if (!connected || !orgId || !tripId || !uid || !databaseConnected) return;
-        return onValue(ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence/${uid}`),
-            snapshot => setPresenceReady(snapshot.val() === true), () => setPresenceReady(false));
+        return watchOwnVoicePresence(database, orgId, tripId, uid, setPresenceReady);
     }, [connected, orgId, tripId, uid, databaseConnected]);
 
     useEffect(() => {
@@ -76,60 +77,39 @@ export default function VoiceInactivityMonitor({ room, connected, tripId, orgId,
 
     useEffect(() => {
         if (!connected || !tripId || !orgId || !uid || !presenceReady || !databaseConnected || !roomSid || !channelReady) return;
-        let disposed = false;
-        let busy = false;
-        let queued = false;
-        let activitySeen = false;
         const report = httpsCallable(functions, 'reportVoiceActivity');
-        // Serialize reports and retain brief activity across retries, so a fast
-        // unmute/mute cannot disappear between network requests.
-        const flush = async () => {
-            if (disposed || busy || room.state !== ConnectionState.Connected) return;
-            busy = true;
-            queued = false;
-            const activity = activitySeen;
-            activitySeen = false;
-            try {
-                await report({ tripId, activity });
-                if (activity) queued = true;
-            } catch (e) {
-                if (disposed || room.state !== ConnectionState.Connected) return;
-                activitySeen = activitySeen || activity;
-                queued = false; // Retry on the timer, not in a tight loop during session transitions.
-                console.warn('[Voice inactivity] Activity report failed:', e.code);
-            } finally {
-                busy = false;
-                if (queued && !disposed) flush();
-            }
-        };
-        const changed = () => {
-            const participants = [room.localParticipant, ...room.remoteParticipants.values()];
-            activitySeen = activitySeen || participants.some(p => p.isMicrophoneEnabled || p.isSpeaking);
-            queued = true;
-            flush();
-        };
-        const unmuted = () => { activitySeen = true; changed(); };
-        const events = [RoomEvent.ParticipantConnected, RoomEvent.ParticipantDisconnected,
-            RoomEvent.TrackMuted, RoomEvent.TrackPublished, RoomEvent.TrackUnpublished,
-            RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished,
-            RoomEvent.ActiveSpeakersChanged, RoomEvent.Reconnected];
-        events.forEach(event => room.on(event, changed));
+        // Only people who can speak report: organizers and anyone granted a microphone.
+        const reporter = createActivityReporter({
+            room, send: activity => report({ tripId, activity }),
+            canReport: () => HOST_ROLES.includes(role) || room.localParticipant.permissions?.canPublish === true,
+            isConnected: () => room.state === ConnectionState.Connected,
+        });
+        const { changed, lowered, unmuted, reconnected } = reporter;
+        const raising = [RoomEvent.ParticipantConnected, RoomEvent.TrackPublished, RoomEvent.LocalTrackPublished,
+            RoomEvent.ActiveSpeakersChanged, RoomEvent.ParticipantPermissionsChanged];
+        const lowering = [RoomEvent.ParticipantDisconnected, RoomEvent.TrackMuted, RoomEvent.TrackUnpublished,
+            RoomEvent.LocalTrackUnpublished];
+        raising.forEach(event => room.on(event, changed));
+        lowering.forEach(event => room.on(event, lowered));
         room.on(RoomEvent.TrackUnmuted, unmuted);
+        room.on(RoomEvent.Reconnected, reconnected);
         const subscription = AppState.addEventListener('change', state => {
             setForeground(state === 'active');
             if (state === 'active') changed();
         });
-        // Recovery for dropped events/RPCs; the five-minute deadline is server-owned.
+        // Recovery for a failed report only; an unchanged room sends nothing.
         const interval = setInterval(changed, 30000);
         changed();
         return () => {
-            disposed = true;
+            reporter.dispose();
             clearInterval(interval);
             subscription.remove();
-            events.forEach(event => room.off(event, changed));
+            raising.forEach(event => room.off(event, changed));
+            lowering.forEach(event => room.off(event, lowered));
             room.off(RoomEvent.TrackUnmuted, unmuted);
+            room.off(RoomEvent.Reconnected, reconnected);
         };
-    }, [room, connected, tripId, orgId, uid, presenceReady, databaseConnected, roomSid, channelReady]);
+    }, [room, connected, tripId, orgId, uid, role, presenceReady, databaseConnected, roomSid, channelReady]);
 
     const respond = async keepActive => {
         if (!prompt || submitting) return;

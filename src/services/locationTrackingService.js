@@ -13,6 +13,28 @@ let foregroundWatcher = null;
 let appStateSubscription = null;
 let currentTrackingTrip = null;
 
+// One write path per phone: at most one write per 15 s and only after 10 m of movement.
+export const LOCATION_WRITE_MIN_INTERVAL_MS = 15000;
+export const LOCATION_WRITE_MIN_DISTANCE_M = 10;
+let lastLocationWrite = null;
+
+function distanceMeters(aLat, aLng, bLat, bLng) {
+    const rad = Math.PI / 180;
+    const dLat = (bLat - aLat) * rad;
+    const dLng = (bLng - aLng) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * rad) * Math.cos(bLat * rad) * Math.sin(dLng / 2) ** 2;
+    return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Pure gate: should this point be written? `last` is { key, at, lat, lng } or null.
+ */
+export function shouldWriteLocation(last, key, lat, lng, now, force = false) {
+    if (force || !last || last.key !== key) return true;
+    if (now - last.at < LOCATION_WRITE_MIN_INTERVAL_MS) return false;
+    return distanceMeters(last.lat, last.lng, lat, lng) >= LOCATION_WRITE_MIN_DISTANCE_M;
+}
+
 /**
  * 1. Define Background Location Task
  * Must be registered at the top level in global scope.
@@ -42,10 +64,12 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
  * Synchronizes coordinates to Firebase Realtime Database
  * Respects participant visibility and global trip privacy settings.
  */
-async function syncLocationToFirebase(coords) {
+export async function syncLocationToFirebase(coords, { force = false, trip = null } = {}) {
+    let writeKey = null;
+    let previousWrite = lastLocationWrite;
     try {
         let userId = auth.currentUser?.uid;
-        let activeTrip = currentTrackingTrip;
+        let activeTrip = trip || currentTrackingTrip;
 
         if (!activeTrip || !userId) {
             const stored = await AsyncStorage.getItem(ACTIVE_LOCATION_SYNC_KEY);
@@ -69,21 +93,26 @@ async function syncLocationToFirebase(coords) {
             return;
         }
 
+        writeKey = `${orgId}/${tripId}/${userId}`;
+        const now = Date.now();
+        previousWrite = lastLocationWrite;
+        if (!shouldWriteLocation(previousWrite, writeKey, lat, lng, now, force)) return;
+        lastLocationWrite = { key: writeKey, at: now, lat, lng };
+
         // Coordinates are stored privately. The server applies field visibility
         // and accepted, expiring location grants before returning any coordinates.
         // A hidden global setting must not prevent an explicitly accepted request.
         const locationRef = ref(database, `trips_active/${orgId}/${tripId}/locations/${userId}`);
+        // Every phone that sees this position receives it, so only the fields a
+        // reader uses are sent. Older builds read `lat ?? latitude`; nothing reads
+        // speed, heading or accuracy.
         await set(locationRef, {
             lat: lat,
             lng: lng,
-            latitude: lat,
-            longitude: lng,
-            speed: typeof coords.speed === 'number' ? coords.speed : null,
-            heading: typeof coords.heading === 'number' ? coords.heading : null,
-            accuracy: typeof coords.accuracy === 'number' ? coords.accuracy : null,
             updated_at: serverTimestamp(),
         });
     } catch (err) {
+        if (writeKey && lastLocationWrite?.key === writeKey) lastLocationWrite = previousWrite;
         console.log('[BackgroundLocation] Failed to sync location to Firebase:', err);
     }
 }
@@ -146,10 +175,10 @@ async function refreshBackgroundLocationTracking() {
         // Reapply options to persisted tasks, including tasks from older builds.
         await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
             accuracy: Location.Accuracy.Balanced,
-            timeInterval: 4000,
-            distanceInterval: 5,
-            deferredUpdatesInterval: 4000,
-            deferredUpdatesDistance: 5,
+            timeInterval: 15000,
+            distanceInterval: 10,
+            deferredUpdatesInterval: 15000,
+            deferredUpdatesDistance: 10,
             // Apple's optional indicator for Always authorization only.
             // Required system privacy indicators remain controlled by iOS.
             showsBackgroundLocationIndicator: false,
@@ -202,8 +231,8 @@ export async function startLiveLocationTracking(orgId, tripId) {
             foregroundWatcher = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.High,
-                    timeInterval: 3000,
-                    distanceInterval: 3,
+                    timeInterval: 15000,
+                    distanceInterval: 10,
                 },
                 (loc) => {
                     if (loc?.coords) {
@@ -244,6 +273,7 @@ export async function startLiveLocationTracking(orgId, tripId) {
  */
 export async function stopLiveLocationTracking() {
     currentTrackingTrip = null;
+    lastLocationWrite = null;
     await AsyncStorage.removeItem(ACTIVE_LOCATION_SYNC_KEY);
 
     if (foregroundWatcher) {
@@ -275,7 +305,7 @@ export async function syncCurrentUserLocationNow() {
             accuracy: Location.Accuracy.High,
         });
         if (loc?.coords) {
-            await syncLocationToFirebase(loc.coords);
+            await syncLocationToFirebase(loc.coords, { force: true });
             return loc.coords;
         }
     } catch (err) {

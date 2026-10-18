@@ -413,6 +413,25 @@ exports.redeemTeamInvitation = onCall({ enrollment: true, region: "europe-west1"
 
 
 
+// Seats taken: the stored member count plus organizers who are not members.
+// Falls back to reading the whole membership list while no count is stored yet.
+async function filledSeats(orgId, tripId) {
+  const [countSnap, staffSnap] = await Promise.all([
+    db.ref(`trip_seat_counts/${tripId}`).get(),
+    db.ref(`orgs/${orgId}/staff`).get(),
+  ]);
+  const staff = staffSnap.val();
+  const count = countSnap.val();
+  if (typeof count !== 'number') {
+    const members = (await db.ref(`trips_participants/${tripId}`).get()).val() || {};
+    return occupiedSeatUids(members, staff).length;
+  }
+  const organizers = occupiedSeatUids({}, staff);
+  const flags = await Promise.all(organizers.map(async uid =>
+    (await db.ref(`trips_participants/${tripId}/${uid}`).get()).val() === true));
+  return count + flags.filter(isMember => !isMember).length;
+}
+
 // ── Get Invite Metadata (public — no auth needed) ─────────────────────────────
 // Returns safe trip preview for the invite landing page.
 // S16: Only serves data from our DB, never reflects URL params back.
@@ -443,12 +462,7 @@ exports.getInviteMetadata = onCall({ enrollment: true, region: "europe-west1" },
   if (!tripExpiry(trip)) throw new HttpsError("permission-denied", "This trip has ended or is invalid.");
   const orgSnap = await db.ref(`orgs/${invite.org_id}/metadata/name`).get();
 
-  const [membersSnap, staffSnap] = await Promise.all([
-    db.ref(`trips_participants/${invite.trip_id}`).get(),
-    db.ref(`orgs/${invite.org_id}/staff`).get(),
-  ]);
-  const members = membersSnap.val() || {};
-  const currentParticipants = occupiedSeatUids(members, staffSnap.val()).length;
+  const currentParticipants = await filledSeats(invite.org_id, invite.trip_id);
   const totalSeats = tripCapacity(trip);
 
   let alreadyJoined = false;

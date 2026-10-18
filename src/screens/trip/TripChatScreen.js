@@ -31,6 +31,9 @@ import { database, auth } from '../../config/firebase';
 import { ref, push, serverTimestamp, query, orderByChild, limitToLast, get, set, onValue } from 'firebase/database';
 import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { uploadTripMedia } from '../../utils/uploadTripMedia';
+import { preparePhoto } from '../../utils/imageSizing';
+import { compressVideoIfPossible } from '../../utils/videoCompression';
+import RemoteImage from '../../components/RemoteImage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
@@ -237,7 +240,7 @@ const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, hideTeamB
                                     activeOpacity={0.9}
                                 >
                                     {(item.image_url || item.media_url) && (
-                                        <Image source={{ uri: item.image_url || item.media_url }} style={styles.messageImage} />
+                                        <RemoteImage source={{ uri: item.thumbnail_url || item.image_url || item.media_url }} style={styles.messageImage} />
                                     )}
                                     {/* Only show meta on image if no caption, otherwise show below */}
                                     {!item.text && renderMeta()}
@@ -1128,9 +1131,31 @@ const TripChatScreen = () => {
                 return;
             }
 
-            const downloadUrl = await uploadTripMedia(uri, { tripId, contentType });
+            let uploadUri = uri;
+            let photoThumbUri = null;
+            if (type === 'image') {
+                try {
+                    // 1280 px q0.7 full size plus a 480 px thumbnail for the bubble.
+                    const prepared = await preparePhoto(uri);
+                    uploadUri = prepared.full.uri;
+                    photoThumbUri = prepared.thumb.uri;
+                } catch (resizeErr) {
+                    console.log('[TripChatScreen] Could not resize photo, sending original:', resizeErr);
+                }
+            } else if (isVideo) {
+                uploadUri = await compressVideoIfPossible(uri);
+            }
+
+            const downloadUrl = await uploadTripMedia(uploadUri, { tripId, contentType });
 
             let thumbnailDownloadUrl = null;
+            if (photoThumbUri) {
+                try {
+                    thumbnailDownloadUrl = await uploadTripMedia(photoThumbUri, { tripId, contentType: 'image/jpeg' });
+                } catch (thumbErr) {
+                    console.log('[TripChatScreen] Could not upload photo thumbnail:', thumbErr);
+                }
+            }
             if (isVideo) {
                 try {
                     const thumbResult = await VideoThumbnails.getThumbnailAsync(uri, {
@@ -1157,6 +1182,7 @@ const TripChatScreen = () => {
             if (type === 'image') {
                 messageData.image_url = downloadUrl;
                 messageData.media_url = downloadUrl;
+                if (thumbnailDownloadUrl) messageData.thumbnail_url = thumbnailDownloadUrl;
                 if (caption) messageData.text = caption;
             } else if (type === 'voice') {
                 messageData.audio_url = downloadUrl;
@@ -1447,7 +1473,7 @@ const TripChatScreen = () => {
                                         <Ionicons name="shield-outline" size={22} color="#FFF" />
                                     </View>
                                 ) : conversation?.avatar ? (
-                                    <Image source={{ uri: conversation.avatar }} style={styles.headerAvatar} />
+                                    <RemoteImage source={{ uri: conversation.avatar }} style={styles.headerAvatar} />
                                 ) : (
                                     <View style={[styles.headerAvatar, styles.headerAvatarFallback]}>
                                         <Text style={styles.headerAvatarInitials}>
@@ -1794,9 +1820,10 @@ const TripChatScreen = () => {
                         </TouchableOpacity>
 
                         {viewerImage && (
-                            <Image
+                            <RemoteImage
                                 source={{ uri: viewerImage }}
                                 style={styles.fullViewerImage}
+                                resizeMode="contain"
                             />
                         )}
                     </View>

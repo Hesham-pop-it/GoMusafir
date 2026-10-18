@@ -1,4 +1,5 @@
 import { useVisibilityRevision, getVisibleSnapshot } from '../../services/visibilityData';
+import { watchPresence, presencePath } from '../../utils/voiceChannelFields';
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -37,6 +38,7 @@ import { httpsCallable } from 'firebase/functions';
 import { LinearGradient } from 'expo-linear-gradient';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
 import { useLanguage } from '../../context/LanguageContext';
+import RemoteImage from '../../components/RemoteImage';
 
 const { width, height } = Dimensions.get('window');
 
@@ -103,14 +105,7 @@ const ParticipantsScreen = () => {
     React.useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const presenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`);
-        const unsubscribe = onValue(presenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setVoicePresence(snapshot.val() || {});
-            } else {
-                setVoicePresence({});
-            }
-        });
+        const unsubscribe = watchPresence(database, orgId, tripId, 'voice', setVoicePresence);
 
         return () => unsubscribe();
     }, [tripId, orgId]);
@@ -118,19 +113,13 @@ const ParticipantsScreen = () => {
     React.useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const appPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`);
-        const unsubscribe = onValue(appPresenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setAppPresence(snapshot.val() || {});
-            } else {
-                setAppPresence({});
-            }
-        });
+        const appPresenceRef = ref(database, presencePath(orgId, tripId, 'app'));
+        const unsubscribe = watchPresence(database, orgId, tripId, 'app', setAppPresence);
 
         // Ensure own presence is marked online in RTDB immediately when viewing participants
         const myUid = auth.currentUser?.uid;
         if (myUid && AppState.currentState === 'active') {
-            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence/${myUid}`);
+            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence/${myUid}`);
             onDisconnect(itemRef).remove().catch(() => {});
             update(appPresenceRef, {
                 [myUid]: true
@@ -704,7 +693,7 @@ const ParticipantsScreen = () => {
                     {selectedParticipant && (
                         <>
                             <View style={styles.detailHeader}>
-                                <Image source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
+                                <RemoteImage source={{ uri: selectedParticipant.image }} style={styles.detailAvatar} />
                                 <Text style={styles.detailName}>{selectedParticipant.name}</Text>
                             </View>
 

@@ -1,4 +1,5 @@
-import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, respondToLocationRequest } from '../../services/visibilityData';
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, respondToLocationRequest, watchDirectoryUser } from '../../services/visibilityData';
+import { watchActiveSpeaker, watchPresence, presencePath } from '../../utils/voiceChannelFields';
 import React, { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -53,7 +54,7 @@ import { Track, RoomEvent } from 'livekit-client';
 import SpeakerGlow from '../../components/SpeakerGlow';
 import VoiceSpeakerQueue from '../../components/VoiceSpeakerQueue';
 import { isStaffMember, checkPIIVisibility, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
-import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { startLiveLocationTracking, stopLiveLocationTracking, syncCurrentUserLocationNow, syncLocationToFirebase } from '../../services/locationTrackingService';
 import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
 
 
@@ -286,14 +287,7 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const presenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/presence`);
-        const unsubscribe = onValue(presenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setVoicePresence(snapshot.val() || {});
-            } else {
-                setVoicePresence({});
-            }
-        });
+        const unsubscribe = watchPresence(database, orgId, tripId, 'voice', setVoicePresence);
 
         return () => unsubscribe();
     }, [tripId, orgId]);
@@ -301,19 +295,13 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const appPresenceRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence`);
-        const unsubscribe = onValue(appPresenceRef, (snapshot) => {
-            if (snapshot.exists()) {
-                setAppPresence(snapshot.val() || {});
-            } else {
-                setAppPresence({});
-            }
-        });
+        const appPresenceRef = ref(database, presencePath(orgId, tripId, 'app'));
+        const unsubscribe = watchPresence(database, orgId, tripId, 'app', setAppPresence);
 
         // Ensure own presence is marked online in RTDB immediately when viewing trip
         const myUid = auth.currentUser?.uid;
         if (myUid && AppState.currentState === 'active') {
-            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/app_presence/${myUid}`);
+            const itemRef = ref(database, `trips_active/${orgId}/${tripId}/voice_app_presence/${myUid}`);
             onDisconnect(itemRef).remove().catch(() => {});
             update(appPresenceRef, {
                 [myUid]: true
@@ -948,14 +936,7 @@ const TripOverviewScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-        const unsubscribe = onVisibleValue(speakerRef, tripId, (snapshot) => {
-            if (snapshot.exists()) {
-                setActiveSpeakerData(snapshot.val());
-            } else {
-                setActiveSpeakerData(null);
-            }
-        });
+        const unsubscribe = watchActiveSpeaker(database, orgId, tripId, watchDirectoryUser(tripId), setActiveSpeakerData);
 
         return () => unsubscribe();
     }, [tripId, orgId]);
@@ -1714,13 +1695,7 @@ const TripOverviewScreen = () => {
 
             // 2. Update trips_active locations path with accurate emergency coordinates
             if (lat && lng && auth.currentUser?.uid) {
-                set(ref(database, `trips_active/${orgId}/${tripId}/locations/${auth.currentUser.uid}`), {
-                    lat: lat,
-                    lng: lng,
-                    latitude: lat,
-                    longitude: lng,
-                    updated_at: timestamp
-                }).catch(e => console.log("Failed to sync location for emergency:", e));
+                syncLocationToFirebase({ latitude: lat, longitude: lng }, { force: true, trip: { orgId, tripId, userId: auth.currentUser.uid } });
             }
 
             // 3. Send notification to each staff member (Manager, Co-Host, Admin, Organizer)

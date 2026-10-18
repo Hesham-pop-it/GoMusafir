@@ -11,13 +11,13 @@ function observe(state, { roomSid, muted, activity, now, id, startedAt = now }) 
   if (state?.observedAt > now) return undefined;
   if (state?.roomSid === roomSid && ['pending', 'ending', 'ended'].includes(state.status)) return undefined;
   const sameRoom = state?.roomSid === roomSid;
+  const status = muted && !activity ? 'timing' : 'active';
+  // Same room, same status: nothing changed, so nothing is written (and no trigger runs).
+  if (sameRoom && state.status === status) return undefined;
   return {
     roomSid, observedAt: now,
-    status: muted && !activity ? 'timing' : 'active',
-    ...(muted && !activity ? {
-      startedAt: sameRoom && state.status === 'timing' ? state.startedAt : startedAt,
-      id: sameRoom && state.status === 'timing' ? state.id : id,
-    } : {}),
+    status,
+    ...(status === 'timing' ? { startedAt, id } : {}),
   };
 }
 

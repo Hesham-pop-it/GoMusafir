@@ -35,6 +35,8 @@ async function updateSpeakers(orgId, tripId, command = {}) {
   const session = feature?.session;
   if (!session || session.status === 'ending' || feature.voiceAccess === 'EXPIRED') {
     if (command.action) throw new HttpsError('failed-precondition', 'Voice session has ended.');
+    // The reconcile job lists every trip in the ledger; drop it once no session is left.
+    if (!session) await speakerRef(orgId, tripId).remove();
     return;
   }
   if (command.roomName && command.roomName !== session.roomName) {

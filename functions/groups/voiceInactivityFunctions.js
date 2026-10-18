@@ -43,11 +43,31 @@ async function caller(request) {
   return { orgId, tripId, live };
 }
 
+// Only people who can speak report, and the report carries what they see in the
+// room, so this answers from the database alone: no LiveKit call. The deadline
+// check (checkVoiceInactivity) still looks at the room once, when it falls due.
 exports.reportVoiceActivity = onCall({ region }, async request => {
   const now = Date.now();
-  const { orgId, tripId, live } = await caller(request);
+  const { tripId } = request.data || {};
+  if (typeof tripId !== 'string' || !tripId || /[.#$\[\]/]/.test(tripId)) {
+    throw new HttpsError('invalid-argument', 'Invalid tripId.');
+  }
+  const { orgId } = await requireTripAccess(request, tripId);
+  const uid = request.auth.uid;
+  const [features, started, role, entry] = await Promise.all([
+    accessRef(orgId, tripId).get(),
+    db.ref(`trips_active/${orgId}/${tripId}/voice_channel/isChannelStarted`).get(),
+    db.ref(`orgs/${orgId}/staff/${uid}`).get(),
+    db.ref(`voice_speakers/${orgId}/${tripId}/entries/${uid}`).get(),
+  ]);
+  const session = features.val()?.session;
+  if (!session?.roomSid || session.status !== 'active' || started.val() !== true) {
+    throw new HttpsError('failed-precondition', 'You must be connected to this Voice Chat.');
+  }
+  // Listeners have nothing to report; older app versions may still send it.
+  if (!STAFF_ROLES.includes(role.val()) && !entry.val()) return { success: true, ignored: true };
   await guardedTransaction(stateRef(orgId, tripId), state => observe(state, {
-    roomSid: live.roomSid, muted: everyoneMuted(live.participants),
+    roomSid: session.roomSid, muted: request.data.activity !== true,
     // Preserve short unmute/speech events even if muted again before the RPC arrives.
     activity: request.data.activity === true, now, startedAt: Date.now(), id: randomUUID(),
   }));

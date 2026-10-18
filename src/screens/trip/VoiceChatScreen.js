@@ -1,4 +1,5 @@
-import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue } from '../../services/visibilityData';
+import { useVisibilityRevision, getVisibleSnapshot, onVisibleValue, watchDirectoryUser } from '../../services/visibilityData';
+import { watchActiveSpeaker } from '../../utils/voiceChannelFields';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     View,
@@ -827,16 +828,10 @@ const VoiceChatScreen = () => {
     useEffect(() => {
         if (!tripId || !orgId) return;
 
-        // Listen to activeSpeaker in RTDB
-        const speakerRef = ref(database, `trips_active/${orgId}/${tripId}/voice_channel/activeSpeaker`);
-        const unsub = onVisibleValue(speakerRef, tripId, (snapshot) => {
-            if (snapshot.exists()) {
-                const speakerData = snapshot.val();
-                if (speakerData && speakerData.name) {
-                    setActiveSpeaker(speakerData);
-                } else {
-                    setActiveSpeaker(null);
-                }
+        // Listen to who is speaking: id and flag from the database, name from the directory.
+        const unsub = watchActiveSpeaker(database, orgId, tripId, watchDirectoryUser(tripId), (speakerData) => {
+            if (speakerData && speakerData.name) {
+                setActiveSpeaker(speakerData);
             } else {
                 setActiveSpeaker(null);
             }

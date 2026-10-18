@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ref, onValue } from 'firebase/database';
-import { database, auth } from '../config/firebase';
+import { auth } from '../config/firebase';
+import { watchPath } from '../services/sharedListeners';
 import { getChatStaffRole } from '../utils/chatStaffRole';
 import { totalUnread } from '../utils/messagingRules';
 import { teamUnreadCount, splitInbox } from '../utils/messagesInbox';
@@ -20,7 +20,7 @@ export default function useMessagesData(orgId, tripId) {
 
     useEffect(() => {
         if (!orgId) return;
-        return onValue(ref(database, `orgs/${orgId}/staff`), (snap) => setStaff(snap.val() || {}), () => {});
+        return watchPath(`orgs/${orgId}/staff`, (value) => setStaff(value || {}), () => {});
     }, [orgId]);
 
     useEffect(() => {

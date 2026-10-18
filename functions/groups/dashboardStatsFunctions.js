@@ -17,132 +17,135 @@ const {
  * Helper function to calculate all 8 dashboard metrics for an organization
  * and save them to orgs/$orgId/dashboard_stats.
  */
-async function calculateAndStoreStats(orgId) {
+// The headline numbers need only payments, trips, staff and the checkout count.
+// Trip `participants` and `total_seats` are counters kept by the join and seat code.
+function headlineStats(org, initiatedCheckoutCount) {
+  // 1. Total Revenue (converted to EUR base currency)
+  let totalRevenue = 0;
+  if (org.payments) {
+    for (const paymentId in org.payments) {
+      totalRevenue += getPaymentAmountInEur(org.payments[paymentId]);
+    }
+  }
+  totalRevenue = Math.round(totalRevenue * 100) / 100;
+
+  // 2. Total Accounts (Staff in company)
+  const totalAccounts = org.staff ? Object.keys(org.staff).length : 0;
+
+  // 3-5. Journeys, registered participants (sum of trip.participants) and seats
+  let activeJourneys = 0;
+  let registeredParticipants = 0;
+  let totalSeats = 0;
+  let totalJourneys = 0;
+  if (org.trips) {
+    for (const tripId in org.trips) {
+      const trip = org.trips[tripId];
+      totalJourneys++;
+      if (trip.status === "active") activeJourneys++;
+      registeredParticipants += trip.participants || 0;
+      totalSeats += trip.total_seats || 0;
+    }
+  }
+  let utilisationPercentage = 0;
+  if (totalSeats > 0) {
+    utilisationPercentage = Math.round((registeredParticipants / totalSeats) * 1000) / 10;
+  }
+
+  // 6. Payment Conversion Rate
+  let conversionRate = 100;
+  let completedCheckouts = 0;
+  if (org.payments) {
+    for (const paymentId in org.payments) {
+      if (org.payments[paymentId].gateway === "stripe") completedCheckouts++;
+    }
+  }
+  const initiatedCheckouts = Math.max(initiatedCheckoutCount, completedCheckouts);
+  if (initiatedCheckouts > 0) {
+    conversionRate = Math.round((completedCheckouts / initiatedCheckouts) * 1000) / 10;
+  }
+
+  // 8. Revenue per Journey
+  let revenuePerJourney = 0;
+  if (totalJourneys > 0) {
+    revenuePerJourney = Math.round((totalRevenue / totalJourneys) * 100) / 100;
+  }
+
+  return {
+    financial: { totalRevenue, revenuePerJourney },
+    users: { totalAccounts },
+    journeys: { active: activeJourneys },
+    participants: { registered: registeredParticipants },
+    seats: { utilisationPercentage },
+    payments: { conversionRate },
+  };
+}
+
+// Trigger path: reads four small children and rewrites only the headline fields.
+// currentlyConnected and detailed_metrics keep their last value until the next
+// full recalculation (the 12 hour cron, or the first dashboard open).
+async function updateHeadlineStats(orgId) {
+  const child = (name) => db.ref(`orgs/${orgId}/${name}`).once("value");
+  // Nothing stored yet: the first dashboard open or the cron does the full calculation.
+  if (!(await child("dashboard_stats/updated_at")).exists()) return;
+  const [metadata, payments, trips, staff, checkoutSessions] =
+    await Promise.all(["metadata", "payments", "trips", "staff", "checkout_sessions"].map(child));
+  if (!metadata.exists()) {
+    console.log(`Org ${orgId} does not exist. Skipping stats calculation.`);
+    return;
+  }
+  const org = { payments: payments.val(), trips: trips.val(), staff: staff.val() };
+  const checkoutCount = checkoutSessions.exists() ? Object.keys(checkoutSessions.val()).length : 0;
+  const stats = headlineStats(org, checkoutCount);
+  await db.ref(`orgs/${orgId}/dashboard_stats`).update({
+    financial: stats.financial,
+    users: stats.users,
+    journeys: stats.journeys,
+    "participants/registered": stats.participants.registered,
+    seats: stats.seats,
+    payments: stats.payments,
+    updated_at: admin.database.ServerValue.TIMESTAMP,
+  });
+}
+
+/**
+ * Full recalculation of the dashboard metrics for an organization, saved to
+ * orgs/$orgId/dashboard_stats. `prefetched` lets the cron share one read of
+ * `orgs` and `trips_active` across all organizations.
+ */
+async function calculateAndStoreStats(orgId, prefetched = {}) {
   if (!orgId) return;
 
   try {
-    const orgSnap = await db.ref(`orgs/${orgId}`).once("value");
-    if (!orgSnap.exists()) {
+    const org = prefetched.org ?? (await db.ref(`orgs/${orgId}`).once("value")).val();
+    if (!org) {
       console.log(`Org ${orgId} does not exist. Skipping stats calculation.`);
       return;
     }
 
-    const org = orgSnap.val();
-
-    // 1. Total Revenue (converted to EUR base currency)
-    let totalRevenue = 0;
-    if (org.payments) {
-      for (const paymentId in org.payments) {
-        const payment = org.payments[paymentId];
-        totalRevenue += getPaymentAmountInEur(payment);
-      }
-    }
-    // Round to 2 decimal places
-    totalRevenue = Math.round(totalRevenue * 100) / 100;
-
-    // 2. Total Accounts (Staff in company)
-    const totalAccounts = org.staff ? Object.keys(org.staff).length : 0;
-
-    // 3. Active Journeys
-    let activeJourneys = 0;
-    // 4. Registered Participants (Sum of trip.participants)
-    let registeredParticipants = 0;
-    // Total seats capacity across all trips
-    let totalSeats = 0;
-    // Total journeys (existing trips)
-    let totalJourneys = 0;
-
-    if (org.trips) {
-      for (const tripId in org.trips) {
-        const trip = org.trips[tripId];
-        totalJourneys++;
-        if (trip.status === "active") {
-          activeJourneys++;
-        }
-        registeredParticipants += trip.participants || 0;
-        totalSeats += trip.total_seats || 0;
-      }
-    }
-
-    // 5. Seat Utilisation Percentage
-    let utilisationPercentage = 0;
-    if (totalSeats > 0) {
-      utilisationPercentage = (registeredParticipants / totalSeats) * 100;
-      utilisationPercentage = Math.round(utilisationPercentage * 10) / 10;
-    }
-
-    // 6. Payment Conversion Rate
-    let conversionRate = 100;
-    let completedCheckouts = 0;
-    if (org.payments) {
-      for (const paymentId in org.payments) {
-        const payment = org.payments[paymentId];
-        if (payment.gateway === "stripe") {
-          completedCheckouts++;
-        }
-      }
-    }
-    const checkoutSessionsSnap = await db.ref(`orgs/${orgId}/checkout_sessions`).once("value");
-    let initiatedCheckouts = 0;
-    if (checkoutSessionsSnap.exists()) {
-      initiatedCheckouts = Object.keys(checkoutSessionsSnap.val()).length;
-    }
-    initiatedCheckouts = Math.max(initiatedCheckouts, completedCheckouts);
-    if (initiatedCheckouts > 0) {
-      conversionRate = (completedCheckouts / initiatedCheckouts) * 100;
-      conversionRate = Math.round(conversionRate * 10) / 10;
-    }
+    const checkoutCount = org.checkout_sessions ? Object.keys(org.checkout_sessions).length : 0;
+    const headline = headlineStats(org, checkoutCount);
 
     // 7. Currently Connected participants (recent location updates in active trips)
     let currentlyConnected = 0;
-    const orgActiveTripsSnap = await db.ref(`trips_active/${orgId}`).once("value");
-    if (orgActiveTripsSnap.exists()) {
-      const activeTrips = orgActiveTripsSnap.val();
+    const orgActiveTrips = prefetched.activeTrips !== undefined ? prefetched.activeTrips
+      : (await db.ref(`trips_active/${orgId}`).once("value")).val();
+    if (orgActiveTrips) {
       const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-      for (const tripId in activeTrips) {
-        const tripActiveData = activeTrips[tripId];
-        if (tripActiveData && tripActiveData.locations) {
-          for (const uid in tripActiveData.locations) {
-            const loc = tripActiveData.locations[uid];
-            if (loc && loc.updated_at && loc.updated_at > fiveMinutesAgo) {
-              currentlyConnected++;
-            }
-          }
+      for (const tripId in orgActiveTrips) {
+        const locations = orgActiveTrips[tripId]?.locations;
+        for (const uid in locations || {}) {
+          const loc = locations[uid];
+          if (loc && loc.updated_at && loc.updated_at > fiveMinutesAgo) currentlyConnected++;
         }
       }
     }
 
-    // 8. Revenue per Journey
-    let revenuePerJourney = 0;
-    if (totalJourneys > 0) {
-      revenuePerJourney = totalRevenue / totalJourneys;
-      revenuePerJourney = Math.round(revenuePerJourney * 100) / 100;
-    }
-
     // Calculate all 68 detailed metrics for company
-    const detailedMetrics = calculateCompanyMetrics(org, orgId, {}, orgActiveTripsSnap.exists() ? { [orgId]: orgActiveTripsSnap.val() } : {});
+    const detailedMetrics = calculateCompanyMetrics(org, orgId, {}, orgActiveTrips ? { [orgId]: orgActiveTrips } : {});
 
     const stats = {
-      financial: {
-        totalRevenue,
-        revenuePerJourney,
-      },
-      users: {
-        totalAccounts,
-      },
-      journeys: {
-        active: activeJourneys,
-      },
-      participants: {
-        registered: registeredParticipants,
-        currentlyConnected,
-      },
-      seats: {
-        utilisationPercentage,
-      },
-      payments: {
-        conversionRate,
-      },
+      ...headline,
+      participants: { ...headline.participants, currentlyConnected },
       detailed_metrics: detailedMetrics,
       updated_at: admin.database.ServerValue.TIMESTAMP,
     };
@@ -158,14 +161,12 @@ async function calculateAndStoreStats(orgId) {
  * Calculates all 8 platform-wide metrics across all organizations
  * and saves them to platform_stats/overview in the Realtime Database.
  */
-async function calculateAndStorePlatformStats() {
+async function calculateAndStorePlatformStats(prefetched = {}) {
   try {
-    const orgsSnap = await db.ref("orgs").once("value");
-    if (!orgsSnap.exists()) {
+    const orgs = prefetched.orgs ?? (await db.ref("orgs").once("value")).val();
+    if (!orgs) {
       return;
     }
-
-    const orgs = orgsSnap.val() || {};
 
     let totalRevenue = 0;
     let stripeRevenue = 0;
@@ -230,9 +231,9 @@ async function calculateAndStorePlatformStats() {
     let currentlyConnected = 0;
     let activeTripsData = {};
     try {
-      const activeTripsSnap = await db.ref("trips_active").once("value");
-      if (activeTripsSnap.exists()) {
-        activeTripsData = activeTripsSnap.val() || {};
+      activeTripsData = prefetched.activeTrips !== undefined ? (prefetched.activeTrips || {})
+        : ((await db.ref("trips_active").once("value")).val() || {});
+      {
         const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
         for (const orgId in activeTripsData) {
           for (const tripId in activeTripsData[orgId]) {
@@ -506,14 +507,16 @@ exports.onPaymentWrite = onValueWritten({
 }, async (event) => {
   const { orgId } = event.params;
   console.log(`Trigger onPaymentWrite fired for Org ${orgId}`);
-  await calculateAndStoreStats(orgId);
+  await updateHeadlineStats(orgId);
 });
 
 // Trip fields the dashboard stats read; writes to anything else (live_data, etc.) are skipped.
+// `participants` changes on every join; the registered count catches up on the next
+// trigger or the 12 hour cron instead of recalculating per join.
 const TRIP_STAT_FIELDS = [
   "status", "deleted", "deleted_at", "completed_at", "created_at",
   "startDate", "start_date", "departureDate", "endDate", "end_date", "returnDate",
-  "name", "title", "tripName", "destination", "participants", "total_seats", "seats",
+  "name", "title", "tripName", "destination", "total_seats", "seats",
 ];
 
 function tripStatsChanged(before, after) {
@@ -522,6 +525,8 @@ function tripStatsChanged(before, after) {
 }
 
 exports.tripStatsChanged = tripStatsChanged;
+exports.headlineStats = headlineStats;
+exports.updateHeadlineStats = updateHeadlineStats;
 
 exports.onTripWrite = onValueWritten({
   ref: "orgs/{orgId}/trips/{tripId}",
@@ -530,7 +535,7 @@ exports.onTripWrite = onValueWritten({
   const { orgId } = event.params;
   if (!tripStatsChanged(event.data.before.val(), event.data.after.val())) return;
   console.log(`Trigger onTripWrite fired for Org ${orgId}`);
-  await calculateAndStoreStats(orgId);
+  await updateHeadlineStats(orgId);
 });
 
 exports.onStaffWrite = onValueWritten({
@@ -539,7 +544,7 @@ exports.onStaffWrite = onValueWritten({
 }, async (event) => {
   const { orgId } = event.params;
   console.log(`Trigger onStaffWrite fired for Org ${orgId}`);
-  await calculateAndStoreStats(orgId);
+  await updateHeadlineStats(orgId);
 });
 
 // onParticipantWrite disabled to prevent high-frequency RTDB scans during active trip tracking
@@ -562,13 +567,15 @@ exports.dashboardStatsCron = onSchedule({
 
     const orgs = orgsSnap.val();
     const orgIds = Object.keys(orgs);
-    
+    // One read of trips_active shared by every organization and the platform pass.
+    const activeTrips = (await db.ref("trips_active").once("value")).val() || {};
+
     console.log(`Recalculating stats for ${orgIds.length} organizations.`);
     for (const orgId of orgIds) {
-      await calculateAndStoreStats(orgId);
+      await calculateAndStoreStats(orgId, { org: orgs[orgId], activeTrips: activeTrips[orgId] || null });
     }
 
-    await calculateAndStorePlatformStats();
+    await calculateAndStorePlatformStats({ orgs, activeTrips });
     console.log("Scheduled dashboard stats recalculation completed.");
   } catch (err) {
     console.error("Error in dashboardStatsCron:", err);

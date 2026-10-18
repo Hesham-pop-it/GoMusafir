@@ -69,11 +69,11 @@ test('connected provider confirms the session immediately and retries without th
             assert.equal(name, 'getTripFeatureAccess'); assert.equal(args.tripId, 't'); requests++;
             await new Promise(resolve => release = resolve);
         },
-        setInterval: fn => { tick = fn; return 1; }, clearInterval: () => {},
+        setTimeout: fn => { tick = fn; return 1; }, clearTimeout: () => {},
     };
     vm.createContext(context); vm.runInContext(effect, context);
     assert.equal(requests, 1);
-    tick(); assert.equal(requests, 1); // No overlapping requests.
+    assert.equal(tick, undefined); // No retry while a request is open.
     release(); await flush(); tick(); assert.equal(requests, 2);
     release(); await flush(); cleanup(); tick(); assert.equal(requests, 2);
 });

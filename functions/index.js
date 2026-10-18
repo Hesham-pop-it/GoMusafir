@@ -95,6 +95,7 @@ exports.redeemInvitation      = inviteFunctions.redeemInvitation;
 exports.redeemTeamInvitation  = inviteFunctions.redeemTeamInvitation;
 exports.getInviteMetadata     = inviteFunctions.getInviteMetadata;
 exports.getTeamInviteMetadata = inviteFunctions.getTeamInviteMetadata;
+exports.onTripMembersCounted   = require("./groups/tripSeatCountFunctions").onTripMembersCounted;
 
 // ── Payments (replaces GoMusafir-Website/server/server.js) ───────────────────
 exports.createCheckoutSession = paymentFunctions.createCheckoutSession;
@@ -127,6 +128,7 @@ exports.reconcileVoiceSpeakers = voiceSpeakerFunctions.reconcileVoiceSpeakers;
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 exports.onNotificationCreated = notificationFunctions.onNotificationCreated;
+exports.onNotificationUpdated = notificationFunctions.onNotificationUpdated;
 exports.onChatCreated         = notificationFunctions.onChatCreated;
 exports.onVoiceChannelUpdated = notificationFunctions.onVoiceChannelUpdated;
 exports.onParticipantJoined   = notificationFunctions.onParticipantJoined;
@@ -163,6 +165,10 @@ for (const name of ['onParticipantIndexChanged', 'onStaffIndexChanged', 'onUserP
   exports[name] = orgMembersFunctions[name];
 }
 
+// Server-written directory views that phones listen to, and the own-account signal.
+const tripViewFunctions = require('./groups/tripViewFunctions');
+for (const name of Object.keys(tripViewFunctions)) exports[name] = tripViewFunctions[name];
+
 // Shared all-muted inactivity checks for iOS and Android.
 const voiceInactivityFunctions = require('./groups/voiceInactivityFunctions');
 exports.reportVoiceActivity = voiceInactivityFunctions.reportVoiceActivity;
@@ -181,6 +187,7 @@ exports.uploadTripPhoto = tripFunctions.uploadTripPhoto;
 exports.getVisibleTripData = tripFunctions.getVisibleTripData;
 exports.requestParticipantLocation = tripFunctions.requestParticipantLocation;
 exports.respondToLocationRequest = tripFunctions.respondToLocationRequest;
+exports.resolveSos = tripFunctions.resolveSos;
 exports.getOwnAccount = authFunctions.getOwnAccount;
 
 // Direct messaging: message requests, Journey team thread and staff chat.

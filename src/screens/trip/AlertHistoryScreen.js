@@ -21,6 +21,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Typography } from '../../constants/Typography';
 import { extractNotificationTimestamp } from '../../utils/notificationNavigation';
+import RemoteImage from '../../components/RemoteImage';
 
 const { width } = Dimensions.get('window');
 
@@ -178,7 +179,7 @@ const AlertHistoryScreen = () => {
                 <View style={styles.contentContainer}>
                     <Text style={styles.alertTitle}>{title}</Text>
                     <View style={styles.senderContainer}>
-                        <Image source={{ uri: senderImage }} style={styles.avatar} />
+                        <RemoteImage source={{ uri: senderImage }} style={styles.avatar} />
                         <Text style={styles.senderName}>{sender}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>

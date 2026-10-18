@@ -1,5 +1,6 @@
 const { db, auth } = require('../admin');
 const { guardedTransaction } = require('./guardedTransaction');
+const { canonical, stored } = require('./comparableValue');
 const { HttpsError } = require('firebase-functions/v2/https');
 const STAFF_ROLES = ['admin', 'co-host', 'manager'];
 
@@ -36,6 +37,12 @@ async function calculateAccess(uid, now = Date.now()) {
   return { staff, trips, current_trip: user.current_trip || null, participant: user.account_type === 'participant' || Object.keys(user.joined_trips || {}).length > 0, expires_at: Math.max(0, ...Object.values(trips)), record };
 }
 
+// Compares the published fields only; version and anything else the record
+// carries (such as a revocation cutoff set elsewhere) must match the new value.
+function sameAccess(current, next) {
+  const { version, ...rest } = current;
+  return canonical(stored(rest)) === canonical(stored(next));
+}
 // Access state is server-owned and lives entirely in Realtime Database.
 async function refreshAccess(uid) {
   const accessRef = db.ref(`app_access/${uid}`);
@@ -50,14 +57,16 @@ async function refreshAccess(uid) {
       if ((current.version || 0) !== (old.version || 0)) return;
       const lostAccess = !access.staff && !access.expires_at &&
         (current.staff || current.expires_at > 0 || (!current.participant && access.participant));
-      return { staff: access.staff, participant: access.participant || current.participant === true,
+      const next = { staff: access.staff, participant: access.participant || current.participant === true,
         trips: access.trips, current_trip: access.staff ? access.current_trip : (access.trips[access.current_trip] ? access.current_trip : Object.keys(access.trips)[0] || null),
         expires_at: access.expires_at,
         revoked_before: lostAccess
           ? Math.max(current.revoked_before || 0, Math.floor(Date.now() / 1000) + 1)
           : current.revoked_before || 0,
-        revocation_pending: !access.staff && (lostAccess || current.revocation_pending === true),
-        version: (current.version || 0) + 1 };
+        revocation_pending: !access.staff && (lostAccess || current.revocation_pending === true) };
+      // Phones listen to this node, so an unchanged record is not written again.
+      if (sameAccess(current, next)) return current;
+      return { ...next, version: (current.version || 0) + 1 };
     });
     if (result.committed) {
       value = result.snapshot.val();
@@ -124,4 +133,4 @@ async function requireTripAccess(request, tripId) {
   return { orgId, trip, staff };
 }
 
-module.exports = { revokeUserSessions, tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };
+module.exports = { sameAccess, revokeUserSessions, tripExpiry, calculateAccess, refreshAccess, requireFreshIdentity, requireAppAccess, requireTripAccess };

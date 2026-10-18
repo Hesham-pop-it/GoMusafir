@@ -505,10 +505,17 @@ exports.exchangeAuthHandoffToken = onCall({ enrollment: true, region: "europe-we
 // account and strip copied participant identities/locations from that history.
 exports.getOwnAccount = onCall({ enrollment: true, region: 'europe-west1' }, async request => {
   requireAuth(request);
+  const { respond } = require('../services/unchangedResponse');
   const user = (await db.ref(`users/${request.auth.uid}`).get()).val();
-  if (!user) return null;
+  if (!user) return respond(request, null);
   const { redactNotification } = require('../services/notificationPrivacy');
+  if (user.notifications) {
+    const { loadTerms, isActive } = require('../services/notificationTerms');
+    const terms = await loadTerms(db);
+    user.notifications = Object.fromEntries(Object.entries(user.notifications)
+      .filter(([, value]) => value && typeof value === 'object' && isActive(value, terms)));
+  }
   if (user.notifications) user.notifications = Object.fromEntries(Object.entries(user.notifications)
     .map(([key, value]) => [key, redactNotification(value)]));
-  return user;
+  return respond(request, user);
 });

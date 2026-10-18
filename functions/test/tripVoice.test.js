@@ -79,6 +79,7 @@ function fixture({ coldCache = false } = {}) {
         if (name === '../admin') return { db };
         if (name === 'livekit-server-sdk') return livekit;
         if (name === 'firebase-functions/v2/https') return { HttpsError };
+        if (name === './comparableValue') return require('../services/comparableValue');
         if (name.includes('guardedTransaction')) return require('../services/guardedTransaction');
         if (name.includes('tripFeatureState')) return require('../services/tripFeatureState');
         if (name.includes('tripVoiceService')) return service;
@@ -484,10 +485,12 @@ test('a participant leave event does not immediately end a room with a connectin
 test('admin departure closes the room even while participants and another host remain', async () => {
   const f = fixture(); await f.reserve(); await f.join();
   const session = f.state().session;
+  f.write('trips_active/o/t/voice_presence', { host: true, participant: true });
   f.rooms.get(session.roomName).participants = [{ identity: 'participant' }, { identity: 'other' }];
   await f.service.handleRoomEvent({ event: 'participant_left', createdAt: MAY / 1000,
     room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } });
   assert.equal(f.state().session, null);
+  assert.equal(f.read('trips_active/o/t/voice_presence'), null);
   assert.ok(f.deleted.includes(session.roomName));
   assert.equal(f.read('trips_active/o/t/voice_channel/endReason'), 'admin_left');
   assert.equal(f.read('trips_active/o/t/voice_channel/presence'), null);
@@ -500,4 +503,13 @@ test('failed LiveKit roster check cannot falsely declare admin departure', async
     room: { name: session.roomName, sid: session.roomSid }, participant: { identity: 'host' } }), /unavailable/);
   assert.equal(f.state().session.status, 'active');
   assert.equal(f.deleted.length, 0);
+});
+test('a refresh with nothing changed does not rewrite the access node', async () => {
+  const f = fixture(); await f.refresh();
+  const before = JSON.stringify(f.state());
+  f.advance(5000); await f.refresh();
+  assert.equal(JSON.stringify(f.state()), before);
+  f.advance(5000); f.write('orgs/o/trips/t/end_date', trip.end_date + DAY_MS); await f.refresh();
+  assert.notEqual(JSON.stringify(f.state()), before);
+  assert.equal(f.state().tripEndsAt, trip.end_date + DAY_MS);
 });

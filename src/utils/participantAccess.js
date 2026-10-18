@@ -89,13 +89,13 @@ export function watchParticipantAccess(user, deny, onAccess = () => {}) {
     const appState = AppState.addEventListener('change', state => {
         if (state === 'active') { check(); refresh(); }
     });
-    const interval = setInterval(() => { check(); refresh(); }, 30000);
+    // No polling: the app_access listener delivers every change, the expiry timer
+    // covers the end date, and one check runs at start, on reconnect and on foreground.
     refresh();
     return () => {
         stopped = true;
         accessListeners.delete(onPublishedAccess);
         clearTimeout(timer);
-        clearInterval(interval);
         unsubscribe();
         unsubscribeOffset();
         unsubscribeConnection();

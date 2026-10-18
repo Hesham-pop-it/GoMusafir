@@ -517,3 +517,6 @@ exports.uploadTripPhoto = onCall({ region: 'europe-west1' }, async request => {
 for (const name of ['getVisibleTripData', 'requestParticipantLocation', 'respondToLocationRequest']) {
   exports[name] = onCall({ region: 'europe-west1' }, request => require('../services/tripVisibilityService')[name](request));
 }
+
+// Staff of the trip mark an SOS as handled; the state lives on the server.
+exports.resolveSos = onCall({ region: 'europe-west1' }, request => require('../services/sosService').resolveSos(request));

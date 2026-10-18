@@ -1,0 +1,15 @@
+{
+  "database": { "rules": "database.rules.json" },
+  "functions": [{ "source": "functions", "codebase": "default", "ignore": ["node_modules", ".git", "*.local"] }],
+  "emulators": {
+    "auth": { "port": 19599 },
+    "database": { "port": 19500 },
+    "functions": { "port": 19501 },
+    "hub": { "port": 19502 },
+    "logging": { "port": 19503 },
+    "eventarc": { "port": 19504 },
+    "tasks": { "port": 19505 },
+    "ui": { "enabled": false },
+    "singleProjectMode": true
+  }
+}

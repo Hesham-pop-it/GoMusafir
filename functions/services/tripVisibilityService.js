@@ -3,22 +3,37 @@ const { db } = require('../admin');
 const { requireTripAccess } = require('./participantAccessService');
 const { getParticipantProfile } = require('./participantProfileService');
 const { visible, activeGrant } = require('./visibilityPolicy');
+const { respond } = require('./unchangedResponse');
+const { cachedUser } = require('./userRecordCache');
+const { loadTerms, isActive, expiryEntry } = require('./notificationTerms');
 const roles = ['admin', 'manager', 'co-host'];
 const id = value => typeof value === 'string' && /^[\w-]{1,128}$/.test(value);
 
-async function directory(request, access) {
+// `only` limits the result to the people a chat, voice or notification payload
+// names; those sections need no coordinates, only names and location visibility.
+// `fresh` skips the shared record cache (server-written views must not lag).
+// `synthetic` marks a server-side audience viewer: it holds no grants, and with
+// `only` just those people's membership is read instead of the whole lists.
+async function directory(request, access, only = null, fresh = false, synthetic = false) {
   const { tripId } = request.data;
   const { orgId, trip, staff } = access;
   const root = `trips_active/${orgId}/${tripId}`;
-  const [members, staffSnap, locations, permissions] = await Promise.all([
-    db.ref(`trips_participants/${tripId}`).get(), db.ref(`orgs/${orgId}/staff`).get(),
-    db.ref(`${root}/locations`).get(), db.ref(`${root}/location_permissions`).get(),
+  const none = { val: () => null };
+  const narrow = synthetic && only;
+  const entries = async path => Object.fromEntries(await Promise.all([...only].map(async uid => [uid, (await db.ref(`${path}/${uid}`).get()).val()])));
+  const [memberMap, staffMap, locations, permissions] = await Promise.all([
+    narrow ? entries(`trips_participants/${tripId}`) : db.ref(`trips_participants/${tripId}`).get().then(snap => snap.val() || {}),
+    narrow ? entries(`orgs/${orgId}/staff`) : db.ref(`orgs/${orgId}/staff`).get().then(snap => snap.val() || {}),
+    only ? none : db.ref(`${root}/locations`).get(), synthetic ? none : db.ref(`${root}/location_permissions`).get(),
   ]);
-  const uids = new Set(Object.keys(members.val() || {}).filter(uid => members.val()[uid] === true));
-  Object.entries(staffSnap.val() || {}).forEach(([uid, role]) => { if (roles.includes(role)) uids.add(uid); });
+  const members = { val: () => memberMap }, staffSnap = { val: () => staffMap };
+  const uids = new Set(Object.keys(memberMap).filter(uid => memberMap[uid] === true));
+  Object.entries(staffMap).forEach(([uid, role]) => { if (roles.includes(role)) uids.add(uid); });
+  if (only) for (const uid of uids) if (!only.has(uid)) uids.delete(uid);
   const users = {}, allowedLocations = {}, grants = {};
   await Promise.all([...uids].map(async uid => {
-    const userSnap = await db.ref(`users/${uid}`).get();
+    // The viewer's own record is read fresh so their own privacy choices show at once.
+    const userSnap = fresh || uid === request.auth.uid ? await db.ref(`users/${uid}`).get() : await cachedUser(db, uid);
     const personal = userSnap.val()?.participant_visibility?.[tripId] || {};
     let result;
     try { result = await getParticipantProfile({ ...request, data: { tripId, targetUid: uid } }, { access, snapshots: [
@@ -50,9 +65,21 @@ async function directory(request, access) {
 }
 
 function displayName(users, uid) { return users[uid]?.full_name || 'Participant'; }
+const senderOf = message => message.sender_id || message.senderUid || message.fromUid || message.senderId;
+// Everyone sanitizeMessage looks up, including the author of a quoted reply.
+function sendersOf(messages) {
+  const uids = new Set();
+  const add = message => {
+    if (!message || typeof message !== 'object') return;
+    for (const key of ['sender_id', 'senderUid', 'fromUid', 'senderId']) if (typeof message[key] === 'string') uids.add(message[key]);
+    add(message.replyTo);
+  };
+  Object.values(messages).forEach(add);
+  return uids;
+}
 function sanitizeMessage(message, users) {
   if (!message || typeof message !== 'object') return message;
-  const uid = message.sender_id || message.senderUid || message.fromUid || message.senderId;
+  const uid = senderOf(message);
   const result = { ...message };
   // Older messages carried denormalized profile data. Never return those copies.
   for (const key of ['sender','sender_name','senderName','name','full_name','firstName','lastName','email','phone','sender_email','sender_phone']) {
@@ -69,26 +96,35 @@ function sanitizeMessage(message, users) {
 }
 
 async function getVisibleTripData(request) {
+  return respond(request, await visibleTripData(request));
+}
+async function visibleTripData(request) {
   const { tripId, section = 'directory' } = request.data || {};
   if (!id(tripId) || !['directory','chat','voice','notifications'].includes(section)) throw new HttpsError('invalid-argument', 'Invalid visibility request.');
   const access = await requireTripAccess(request, tripId);
-  const data = await directory(request, access);
-  if (section === 'directory') return data;
+  if (section === 'directory') return directory(request, access);
   const root = `trips_active/${access.orgId}/${tripId}`;
   if (section === 'chat') {
     const messages = (await db.ref(`${root}/chat`).orderByChild('timestamp').limitToLast(500).get()).val() || {};
+    const data = await directory(request, access, sendersOf(messages));
     return Object.fromEntries(Object.entries(messages).map(([key, value]) => [key, sanitizeMessage(value, data.users)]));
   }
   if (section === 'voice') {
     const voice = (await db.ref(`${root}/voice_channel`).get()).val() || {};
     if (voice.activeSpeaker && typeof voice.activeSpeaker === 'object') {
       const uid = voice.activeSpeaker.uid || voice.activeSpeaker.id;
+      const data = await directory(request, access, new Set(typeof uid === 'string' ? [uid] : []));
       voice.activeSpeaker = { uid: uid || '', name: displayName(data.users, uid),
         photoURL: data.users[uid]?.profile?.photoURL || '', avatar: data.users[uid]?.profile?.photoURL || '' };
     }
     return voice;
   }
-  const notifications = (await db.ref(`${root}/notifications/${request.auth.uid}`).get()).val() || {};
+  // Only active notifications leave the server; expired ones wait for the daily prune.
+  const [all, terms] = await Promise.all([db.ref(`${root}/notifications/${request.auth.uid}`).get(), loadTerms(db)]);
+  const now = Date.now();
+  const notifications = Object.fromEntries(Object.entries(all.val() || {})
+    .filter(([, value]) => value && typeof value === 'object' && isActive(value, terms, now, access.trip?.end_date)));
+  const data = await directory(request, access, sendersOf(notifications));
   return Object.fromEntries(Object.entries(notifications).map(([key, value]) => {
     const result = sanitizeMessage(value, data.users);
     // Notification text may embed a now-hidden name; render structured events instead.
@@ -128,33 +164,61 @@ async function respondToLocationRequest(request) {
   const notificationRef = db.ref(`${root}/notifications/${uid}/${notificationId}`);
   const notification = (await notificationRef.get()).val();
   if (!notification || notification.type !== 'location_request' || !id(notification.senderUid)) throw new HttpsError('not-found', 'Request not found.');
-  if (notification.status && notification.status !== 'pending') return { status: notification.status };
-  if (!(notification.expiresAt > Date.now())) throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
   const members = (await db.ref(`trips_participants/${tripId}`).get()).val() || {};
-  if (members[uid] !== true || members[notification.senderUid] !== true) throw new HttpsError('permission-denied', 'Participant no longer belongs to this trip.');
-  const now = Date.now();
-  // Transaction binds acceptance to this request once, so retries cannot extend a grant.
-  const result = await db.ref(root).transaction(current => {
-    if (current === null) return null;
-    const pending = current.notifications?.[uid]?.[notificationId];
-    if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
-    pending.status = accept ? 'accepted' : 'declined';
-    pending.respondedAt = now;
-    current.notifications[notification.senderUid] ||= {};
-    current.notifications[notification.senderUid][`location_response_${notificationId}`] = {
-      type: 'location_response', senderUid: uid, tripId, orgId, timestamp: now,
-      status: accept ? 'accepted' : 'declined', name: 'Participant',
-      title: accept ? 'Location Request Accepted' : 'Location Request Declined',
-      message: accept ? 'Location is shared with you for 15 minutes.' : 'The participant declined your request.',
+  const GRANT_MS = 15 * 60 * 1000;
+  const sender = notification.senderUid;
+  const grantPath = `${root}/location_permissions/${uid}/${sender}`;
+  const responsePath = `${root}/notifications/${sender}/location_response_${notificationId}`;
+  // One multi-path write: the response, the grant and the prune entry stand or fall together.
+  const answerUpdates = (status, at) => {
+    const accepted = status === 'accepted';
+    const updates = {
+      [responsePath]: {
+        type: 'location_response', senderUid: uid, tripId, orgId, timestamp: at, status, name: 'Participant',
+        title: accepted ? 'Location Request Accepted' : 'Location Request Declined',
+        message: accepted ? 'Location is shared with you for 15 minutes.' : 'The participant declined your request.',
+      },
+      // The answered request leaves the list; the prune removes it.
+      ...expiryEntry(notificationId, `${root}/notifications/${uid}/${notificationId}`, at),
     };
-    if (accept) {
-      current.location_permissions ||= {};
-      current.location_permissions[uid] ||= {};
-      current.location_permissions[uid][notification.senderUid] = { acceptedAt: now, expiresAt: now + 15 * 60 * 1000, requestId: notificationId };
+    if (accepted) updates[grantPath] = { acceptedAt: at, expiresAt: at + GRANT_MS, requestId: notificationId };
+    return updates;
+  };
+  const wanted = accept ? 'accepted' : 'declined';
+  if (notification.status && notification.status !== 'pending') {
+    // A retry after the answer was stored but the write that follows failed: finish it from the
+    // stored answer time, so the grant never outlives the original 15 minutes.
+    if (notification.status === wanted && members[uid] === true && members[sender] === true) {
+      const at = notification.respondedAt;
+      const [response, grant] = await Promise.all([db.ref(responsePath).get(), db.ref(grantPath).get()]);
+      const live = wanted === 'declined' || (Number.isFinite(at) && at + GRANT_MS > Date.now());
+      if (live && (!response.exists() || (wanted === 'accepted' && !grant.exists()))) {
+        await db.ref().update(answerUpdates(wanted, Number.isFinite(at) ? at : Date.now()));
+      }
     }
-    return current;
+    return { status: notification.status };
+  }
+  if (!(notification.expiresAt > Date.now())) throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
+  if (members[uid] !== true || members[sender] !== true) throw new HttpsError('permission-denied', 'Participant no longer belongs to this trip.');
+  const now = Date.now();
+  // Transaction on the one request binds the answer to it once, so retries cannot extend a grant.
+  const result = await notificationRef.transaction(pending => {
+    // The first call may see an empty local cache: keep null so the server retries with the real value;
+    // a request that is really gone commits as null and is reported as not found below.
+    if (pending === null) return null;
+    if (!pending || pending.status !== 'pending' || pending.expiresAt <= now) return;
+    pending.status = wanted;
+    pending.respondedAt = now;
+    pending.visible_until = now;
+    return pending;
   });
-  if (!result.committed) throw new HttpsError('failed-precondition', 'This request was already handled.');
-  return { status: accept ? 'accepted' : 'declined', expiresAt: accept ? now + 15 * 60 * 1000 : null };
+  if (!result.committed || result.snapshot.val()?.status !== wanted || result.snapshot.val()?.respondedAt !== now) {
+    const stored = result.snapshot.val();
+    if (!stored) throw new HttpsError('not-found', 'Request not found.');
+    if (stored.status === 'pending') throw new HttpsError('failed-precondition', 'This request has expired. Ask for a new request.');
+    throw new HttpsError('failed-precondition', 'This request was already handled.');
+  }
+  await db.ref().update(answerUpdates(wanted, now));
+  return { status: wanted, expiresAt: accept ? now + GRANT_MS : null };
 }
-module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, directory };
+module.exports = { getVisibleTripData, requestParticipantLocation, respondToLocationRequest, sanitizeMessage, sendersOf, senderOf, directory };

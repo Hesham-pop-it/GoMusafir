@@ -1,7 +1,9 @@
 import { database, functions } from '../config/firebase';
-import { ref, onValue, set, get, serverTimestamp, query, orderByChild, startAt, limitToLast } from 'firebase/database';
+import { ref, set, get, serverTimestamp, query, orderByChild, startAt, limitToLast } from 'firebase/database';
 import { httpsCallable } from 'firebase/functions';
+import { watchPresence } from '../utils/voiceChannelFields';
 import { threadIdFor } from '../utils/messagingRules';
+import { watchPath, watchQuery } from './sharedListeners';
 
 export { threadIdFor };
 
@@ -22,13 +24,15 @@ export function paths(orgId, tripId) {
         reports: `${base}/reports`,
         settings: `${base}/message_settings`,
         chat: `${base}/chat`,
+        chatView: `${base}/chat_view`,
         readPointers: `${base}/read_pointers`,
     };
 }
 
 // Subscribe to a path and hand back the raw value; returns the unsubscribe function.
+// Screens asking for the same path share one listener.
 function watch(path, cb, onError) {
-    return onValue(ref(database, path), (snap) => cb(snap.val()), (err) => onError?.(err));
+    return watchPath(path, cb, onError);
 }
 
 // Own inbox rows as { threadId: row }.
@@ -47,11 +51,11 @@ export const subscribeTeamRead = (orgId, tripId, staffUid, cb) => watch(`${paths
 // Report alerts, { reportId: { reporter, reported, threadId, at, staffThread? } } (staff only).
 export const subscribeReports = (orgId, tripId, cb) => watch(paths(orgId, tripId).reports, (v) => cb(v || {}));
 // App presence map { uid: true } for the trip.
-export const subscribePresence = (orgId, tripId, cb) => watch(`${paths(orgId, tripId).base}/voice_channel/app_presence`, (v) => cb(v || {}));
+export const subscribePresence = (orgId, tripId, cb) => watchPresence(database, orgId, tripId, 'app', cb);
 // Newest n messages of a path as an array, oldest first.
 export function subscribeLastMessages(path, n, cb) {
-    return onValue(query(ref(database, path), limitToLast(n)), (snap) => {
-        const v = snap.val() || {};
+    return watchQuery(`${path}|last${n}`, () => query(ref(database, path), limitToLast(n)), (value) => {
+        const v = value || {};
         cb(Object.keys(v).map((id) => ({ id, ...v[id] })));
     }, () => cb([]));
 }
@@ -64,14 +68,15 @@ export async function getThread(orgId, tripId, threadId) {
 export function subscribeGroupUnread(orgId, tripId, uid, cb) {
     const p = paths(orgId, tripId);
     let unsubUnread = null;
-    const unsubPointer = onValue(ref(database, `${p.readPointers}/${uid}`), (pointerSnap) => {
-        const lastRead = pointerSnap.val() || 0;
+    const unsubPointer = watchPath(`${p.readPointers}/${uid}`, (pointer) => {
+        const lastRead = pointer || 0;
         if (unsubUnread) unsubUnread();
-        const q = query(ref(database, p.chat), orderByChild('timestamp'), startAt(lastRead + 1));
-        unsubUnread = onValue(q, (chatSnap) => {
-            const list = chatSnap.exists() ? Object.values(chatSnap.val()) : [];
-            cb(list.filter((m) => m.sender_id !== uid).length);
-        }, () => cb(0));
+        // Members may not read the chat itself; the server's member mirror holds the same lines.
+        unsubUnread = watchQuery(`${p.chatView}|ts>=${lastRead + 1}`,
+            () => query(ref(database, p.chatView), orderByChild('timestamp'), startAt(lastRead + 1)), (chat) => {
+                const list = chat ? Object.values(chat) : [];
+                cb(list.filter((m) => m.sender_id !== uid).length);
+            }, () => cb(0));
     }, () => cb(0));
     return () => { unsubPointer(); if (unsubUnread) unsubUnread(); };
 }

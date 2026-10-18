@@ -3,6 +3,7 @@ import { View, Text, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '../../constants/Typography';
 import { initialsOf } from '../../utils/messagesInbox';
+import RemoteImage from '../../components/RemoteImage';
 
 export const THEME = {
     bg: '#1A1E21',
@@ -22,7 +23,7 @@ export const Avatar = ({ name, uri, size = 46, online = false }) => {
     return (
         <View style={{ width: size, height: size }}>
             {showPhoto ? (
-                <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} />
+                <RemoteImage source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2 }} />
             ) : (
                 <View style={[styles.initials, { width: size, height: size, borderRadius: size / 2 }]}>
                     <Text style={[styles.initialsText, { fontSize: size * 0.34 }]}>{initialsOf(name)}</Text>

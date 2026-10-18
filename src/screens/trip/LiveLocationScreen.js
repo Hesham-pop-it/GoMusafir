@@ -33,7 +33,7 @@ import { database, auth } from '../../config/firebase';
 import { ref, onValue, set, off, serverTimestamp, get, remove } from 'firebase/database';
 import { fetchParticipantDisplay } from '../../utils/participantCard';
 import { isStaffMember, checkPIIVisibility, normalizeVisibilityOption, getFieldSetting, getParticipantDisplayName, getParticipantDisplayPhoto } from '../../utils/visibilityHelper';
-import { startLiveLocationTracking, syncCurrentUserLocationNow } from '../../services/locationTrackingService';
+import { startLiveLocationTracking, syncCurrentUserLocationNow, syncLocationToFirebase } from '../../services/locationTrackingService';
 
 const { width, height } = Dimensions.get('window');
 
@@ -426,14 +426,7 @@ const LiveLocationScreen = () => {
 
                             // 4. Sync to Firebase ONLY if we have IDs
                             if (resolvedOrgId && tripId) {
-                                const locationRef = ref(database, `trips_active/${resolvedOrgId}/${tripId}/locations/${uid}`);
-                                set(locationRef, {
-                                    lat: coords.latitude,
-                                    lng: coords.longitude,
-                                    updated_at: serverTimestamp(),
-                                }).catch(err => {
-                                    console.log("[LiveLocation] Firebase sync error:", err);
-                                });
+                                syncLocationToFirebase(coords, { trip: { orgId: resolvedOrgId, tripId, userId: uid } });
                             }
                         }
                     }

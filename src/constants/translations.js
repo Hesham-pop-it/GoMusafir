@@ -150,6 +150,8 @@ export const translations = {
     msg_notif_request_title: "Message request from {name}",
     msg_notif_request_body: "Open to read it and accept or decline.",
     msg_notif_team_title: "New message from your Journey team",
+    notif_sos_resolve: "Mark as resolved",
+    notif_sos_resolved: "Resolved",
     msg_settings_requests: "Message requests",
     msg_settings_from_members: "From trip members",
     msg_opt_members: "Trip members",

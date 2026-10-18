@@ -10,7 +10,7 @@ test('converts local photos to JPEG and validates the enrollment upload response
         SaveFormat: { JPEG: 'jpeg' }, functions: {}, console: { warn() {} },
         manipulateAsync: async (uri, actions, options) => {
             assert.equal(uri, 'file://photo');
-            assert.equal(actions[0].resize.width, 768);
+            assert.equal(actions[0].resize.width, 256);
             assert.equal(options.format, 'jpeg');
             assert.equal(options.base64, true);
             return { base64: '/9j/AA==' };
