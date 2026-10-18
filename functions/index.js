@@ -41,6 +41,26 @@ exports.revokeSession         = authFunctions.revokeSession;
 exports.verifyMFAState        = authFunctions.verifyMFAState;
 exports.sendCustomEmailOTP    = authFunctions.sendCustomEmailOTP;
 exports.verifyCustomEmailOTP  = authFunctions.verifyCustomEmailOTP;
+exports.requestLoginApproval  = require("./groups/loginApprovalFunctions").requestLoginApproval;
+exports.answerLoginApproval   = require("./groups/loginApprovalFunctions").answerLoginApproval;
+exports.requestSensitiveApproval = require("./groups/loginApprovalFunctions").requestSensitiveApproval;
+exports.sensitiveStatus       = require("./groups/loginApprovalFunctions").sensitiveStatus;
+
+// ── Deen (trip assistant) ─────────────────────────────────────────────────────
+const deenFunctions = require("./groups/deenFunctions");
+exports.deenStart             = deenFunctions.deenStart;
+exports.deenSay               = deenFunctions.deenSay;
+exports.uploadTripBanner      = deenFunctions.uploadTripBanner;
+exports.deenCheckout          = deenFunctions.deenCheckout;
+exports.deenCreate            = deenFunctions.deenCreate;
+
+// ── Invitations (phase 4) ─────────────────────────────────────────────────────
+const invitationFunctions = require("./groups/invitationFunctions");
+exports.previewInvitations    = invitationFunctions.previewInvitations;
+exports.sendInvitations       = invitationFunctions.sendInvitations;
+exports.resendInvitation      = invitationFunctions.resendInvitation;
+exports.backfillOrgParticipants = invitationFunctions.backfillOrgParticipants;
+exports.sendgridEventWebhook  = invitationFunctions.sendgridEventWebhook;
 exports.checkUserExistence    = authFunctions.checkUserExistence;
 exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
 exports.deleteMyAccount       = authFunctions.deleteMyAccount;
@@ -133,6 +153,9 @@ const participantAccessFunctions = require('./groups/participantAccessFunctions'
 for (const name of ['getAppAccess', 'onTripAccessChanged', 'onMembershipAccessChanged', 'onStaffAccessChanged', 'expireParticipantAccess', 'backfillParticipantAccess', 'beginParticipantEnrollment', 'completeParticipantEnrollment']) {
   exports[name] = participantAccessFunctions[name];
 }
+const scheduledAnnouncementFunctions = require('./groups/scheduledAnnouncementFunctions');
+exports.onScheduledAnnouncementWritten = scheduledAnnouncementFunctions.onScheduledAnnouncementWritten;
+exports.sendScheduledAnnouncements = scheduledAnnouncementFunctions.sendScheduledAnnouncements;
 
 // Org membership index and trip display cards used by the database rules.
 const orgMembersFunctions = require('./groups/orgMembersFunctions');
@@ -164,4 +187,11 @@ exports.getOwnAccount = authFunctions.getOwnAccount;
 const messagingFunctions = require('./groups/messagingFunctions');
 for (const name of ['sendMessageRequest', 'respondToMessageRequest', 'unblockParticipant', 'openStaffChat', 'reportStaffChat', 'onDirectMessageCreated', 'onTeamMessageCreated', 'onStaffChatCreated']) {
   exports[name] = messagingFunctions[name];
+}
+
+// Phase 5: passport links, codes, sessions, data and retention.
+const passportFunctions = require('./groups/passportFunctions');
+for (const name of ['passportOpen', 'passportVerify', 'passportResend', 'passkeyRegisterOptions', 'passkeyRegister', 'passkeyLoginOptions', 'passkeyLogin', 'passportGet', 'passportSave', 'passportUpload', 'familyRequest', 'familyAnswer',
+  'getPassportSettings', 'setPassportSettings', 'sendPassportLinks', 'revokePassportLink', 'tripPassportOverview', 'participantDossier', 'openPassportDocument', 'remindMissing', 'onPassportParticipantJoined', 'sendDuePassportLinks', 'passportRetention']) {
+  exports[name] = passportFunctions[name];
 }

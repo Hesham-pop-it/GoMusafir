@@ -2,7 +2,8 @@
 // No native dependencies.
 const WINDOW = 30000;
 
-function createTapQueue({ isReady, navigate, now = Date.now }) {
+// windowOf lets a kind of tap be reopened sooner than the default window.
+function createTapQueue({ isReady, navigate, now = Date.now, windowOf = () => WINDOW }) {
     const seen = new Map();
     const pending = [];
 
@@ -11,9 +12,9 @@ function createTapQueue({ isReady, navigate, now = Date.now }) {
     const claim = (item) => {
         const key = keyOf(item);
         const t = now();
-        for (const [id, time] of seen) if (t - time > WINDOW) seen.delete(id);
+        for (const [id, entry] of seen) if (t - entry.time > entry.window) seen.delete(id);
         if (seen.has(key)) return false;
-        seen.set(key, t);
+        seen.set(key, { time: t, window: windowOf(item) });
         return true;
     };
 

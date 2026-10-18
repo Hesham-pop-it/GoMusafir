@@ -18,7 +18,7 @@ const { getAccountCleanup } = require("../services/accountCleanupService");
 // ── Request Trip Creation Link (Step 4) ──────────────────────────────────────
 exports.requestTripLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const { uid, token } = request.auth;
   const orgId = token.orgId;
@@ -130,7 +130,8 @@ exports.createTrip = onCall({ region: "europe-west1" }, async (request) => {
     orgId = tokenData.orgId;
     uid = tokenData.uid;
   }
-  await requireOrgStaff(orgId, uid);
+  // Managers cannot create journeys; the staff map is the source of truth, not the token claim.
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const { tripId, inviteCode } = await createTripRecord({
     orgId, uid, title, destination, startDate, endDate, image, totalSeats,
     operationId: linkToken ? `create:${linkToken}` : request.data.requestId ? `create:${uid}:${request.data.requestId}` : undefined,
@@ -502,7 +503,7 @@ exports.uploadTripPhoto = onCall({ region: 'europe-west1' }, async request => {
     throw new HttpsError('permission-denied', 'This journey link has expired or has already been used.');
   }
   const { requireOrgStaff } = require('../services/tripSeatService');
-  await requireOrgStaff(link.orgId, link.uid);
+  await requireOrgStaff(link.orgId, link.uid, ['admin', 'co-host']);
   const { decodeTripPhoto } = require('../services/tripPhotoService');
   const bytes = decodeTripPhoto(dataUrl);
   const file = admin.storage().bucket().file(`trips/${uuidv4()}.jpg`);

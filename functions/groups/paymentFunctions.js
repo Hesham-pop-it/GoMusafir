@@ -13,66 +13,7 @@ const { createTripRecord } = require("./tripCreationHelper");
 const { startJourneyCheckout, completeJourneyCheckout, releaseJourneyCheckout } = require('../services/journeyCheckoutService');
 const { topupUsage, changeTripSeats, requireOrgStaff } = require('../services/tripSeatService');
 
-// ── Regional Pricing — Server-Side Enforcement ────────────────────────────────
-const PRICING_PLANS = {
-  seat_only: {
-    EUR: { price: 9.99, currency: "eur", symbol: "€" },
-    USD: { price: 11.99, currency: "usd", symbol: "$" },
-    SAR: { price: 44.99, currency: "sar", symbol: "SAR " },
-    AED: { price: 43.99, currency: "aed", symbol: "AED " },
-    GBP: { price: 8.99, currency: "gbp", symbol: "£" },
-    INR: { price: 1109.00, currency: "inr", symbol: "₹" },
-    IDR: { price: 199999.00, currency: "idr", symbol: "Rp" },
-    PKR: { price: 3199.00, currency: "pkr", symbol: "Rs " },
-  },
-  basic_pack: {
-    EUR: { price: 14.99, currency: "eur", symbol: "€" },
-    USD: { price: 17.99, currency: "usd", symbol: "$" },
-    SAR: { price: 66.99, currency: "sar", symbol: "SAR " },
-    AED: { price: 65.99, currency: "aed", symbol: "AED " },
-    GBP: { price: 12.99, currency: "gbp", symbol: "£" },
-    INR: { price: 1659.00, currency: "inr", symbol: "₹" },
-    IDR: { price: 299999.00, currency: "idr", symbol: "Rp" },
-    PKR: { price: 4799.00, currency: "pkr", symbol: "Rs " },
-  },
-  plus_pack: {
-    EUR: { price: 18.99, currency: "eur", symbol: "€" },
-    USD: { price: 22.99, currency: "usd", symbol: "$" },
-    SAR: { price: 84.99, currency: "sar", symbol: "SAR " },
-    AED: { price: 82.99, currency: "aed", symbol: "AED " },
-    GBP: { price: 16.99, currency: "gbp", symbol: "£" },
-    INR: { price: 2099.00, currency: "inr", symbol: "₹" },
-    IDR: { price: 379999.00, currency: "idr", symbol: "Rp" },
-    PKR: { price: 5999.00, currency: "pkr", symbol: "Rs " },
-  },
-  elite_wireless: {
-    EUR: { price: 27.99, currency: "eur", symbol: "€" },
-    USD: { price: 32.99, currency: "usd", symbol: "$" },
-    SAR: { price: 123.99, currency: "sar", symbol: "SAR " },
-    AED: { price: 121.99, currency: "aed", symbol: "AED " },
-    GBP: { price: 24.99, currency: "gbp", symbol: "£" },
-    INR: { price: 3099.00, currency: "inr", symbol: "₹" },
-    IDR: { price: 559999.00, currency: "idr", symbol: "Rp" },
-    PKR: { price: 8999.00, currency: "pkr", symbol: "Rs " },
-  }
-};
-
-const COUNTRY_TO_CURRENCY = {
-  US: "USD",
-  SA: "SAR",
-  AE: "AED",
-  GB: "GBP",
-  IN: "INR",
-  ID: "IDR",
-  PK: "PKR",
-  AF: "USD",
-};
-
-function getPlanPricing(countryCode, planId) {
-  const currencyCode = COUNTRY_TO_CURRENCY[countryCode?.toUpperCase()] || "EUR";
-  const planPricing = PRICING_PLANS[planId] || PRICING_PLANS["seat_only"];
-  return planPricing[currencyCode] || planPricing["EUR"];
-}
+const { PRICING_PLANS, COUNTRY_TO_CURRENCY, getPlanPricing } = require('../services/pricingService');
 
 const ALLOWED_SHIPPING_COUNTRIES = [
   "NL", "PK", "TR", "AR", "SA", "AE", "GB", "DE", "FR", "BE",
@@ -198,6 +139,8 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
   }
 
   if (!orgId) throw new HttpsError("unauthenticated", "Not authorized.");
+  // Managers cannot buy seats; the staff map is the source of truth, not the token claim.
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
 
   const planId = data.planId;
   const planName = data.planName || planId;
@@ -305,7 +248,7 @@ exports.createCheckoutSession = onCall({ region: "europe-west1" }, async (reques
 // ── Request Seat Top-up Link ────────────────────────────────────────────────
 exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = request.data;
   const { tripId, planId, seatsToIncr, countryCode } = data;
@@ -322,7 +265,7 @@ exports.requestSeatTopupLink = onCall({ region: "europe-west1", secrets: ["SENDG
   if (!tripSnap.exists()) throw new HttpsError("not-found", "Trip not found.");
   const trip = tripSnap.val();
 
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const billedSeats = topupUsage(trip, seatsToIncr).requiredSeats;
   // Get Pricing
   const pricingConfig = getPlanPricing(countryCode || "DEFAULT", planId);
@@ -479,6 +422,10 @@ async function processPaidCheckoutSession(session) {
       totalSeats: totalSeatsRequested
     });
 
+  } else if (action === "DEEN_SEATS") {
+    // Seats bought in the middle of a Deen conversation: credit the balance once, the conversation continues.
+    const { creditDeenSeats } = require('../services/deen/deenService');
+    await creditDeenSeats({ orgId, uid, operationId: `deen-seats:${session.id}`, seats: Number(metadata.seats), source: "stripe" });
   } else if (action === "SEAT_TOPUP") {
     let resolvedTripId = tripId;
     if (!resolvedTripId && linkToken) {
@@ -740,7 +687,7 @@ exports.verifyPayment = onCall({ enrollment: true, region: "europe-west1" }, asy
 // ── Generate Seat Top-up Token ───────────────────────────────────────────────
 exports.generateSeatTopupToken = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
-  requireRole(request, ["admin", "manager", "co-host"]);
+  requireRole(request, ["admin", "co-host"]);
 
   const data = request.data;
   const { tripId, seatsToIncr } = data;
@@ -898,7 +845,7 @@ exports.verifyAndPaySeatTopup = onCall({ enrollment: true, region: "europe-west1
   const orgSnap = await db.ref(`orgs/${orgId}/prepaid_seats`).get();
   const currentPrepaid = orgSnap.val() || 0;
 
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   const seatsToIncrNum = topupUsage(trip, seats).requiredSeats;
   const prepaidDeducted = Math.min(currentPrepaid, seatsToIncrNum);
   const unpaidSeats = seatsToIncrNum - prepaidDeducted;
@@ -1072,7 +1019,7 @@ exports.requestSeats = onCall({ region: "europe-west1" }, async (request) => {
       (action === 'SEAT_TOPUP' && (tokenData.tripId !== tripId || Number(tokenData.seats) !== participantCount))) {
     throw new HttpsError('permission-denied', 'The link does not authorize this operation.');
   }
-  await requireOrgStaff(orgId, uid);
+  await requireOrgStaff(orgId, uid, ['admin', 'co-host']);
   if (action === 'CREATE_TRIP') {
     if (!tripData) throw new HttpsError('invalid-argument', 'Missing trip data.');
     if (!Object.prototype.hasOwnProperty.call(PRICING_PLANS, planToUse)) throw new HttpsError('invalid-argument', 'Select a valid package.');
@@ -1225,12 +1172,14 @@ exports.verifyAppleIAPReceipt = onCall({ region: "europe-west1", secrets: ["SEND
   verifyAppCheck(request);
   const { auth: requestAuth, data } = request;
   if (!requestAuth) throw new HttpsError("unauthenticated", "Authentication required.");
+  requireRole(request, ["admin", "co-host"]);
 
   const { productId, transactionId, quantity } = data;
   if (!productId) throw new HttpsError("invalid-argument", "Product ID required.");
 
   const orgId = requestAuth.token.orgId;
   if (!orgId) throw new HttpsError("failed-precondition", "No organization linked to account.");
+  await requireOrgStaff(orgId, requestAuth.uid, ['admin', 'co-host']);
 
   const qty = parseInt(quantity) || 1;
 

@@ -32,7 +32,7 @@ test(`${platform}: foreground uses only the in-app channel; background OS payloa
     const source=fs.readFileSync(require.resolve('../src/services/notificationService'),'utf8')
         .replace(/^import .*;\n/gm,'').replace(/^export /gm,'');
     const ctx={AppState:state,Platform:{OS:platform},Constants:{executionEnvironment:'native'},ExecutionEnvironment:{StoreClient:'expo'},
-        normalizeNotification, ...require('../functions/services/notificationSoundConfig'), publishForegroundNotification:()=>banners++,
+        normalizeNotification, isLoginApprovalPayload: require('../src/utils/loginApproval').isLoginApprovalPayload, ...require('../functions/services/notificationSoundConfig'), publishForegroundNotification:()=>banners++,
         notifee:{displayNotification:async()=>systems++,createChannel:async channel=>channels.push(channel)},AndroidImportance:{HIGH:4},Set,Map,console};
     vm.createContext(ctx);vm.runInContext(source,ctx);
     const remote={messageId:'one',data:{type:'chat_message'},notification:{title:'Hello',body:'World'}};

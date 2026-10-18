@@ -1,9 +1,11 @@
 const { cityMapping } = require('city-timezones');
 const { HttpsError } = require('firebase-functions/v2/https');
+const { splitDestinations } = require('./destinationList');
 
 const normalize = value => value.normalize('NFKD').replace(/\p{M}/gu, '')
   .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-const aliases = { mecca: 'makkah', madinah: 'medina', 'al madinah': 'medina', 'new york city': 'new york' };
+const aliases = { mecca: 'makkah', mekka: 'makkah', makka: 'makkah', mekke: 'makkah', mekkah: 'makkah', mekah: 'makkah', meca: 'makkah', 'la meca': 'makkah', 'la mecque': 'makkah',
+  madinah: 'medina', madina: 'medina', medinah: 'medina', medine: 'medina', 'al madinah': 'medina', 'new york city': 'new york' };
 const cities = cityMapping.map(city => ({
   names: [...new Set([city.city, city.city_ascii].filter(value => typeof value === 'string' && value).map(normalize))],
   qualifiers: new Set([city.country, city.province, city.state_ansi, city.iso2, city.iso3,
@@ -28,7 +30,7 @@ for (const city of cityMapping) {
   }
 }
 
-function resolveTripTimeZone(destination) {
+function resolveSinglePlace(destination) {
   if (typeof destination !== 'string' || !destination.trim() || destination.length > 200) {
     throw new HttpsError('invalid-argument', 'Enter a destination city and country.');
   }
@@ -66,6 +68,16 @@ function resolveTripTimeZone(destination) {
   } catch (_) {
     throw new HttpsError('invalid-argument', 'This destination’s time zone is unavailable. Please choose a nearby city.');
   }
+}
+
+// "Mekka en Medina": each place must resolve, and all of them to the same zone.
+function resolveTripTimeZone(destination) {
+  const parts = typeof destination === 'string' && destination.length <= 200 ? splitDestinations(destination) : [];
+  if (parts.length < 2) return resolveSinglePlace(destination);
+  try { return resolveSinglePlace(destination); } catch (_) { /* a single name with a joiner, otherwise a list */ }
+  const zones = [...new Set(parts.map(resolveSinglePlace))];
+  if (zones.length !== 1) throw new HttpsError('invalid-argument', 'These destinations lie in different time zones. Enter one destination city and country.');
+  return zones[0];
 }
 
 function tripTimeZoneFields(destination) {

@@ -149,6 +149,10 @@
         "seat_operations": {
           ".read": false,
           ".write": false
+        },
+        "participants": {
+          ".read": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((auth.token.orgId != null && (auth.token.role === 'admin' || auth.token.role === 'co-host' || auth.token.role === 'manager') && (root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'manager')) || root.child('app_access').child(auth.uid).child('expires_at').val() > now)) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).exists() || (root.child('users').child(auth.uid).child('staff_org_id').val() == $orgId))",
+          ".write": false
         }
       }
     },
@@ -282,6 +286,46 @@
           "safety_point": {
             ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager') || ((root.child('orgs').child($orgId).child('trips').child($tripId).child('status').val() === 'active' && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').isNumber() && root.child('orgs').child($orgId).child('trips').child($tripId).child('end_date').val() > now) && (root.child('trips_participants').child($tripId).child(auth.uid).val() === true || root.child('trips_participants').child($tripId).child(auth.uid).isString())))",
             ".write": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && ((auth.token.orgId != null && (auth.token.role === 'admin' || auth.token.role === 'co-host' || auth.token.role === 'manager') && (root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(auth.token.orgId).child('staff').child(auth.uid).val() === 'manager')) || root.child('app_access').child(auth.uid).child('expires_at').val() > now)) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).exists())"
+          },
+          "scheduled": {
+            ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')",
+            "$id": {
+              ".write": "((auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child($orgId).child('staff').child(auth.uid).val() === 'manager')) && ((!data.exists() && newData.child('status').val() === 'pending' && newData.child('created_by').val() === auth.uid && newData.child('mode').val().matches(/^(time|prayer)$/) && !newData.child('chat_key').exists() && !newData.child('sent_at').exists()) || (data.exists() && data.child('status').val() === 'pending' && newData.child('status').val() === 'cancelled' && newData.child('text').val() === data.child('text').val() && newData.child('send_at').val() === data.child('send_at').val() && newData.child('created_by').val() === data.child('created_by').val() && newData.child('chat_key').val() === data.child('chat_key').val() && newData.child('sent_at').val() === data.child('sent_at').val()) || (!newData.exists() && data.child('status').val() === 'pending'))",
+              ".validate": "newData.hasChildren(['text', 'send_at', 'created_by', 'created_at', 'mode', 'status']) && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 1000 && newData.child('send_at').isNumber() && newData.child('created_at').isNumber() && newData.child('mode').isString() && newData.child('mode').val().matches(/^(time|prayer)$/) && newData.child('status').isString() && newData.child('status').val().matches(/^(pending|sent|cancelled|failed)$/) && (!newData.child('prayer').exists() || newData.child('prayer').val().matches(/^(fajr|dhuhr|asr|maghrib|isha)$/)) && (!newData.child('offset_min').exists() || newData.child('offset_min').isNumber()) && (!newData.child('sent_at').exists() || newData.child('sent_at').isNumber())",
+              "text": {
+                ".validate": "true"
+              },
+              "send_at": {
+                ".validate": "true"
+              },
+              "created_by": {
+                ".validate": "true"
+              },
+              "created_at": {
+                ".validate": "true"
+              },
+              "mode": {
+                ".validate": "true"
+              },
+              "prayer": {
+                ".validate": "true"
+              },
+              "offset_min": {
+                ".validate": "true"
+              },
+              "status": {
+                ".validate": "true"
+              },
+              "sent_at": {
+                ".validate": "true"
+              },
+              "chat_key": {
+                ".validate": "true"
+              },
+              "$other": {
+                ".validate": "false"
+              }
+            }
           },
           "dm_threads": {
             "$threadId": {
@@ -459,6 +503,109 @@
     "voice_rooms": {
       ".read": false,
       ".write": false
+    },
+    "login_approvals": {
+      "$uid": {
+        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && auth.uid === $uid",
+        ".write": false
+      }
+    },
+    "login_approval_secrets": {
+      ".read": false,
+      ".write": false
+    },
+    "deen_drafts": {
+      "$uid": {
+        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && auth.uid === $uid",
+        ".write": false
+      }
+    },
+    "sensitive_approval_state": {
+      ".read": false,
+      ".write": false
+    },
+    "scheduled_queue": {
+      ".indexOn": [
+        "send_at"
+      ]
+    },
+    "trip_invitations": {
+      "$tripId": {
+        ".read": "(auth != null && (!root.child('app_access').child(auth.uid).child('revoked_before').exists() || auth.token.auth_time >= root.child('app_access').child(auth.uid).child('revoked_before').val())) && (root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'admin' || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'co-host' || root.child('orgs').child(root.child('trips_orgs').child($tripId).val()).child('staff').child(auth.uid).val() === 'manager')",
+        ".write": false
+      }
+    },
+    "dev_outbox": {
+      ".read": false,
+      ".write": false
+    },
+    "invitation_limits": {
+      ".read": false,
+      ".write": false
+    },
+    "passport": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_status": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_links": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_link_index": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_codes": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_family": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_settings": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_trip_settings": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_sessions": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "expires_at"
+      ]
+    },
+    "passport_passkeys": {
+      ".read": false,
+      ".write": false
+    },
+    "passport_passkey_challenges": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "expires_at"
+      ]
+    },
+    "passport_queue": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "send_at"
+      ]
+    },
+    "passport_retention": {
+      ".read": false,
+      ".write": false,
+      ".indexOn": [
+        "delete_after"
+      ]
     },
     "org_members": {
       "$orgId": {

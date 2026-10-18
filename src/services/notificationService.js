@@ -12,9 +12,12 @@ const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreCl
 
 let isForegroundListenerRegistered = false;
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isLoginApprovalPayload } from '../utils/loginApproval';
 import { createTapQueue } from '../utils/notificationTapQueue';
 import { normalizeNotification, publishForegroundNotification, resetNotificationPresentation } from './notificationPresentation';
 const PENDING_TAP = 'gomusafir.pendingNotificationTap';
+// A login approval can be reopened soon after it was closed; other taps wait out the full window.
+const TAP_WINDOW = 30000, APPROVAL_TAP_WINDOW = 2000;
 let tapQueue = null;
 function getTapQueue() {
     if (!tapQueue) {
@@ -25,6 +28,7 @@ function getTapQueue() {
                 const { navigateToNotificationTarget } = await import('../utils/notificationNavigation');
                 await navigateToNotificationTarget(item);
             },
+            windowOf: (item) => (isLoginApprovalPayload(item) ? APPROVAL_TAP_WINDOW : TAP_WINDOW),
         });
     }
     return tapQueue;
@@ -49,6 +53,11 @@ async function drainNotificationPress() {
 export async function presentRemoteNotification(remoteMessage, fromBackgroundHandler = false) {
     if (fromBackgroundHandler && remoteMessage.notification) return;
     if (AppState.currentState === 'active') {
+        // A web sign-in waiting for approval opens its screen right away instead of a banner.
+        if (isLoginApprovalPayload(remoteMessage)) {
+            await handleNotificationPress(normalizeNotification(remoteMessage));
+            return;
+        }
         publishForegroundNotification(remoteMessage);
         return;
     }
@@ -173,7 +182,7 @@ export async function registerForPushNotificationsAsync(user = null) {
 export async function unregisterForPushNotificationsAsync({ localOnly = false } = {}) {
     if (isExpoGo) return;
     if (localOnly) {
-        recentTaps.clear();
+        tapQueue = null;
         resetNotificationPresentation();
         await notifee.cancelAllNotifications().catch(() => {});
     }

@@ -29,6 +29,7 @@ import { Colors } from '../../constants/Colors';
 import { Typography } from '../../constants/Typography';
 import * as NavigationBar from 'expo-navigation-bar';
 import { responsiveFontSize } from '../../utils/responsive';
+import { STATUS_FILTERS, matchesStatusFilter } from '../../utils/tripStatusFilter';
 import { useLanguage } from '../../context/LanguageContext';
 import { database, auth } from '../../config/firebase';
 import { ref, onValue, get, set } from 'firebase/database';
@@ -91,7 +92,7 @@ const sortOptions = [
     'Likes'
 ];
 
-const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, setStartDate, endDate, setEndDate, destination, setDestination, participants, setParticipants, allTrips }) => {
+const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, setStartDate, endDate, setEndDate, destination, setDestination, participants, setParticipants, statusFilter, setStatusFilter, allTrips }) => {
     const { t, isRTL } = useLanguage();
     const [activeDateInput, setActiveDateInput] = useState(null);
 
@@ -112,6 +113,7 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, s
         setEndDate('');
         setDestination('');
         setParticipants('');
+        setStatusFilter('');
         setSortOption('Newest');
         onClose();
     };
@@ -268,6 +270,66 @@ const FilterModal = ({ visible, onClose, sortOption, setSortOption, startDate, s
                                             setShowDestinations(false);
                                         }}
                                     />
+                                </View>
+                            </View>
+
+                            {/* Status */}
+                            <View style={styles.filterSectionContainer}>
+                                <Text style={[styles.filterLabel, { textAlign: isRTL ? 'right' : 'left' }]}>{t('trip_status')}</Text>
+                                <View style={styles.filterGrid}>
+                                    {STATUS_FILTERS.map(opt => {
+                                        const isActive = statusFilter === opt;
+                                        const label = t(`status_${opt}`);
+                                        const onSelect = () => {
+                                            setStatusFilter(isActive ? '' : opt);
+                                            setShowCalendar(false);
+                                            setShowDestinations(false);
+                                        };
+
+                                        if (isActive) {
+                                            return (
+                                                <GradientBorderButton
+                                                    key={opt}
+                                                    onPress={onSelect}
+                                                    borderRadius={16}
+                                                    colors={['#B99A4A', '#1C2226']}
+                                                    style={{
+                                                        width: '50%',
+                                                        marginBottom: 10
+                                                    }}
+                                                    innerStyle={{
+                                                        height: 50,
+                                                        paddingHorizontal: 14,
+                                                        paddingVertical: 14
+                                                    }}
+                                                >
+                                                    <Text style={[
+                                                        styles.filterChipText,
+                                                        {
+                                                            color: '#FFF',
+                                                            fontFamily: Typography.sans.regular
+                                                        }
+                                                    ]}>
+                                                        {label}
+                                                    </Text>
+                                                </GradientBorderButton>
+                                            );
+                                        }
+
+                                        return (
+                                            <TouchableOpacity
+                                                key={opt}
+                                                style={styles.filterChip}
+                                                onPress={onSelect}
+                                            >
+                                                <View style={styles.filterChipInner}>
+                                                    <Text style={styles.filterChipText}>
+                                                        {label}
+                                                    </Text>
+                                                </View>
+                                            </TouchableOpacity>
+                                        );
+                                    })}
                                 </View>
                             </View>
 
@@ -436,6 +498,7 @@ const HomeScreen = ({ navigation }) => {
     const [endDate, setEndDate] = useState('');
     const [destination, setDestination] = useState('');
     const [participants, setParticipants] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
 
     const [allTrips, setAllTrips] = useState([]); // Raw source of truth
     const [filteredData, setFilteredData] = useState([]); // Filtered view
@@ -645,6 +708,11 @@ const HomeScreen = ({ navigation }) => {
             });
         }
 
+        if (statusFilter) {
+            const now = Date.now();
+            result = result.filter(item => matchesStatusFilter(item, statusFilter, now));
+        }
+
         if (participants) {
             result = result.filter(item => {
                 const count = participantsCounts[item.id] !== undefined 
@@ -679,7 +747,7 @@ const HomeScreen = ({ navigation }) => {
         }
 
         setFilteredData(result);
-    }, [searchQuery, sortOption, allTrips, startDate, endDate, destination, participants, userLikes, participantsCounts]);
+    }, [searchQuery, sortOption, allTrips, startDate, endDate, destination, participants, statusFilter, userLikes, participantsCounts]);
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -824,6 +892,8 @@ const HomeScreen = ({ navigation }) => {
                     setDestination={setDestination}
                     participants={participants}
                     setParticipants={setParticipants}
+                    statusFilter={statusFilter}
+                    setStatusFilter={setStatusFilter}
                     allTrips={allTrips}
                 />
                 <LanguageModal

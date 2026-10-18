@@ -1,0 +1,14 @@
+{
+  "database": { "rules": "database.rules.json" },
+  "storage": { "rules": "storage.rules" },
+  "emulators": {
+    "singleProjectMode": true,
+    "database": { "port": 19610, "host": "127.0.0.1" },
+    "auth": { "port": 19611, "host": "127.0.0.1" },
+    "functions": { "port": 19612, "host": "127.0.0.1" },
+    "hub": { "port": 19613, "host": "127.0.0.1" },
+    "logging": { "port": 19614, "host": "127.0.0.1" },
+    "storage": { "port": 19615, "host": "127.0.0.1" },
+    "ui": { "enabled": false }
+  }
+}

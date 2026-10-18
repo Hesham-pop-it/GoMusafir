@@ -32,8 +32,8 @@ const seed = () => ({
     } },
   },
 });
-function fixture({ cleanupFails = false } = {}) {
-  const calls = []; const logs = []; let options;
+function fixture({ cleanupFails = false, purgeFails = false } = {}) {
+  const calls = []; const logs = []; const purged = []; let options;
   const noop = async () => {};
   const db = createFakeDb(seed());
   const bucket = createFakeBucket();
@@ -67,6 +67,9 @@ function fixture({ cleanupFails = false } = {}) {
       } },
     '../services/emailService': {}, '../services/emailOtpService': { createEmailOtpService: () => ({}), generateCode: () => '' }, '../services/notificationService': {},
     '../services/stripeService': { deleteStripeCustomer: async () => calls.push('stripe-delete') },
+    '../services/passport/passportRetention': { purgePerson: async (uid, joined) => {
+      purged.push([uid, Object.keys(joined)]); if (purgeFails) throw new Error('storage unavailable');
+    } },
     crypto: require('node:crypto'),
   };
   const module = { exports: {} };
@@ -77,7 +80,7 @@ function fixture({ cleanupFails = false } = {}) {
       return dependencies[key];
     }, console: { error: (...args) => errorLogs.push(args), warn: (...args) => errorLogs.push(args) },
   });
-  return { exports: module.exports, calls, logs, errorLogs, db, bucket, options: () => options,
+  return { exports: module.exports, calls, logs, errorLogs, purged, db, bucket, options: () => options,
     self: (request = { auth: { uid: 'self', token: {} } }) => module.exports.deleteMyAccount(request),
     admin: targetUid => module.exports.deleteUserGlobally({ auth: { uid: 'owner', token: { role: 'admin', orgId: 'org' } }, data: { targetUid } }) };
 }
@@ -93,6 +96,22 @@ test('self deletion uses the fresh identity gate without requiring a current tri
   assert.ok(!f.calls.includes('stripe-delete'));
   assert.equal(d.orgs.org.payments.p.amount, 1);
   assert.equal(d.orgs.org.metadata.stripe_customer_id, 'cus_org');
+});
+test('self deletion takes the passport data with the account', async () => {
+  const f = fixture();
+  await f.self();
+  assert.deepEqual(f.purged, [['self', ['trip']]]);
+});
+test('a failed passport purge is logged and never blocks the account deletion', async () => {
+  const f = fixture({ purgeFails: true });
+  assert.equal((await f.self()).success, true);
+  assert.ok(f.calls.includes('auth:self'));
+  assert.equal(f.errorLogs[0][0], 'Passport purge failed during account deletion');
+});
+test('admin removal of a shared user purges only this organisation\'s passport data', async () => {
+  const f = fixture();
+  await f.admin('shared');
+  assert.deepEqual(f.purged, [['shared', ['trip']]]);
 });
 test('no deletion path references the Stripe delete helper', () => {
   for (const file of ['authFunctions.js', 'orgFunctions.js', 'tripFunctions.js']) {

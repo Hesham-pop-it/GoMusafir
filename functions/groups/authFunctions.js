@@ -266,6 +266,17 @@ exports.verifyCustomEmailOTP = onCall({ enrollment: true, region: "europe-west1"
 
   // The matching transaction already deleted the used code (no multi-use).
 
+  // Email-code fallback for re-confirming sensitive data (F1); counts like a phone approval.
+  const { purpose } = request.data;
+  const { SENSITIVE_PURPOSES, AUDIT_ACTIONS, markApproved, auditOrgId } = purpose ? require("../services/sensitiveApprovalService") : {};
+  if (purpose && SENSITIVE_PURPOSES.includes(purpose)) {
+    await markApproved(db, uid, { purpose, method: 'email_code' });
+    const orgId = await auditOrgId(db, uid, request.auth.token.orgId);
+    if (orgId) {
+      await writeAuditLog(orgId, { action: AUDIT_ACTIONS.granted, byUid: uid, targetId: uid, ipAddress: request.rawRequest?.ip, extra: { purpose, method: 'email_code' } });
+    }
+  }
+
   return { verified: true };
 });
 
@@ -285,6 +296,15 @@ exports.checkUserExistence = onCall({ enrollment: true, region: "europe-west1" }
     throw new HttpsError("internal", error.message);
   }
 });
+
+// Account deletion removes the passport data of the person too (non-fatal: logged, the deletion carries on).
+async function purgePassportData(uid, joinedTrips) {
+  try {
+    await require("../services/passport/passportRetention").purgePerson(uid, joinedTrips);
+  } catch (error) {
+    console.error("Passport purge failed during account deletion", { uid, message: error.message });
+  }
+}
 
 // ── Delete User (Admin only) ──────────────────────────────────────────────────
 // An admin may only remove a user from their own organisation's data. The account is
@@ -315,6 +335,11 @@ exports.deleteUserGlobally = onCall({ region: "europe-west1" }, async (request) 
   }
 
   const otherMemberships = await cleanup.hasMembershipsOutsideOrg(targetUid, orgId);
+  // Passport data goes first, while joined_trips can still be read; only this organisation's trips when the account stays.
+  const joinedTrips = (await db.ref(`users/${targetUid}/joined_trips`).get()).val() || {};
+  await purgePassportData(targetUid, otherMemberships
+    ? Object.fromEntries(Object.entries(joinedTrips).filter(([, entry]) => (entry?.org_id || entry?.orgId) === orgId))
+    : joinedTrips);
   let scope;
   if (otherMemberships) {
     // Shared user: only this organisation's data goes; the account and other orgs stay.
@@ -366,6 +391,7 @@ exports.deleteMyAccount = onCall({ enrollment: true, region: "europe-west1" }, a
     // 2. Cleanup user data (chat anonymised, media/presence/notifications wiped;
     //    Stripe customers and payment records are retained)
     stage = "profile-cleanup";
+    await purgePassportData(uid, (await db.ref(`users/${uid}/joined_trips`).get()).val() || {});
     await cleanup.removeUserCompletely(uid, { staffOrgId: orgId });
 
     stage = "auth-delete";

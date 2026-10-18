@@ -6,6 +6,10 @@ service firebase.storage {
     match /trips/{fileName} {
       allow read: if true;
     }
+    // Passport and visa copies are only ever read or written by the backend (admin SDK).
+    match /passport_docs/{allPaths=**} {
+      allow read, write: if false;
+    }
     match /{allPaths=**} {
       allow read, write: if false;
     }
