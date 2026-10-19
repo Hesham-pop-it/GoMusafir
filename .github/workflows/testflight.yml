@@ -1,0 +1,85 @@
+name: iOS TestFlight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  build-and-submit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      ASC_APP_ID: ${{ vars.ASC_APP_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            functions/package-lock.json
+
+      - name: Validate configuration and prepare submission
+        shell: bash
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Add the EXPO_TOKEN repository secret in GitHub Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          node <<'NODE'
+          const fs = require('node:fs');
+          const appId = (process.env.ASC_APP_ID || '').trim();
+          if (!/^[1-9][0-9]+$/.test(appId)) {
+            throw new Error('Set the ASC_APP_ID repository variable to the numeric Apple ID from App Store Connect > App Information.');
+          }
+          const config = JSON.parse(fs.readFileSync('eas.json', 'utf8'));
+          config.submit.production.ios.ascAppId = appId;
+          fs.writeFileSync('eas.json', JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install app dependencies
+        run: npm ci
+
+      - name: Install backend test dependencies
+        run: npm ci --prefix functions
+
+      - name: Run tests
+        run: node --test functions/test/*.test.js test/*.test.cjs
+
+      - name: Build iOS
+        id: build
+        shell: bash
+        run: |
+          eas build --platform ios --profile production --non-interactive --wait --json > "$RUNNER_TEMP/ios-build.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const builds = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'ios-build.json'), 'utf8'));
+          const build = builds.find(item => item.platform === 'IOS');
+          if (!build || build.status !== 'FINISHED' || !/^[a-f0-9-]+$/i.test(build.id)) {
+            throw new Error('EAS did not return a successful iOS build. Submission stopped.');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `build_id=${build.id}\n`);
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `iOS build ID: ${build.id}\n`);
+          NODE
+
+      - name: Upload this build to TestFlight
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+        run: eas submit --platform ios --profile production --id "$BUILD_ID" --non-interactive --wait
