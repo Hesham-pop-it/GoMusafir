@@ -32,6 +32,7 @@ const voiceFunctions   = require("./groups/voiceFunctions");
 const notificationFunctions = require("./groups/notificationFunctions");
 const analyticsFunctions = require("./groups/analyticsFunctions");
 const dashboardStatsFunctions = require("./groups/dashboardStatsFunctions");
+const deletionFunctions = require("./groups/deletionFunctions");
 
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -66,6 +67,14 @@ exports.deleteUserGlobally    = authFunctions.deleteUserGlobally;
 exports.deleteMyAccount       = authFunctions.deleteMyAccount;
 exports.createAuthHandoffToken = authFunctions.createAuthHandoffToken;
 exports.exchangeAuthHandoffToken = authFunctions.exchangeAuthHandoffToken;
+
+// ── Deletion (30 day recovery) ────────────────────────────────────────────────
+exports.cancelAccountDeletion = deletionFunctions.cancelAccountDeletion;
+exports.restoreOrganizationByLink = deletionFunctions.restoreOrganizationByLink;
+exports.restoreOrganization   = deletionFunctions.restoreOrganization;
+exports.getDeletionStatus     = deletionFunctions.getDeletionStatus;
+exports.purgeDeletedAccounts  = deletionFunctions.purgeDeletedAccounts;
+exports.purgeDeletedOrganizations = require("./groups/orgPurgeFunctions").purgeDeletedOrganizations;
 
 
 // ── Organization ──────────────────────────────────────────────────────────────

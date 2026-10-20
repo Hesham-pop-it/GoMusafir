@@ -55,7 +55,11 @@ function load(file, { data = {}, trip = visibleEveryone, staffAccess = false, in
       // Load the real visibility rule without its heavy imports.
       const m = { exports: {} };
       const src = fs.readFileSync(path.join(__dirname, '../services/participantProfileService.js'), 'utf8');
-      vm.runInNewContext(src, { module: m, exports: m.exports, require: k => (k === './participantAccessService' ? {} : {}) });
+      vm.runInNewContext(src, { module: m, exports: m.exports, require: k => {
+        if (k === './visibilityPolicy') return require('../services/visibilityPolicy');
+        if (['firebase-functions/v2/https', '../admin', './participantAccessService', './kmsService'].includes(k)) return {};
+        throw Error(`Unexpected participant profile dependency ${k}`);
+      } });
       return m.exports.visible;
     })() },
     '../services/kmsService': { decrypt: v => v },
