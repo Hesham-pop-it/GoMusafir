@@ -34,6 +34,7 @@ import { uploadTripMedia } from '../../utils/uploadTripMedia';
 import { preparePhoto } from '../../utils/imageSizing';
 import { compressVideoIfPossible } from '../../utils/videoCompression';
 import RemoteImage from '../../components/RemoteImage';
+import { prepareChatImage } from '../../utils/prepareChatImage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
@@ -240,7 +241,7 @@ const ChatMessage = React.memo(({ item, staffRole, showRole, isDirect, hideTeamB
                                     activeOpacity={0.9}
                                 >
                                     {(item.image_url || item.media_url) && (
-                                        <RemoteImage source={{ uri: item.thumbnail_url || item.image_url || item.media_url }} style={styles.messageImage} />
+                                        <RemoteImage source={{ uri: item.thumbnail_url || item.image_url || item.media_url }} style={styles.messageImage} resizeMethod="resize" />
                                     )}
                                     {/* Only show meta on image if no caption, otherwise show below */}
                                     {!item.text && renderMeta()}
@@ -1140,7 +1141,8 @@ const TripChatScreen = () => {
                     uploadUri = prepared.full.uri;
                     photoThumbUri = prepared.thumb.uri;
                 } catch (resizeErr) {
-                    console.log('[TripChatScreen] Could not resize photo, sending original:', resizeErr);
+                    console.log('[TripChatScreen] Photo preparation failed, trying bounded JPEG:', resizeErr);
+                    uploadUri = await prepareChatImage(uri);
                 }
             } else if (isVideo) {
                 uploadUri = await compressVideoIfPossible(uri);
@@ -1765,7 +1767,7 @@ const TripChatScreen = () => {
                     animationOut="zoomOut"
                 >
                     <View style={styles.previewContainer}>
-                        {pendingImageUri && <Image source={{ uri: pendingImageUri }} style={styles.fullPreviewImage} />}
+                        {pendingImageUri && <Image source={{ uri: pendingImageUri }} style={styles.fullPreviewImage} resizeMethod="resize" />}
 
                         <KeyboardAvoidingView
                             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -1824,6 +1826,7 @@ const TripChatScreen = () => {
                                 source={{ uri: viewerImage }}
                                 style={styles.fullViewerImage}
                                 resizeMode="contain"
+                                resizeMethod="resize"
                             />
                         )}
                     </View>
