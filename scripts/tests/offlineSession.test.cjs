@@ -10,7 +10,8 @@ const snapshot = data => ({ val: () => data, exists: () => data != null });
 
 async function fixture({ online = false, role = 'participant', noUser = false, tokenCode, accessCode, pendingWrite = false, cachedToken = false, initialNetworkRead, unverified = false, enrolling = unverified, mountedRoute = null, missingProfile = false } = {}) {
     const state = { resolved: !!mountedRoute, route: mountedRoute || 'Welcome', ready: false, offline: false, failed: false };
-    const listeners = new Map(), intervals = [], timeouts = [];
+    const listeners = new Map(), intervals = [], timeouts = [], warnings = [];
+    const listenerErrors = new Map(), logoutOptions = [];
     let resets = 0;
     let authListener, accessPublished, networkListener, signouts = 0, tokenCalls = 0, networkReads = 0, reportedOnline;
     const user = { uid: 'user', emailVerified: !unverified, reload: async () => {}, getIdTokenResult: async force => {
@@ -21,7 +22,8 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
     const auth = { currentUser: noUser ? null : user };
     const network = () => ({ isConnected: reportedOnline ?? online, isInternetReachable: reportedOnline ?? online });
     const context = {
-        auth, database: {}, console: { log() {}, warn() {} },
+        auth, database: {}, console: { log() {}, warn(...args) { warnings.push(args); } },
+        protectedSession: { subscribe: () => () => {}, isBlocked: () => false },
         Network: { addNetworkStateListener: cb => { networkListener = cb; return { remove() {} }; }, getNetworkStateAsync: async () => { networkReads++; return networkReads === 1 && initialNetworkRead ? initialNetworkRead : network(); } },
         AppState: { addEventListener: () => ({ remove() {} }) },
         setSessionResolved: v => state.resolved = v, setInitialRoute: v => state.route = v,
@@ -30,8 +32,9 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
         Linking: { getInitialURL: async () => null, addEventListener: () => ({ remove() {} }) },
         onAuthStateChanged: (_, cb) => { authListener = cb; cb(auth.currentUser); return () => {}; },
         ref: (_, key) => key,
-        onValue: (key, cb) => {
+        onValue: (key, cb, onError) => {
             listeners.set(key, cb);
+            listenerErrors.set(key, onError);
             if (key === 'users/user' && online) cb(snapshot(missingProfile ? null : { joined_trips: { trip: true } }));
             return () => listeners.delete(key);
         },
@@ -44,12 +47,14 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
         hasValidActiveTrip: async () => { if (accessCode) throw { code: accessCode }; return true; },
         registerForPushNotificationsAsync: () => {},
         signOut: async () => { signouts++; auth.currentUser = null; authListener(null); },
-        safeSignOut: async () => { signouts++; auth.currentUser = null; authListener(null); },
+        safeSignOut: async (_, options) => { logoutOptions.push(options); signouts++; auth.currentUser = null; authListener(null); },
         navigationRef: { isReady: () => !!mountedRoute, getCurrentRoute: () => ({ name: mountedRoute }), reset: value => { resets++; state.route = value.routes[0].name; } }, Alert: { alert() {} },
         setInterval: cb => { intervals.push(cb); return cb; }, clearInterval() {},
         setTimeout: cb => { timeouts.push(cb); return cb; }, clearTimeout() {},
         useEffect: cb => { context.cleanup = cb(); },
     };
+    context.onVisibleValue = (key, _options, callback) => context.onValue(key, callback);
+    context.getVisibleSnapshot = key => context.get(key);
     vm.createContext(context);
     const app = read('App.js');
     const start = app.indexOf('  useEffect(() => {\n    let unsubscribeAuth;');
@@ -57,7 +62,7 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
     vm.runInContext(errors + '\n' + effect, context);
     await flush();
     return {
-        state, auth, listeners, resets: () => resets, joined: async () => { enrolling = false; user.emailVerified = true; accessPublished(user.uid); await flush(); }, signouts: () => signouts, tokenCalls: () => tokenCalls,
+        state, auth, listeners, listenerErrors, logoutOptions, warnings, resets: () => resets, joined: async () => { enrolling = false; user.emailVerified = true; accessPublished(user.uid); await flush(); }, signouts: () => signouts, tokenCalls: () => tokenCalls,
         timeout: async () => { timeouts.forEach(cb => cb()); await flush(); },
         connect: async value => { online = value; networkListener(network()); await flush(); },
         retry: async () => { intervals.forEach(cb => cb()); await flush(); },
@@ -67,6 +72,57 @@ async function fixture({ online = false, role = 'participant', noUser = false, t
         setTokenCode: value => tokenCode = value, setAccessCode: value => accessCode = value,
     };
 }
+
+test('device listener permission denial ends the session with local-only cleanup', async () => {
+    const f = await fixture({ online: true, mountedRoute: 'TripOverview' });
+    const fail = f.listenerErrors.get('users/user/active_device_id');
+    fail({ code: 'PERMISSION_DENIED' });
+    await flush();
+    fail({ code: 'PERMISSION_DENIED' });
+    assert.equal(f.signouts(), 1);
+    assert.equal(f.state.route, 'Welcome');
+    assert.equal(f.logoutOptions[0].localOnly, true);
+    assert.equal(f.warnings.length, 0);
+});
+
+test('device listener network failure preserves credentials', async () => {
+    const f = await fixture({ online: true });
+    f.listenerErrors.get('users/user/active_device_id')({ code: 'database/network-error' });
+    await flush();
+    assert.equal(f.signouts(), 0);
+    assert.ok(f.auth.currentUser);
+    assert.equal(f.state.failed, true);
+});
+
+test('expired credentials in a profile refresh sign out without a listener warning', async () => {
+    const f = await fixture({ online: true });
+    f.setTokenCode('auth/user-token-expired');
+    f.listeners.get('users/user')(snapshot({ joined_trips: { trip: true } }));
+    await flush();
+    assert.equal(f.signouts(), 1);
+    assert.equal(f.state.route, 'Welcome');
+    assert.equal(f.auth.currentUser, null);
+    assert.equal(f.warnings.length, 0);
+});
+
+test('a stale profile refresh rejection does not warn or sign out again', async () => {
+    const f = await fixture({ online: true });
+    f.setTokenCode('auth/user-token-expired');
+    f.listeners.get('users/user')(snapshot({ joined_trips: { trip: true } }));
+    await f.logout();
+    assert.equal(f.signouts(), 1);
+    assert.equal(f.warnings.length, 0);
+});
+
+test('unexpected profile refresh failures still warn and preserve the session', async () => {
+    const f = await fixture({ online: true });
+    f.setTokenCode('auth/network-request-failed');
+    f.listeners.get('users/user')(snapshot({ joined_trips: { trip: true } }));
+    await flush();
+    assert.equal(f.signouts(), 0);
+    assert.equal(f.state.failed, true);
+    assert.equal(f.warnings.length, 1);
+});
 
 for (const role of ['admin', 'participant']) {
     test(`${role}: offline cold start never resolves to login, including splash timeout; reconnect restores session`, async () => {

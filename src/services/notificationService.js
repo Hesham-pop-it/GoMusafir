@@ -11,6 +11,8 @@ import { STANDARD, SOS, QUIET, notificationSound } from '../../functions/service
 const isExpoGo = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 let isForegroundListenerRegistered = false;
+let unsubscribeTokenRefresh = null;
+let registrationRevision = 0;
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isLoginApprovalPayload } from '../utils/loginApproval';
 import { createTapQueue } from '../utils/notificationTapQueue';
@@ -81,6 +83,9 @@ export async function presentRemoteNotification(remoteMessage, fromBackgroundHan
 
 
 export async function registerForPushNotificationsAsync(user = null) {
+    const sessionUser = user || auth.currentUser;
+    const revision = ++registrationRevision;
+    const isCurrent = () => sessionUser && auth.currentUser === sessionUser && revision === registrationRevision;
     if (isExpoGo) {
         console.log("[PushNotification] Push notifications are bypassed because you are running in Expo Go. To test Firebase Cloud Messaging, you must run a native Development Client build (npx expo run:ios / run:android).");
         return null;
@@ -132,17 +137,19 @@ export async function registerForPushNotificationsAsync(user = null) {
         const token = await messaging().getToken();
 
         // 4. Save to Database
-        const uid = user?.uid || auth.currentUser?.uid;
+        if (!isCurrent()) return null;
+        const uid = sessionUser.uid;
         if (uid && token) {
             await set(ref(database, `users/${uid}/fcmToken`), token);
         }
 
         // Keep token in sync when refreshed by APNs / FCM on iOS & Android
-        messaging().onTokenRefresh(async (newToken) => {
-            const currentUid = auth.currentUser?.uid || user?.uid;
-            if (currentUid && newToken) {
+        if (!isCurrent()) return null;
+        unsubscribeTokenRefresh?.();
+        unsubscribeTokenRefresh = messaging().onTokenRefresh(async (newToken) => {
+            if (isCurrent() && newToken) {
                 try {
-                    await set(ref(database, `users/${currentUid}/fcmToken`), newToken);
+                    await set(ref(database, `users/${uid}/fcmToken`), newToken);
                 } catch (e) {
                     console.log("[PushNotification] Error updating refreshed token:", e);
                 }
@@ -180,6 +187,9 @@ export async function registerForPushNotificationsAsync(user = null) {
 }
 
 export async function unregisterForPushNotificationsAsync({ localOnly = false } = {}) {
+    registrationRevision++;
+    unsubscribeTokenRefresh?.();
+    unsubscribeTokenRefresh = null;
     if (isExpoGo) return;
     if (localOnly) {
         tapQueue = null;

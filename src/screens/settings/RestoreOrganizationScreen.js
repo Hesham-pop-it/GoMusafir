@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Keyboard } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../../config/firebase';
@@ -13,6 +14,13 @@ const RestoreOrganizationScreen = ({ navigation }) => {
     const { t } = useLanguage();
     const [org, setOrg] = useState(undefined);
     const [busy, setBusy] = useState(false);
+
+    useFocusEffect(useCallback(() => {
+        // This screen has no inputs; dismiss any keyboard carried over from login.
+        Keyboard.dismiss();
+        const subscription = Keyboard.addListener('keyboardDidShow', Keyboard.dismiss);
+        return () => subscription.remove();
+    }, []));
 
     useEffect(() => {
         let alive = true;

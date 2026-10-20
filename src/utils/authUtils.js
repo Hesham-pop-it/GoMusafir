@@ -7,22 +7,40 @@ import { ref, update, get } from 'firebase/database';
 import { database, auth } from '../config/firebase';
 import { unregisterForPushNotificationsAsync } from '../services/notificationService';
 import { stopLiveLocationTracking } from '../services/locationTrackingService';
+import { isAccessDeniedError } from './sessionErrors';
+
+const pendingSignOuts = new WeakMap();
 
 /**
  * Safely signs out the current user by clearing RTDB presence, voice channel presence,
  * active hosts, push tokens, and location tracking BEFORE revoking auth credentials.
  *
  * @param {import('firebase/auth').Auth} authInstance
- * @param {{ tripId?: string, orgId?: string }} [activeTripContext]
+ * @param {{ tripId?: string, orgId?: string, localOnly?: boolean }} [activeTripContext]
  */
-export const safeSignOut = async (authInstance = auth, activeTripContext = {}) => {
+export const safeSignOut = (authInstance = auth, activeTripContext = {}) => {
+    if (pendingSignOuts.has(authInstance)) return pendingSignOuts.get(authInstance);
+    const pending = Promise.resolve().then(() => performSignOut(authInstance, activeTripContext)).finally(() => {
+        pendingSignOuts.delete(authInstance);
+    });
+    pendingSignOuts.set(authInstance, pending);
+    return pending;
+};
+
+const performSignOut = async (authInstance, activeTripContext) => {
+    const user = authInstance.currentUser;
+    let localOnly = activeTripContext.localOnly === true || protectedSession.isBlocked();
+    const isCurrent = () => authInstance.currentUser === user;
+    const endSession = () => isCurrent() ? signOut(authInstance) : Promise.resolve();
     protectedSession.invalidate();
     try { journeyWidget.clear(); } catch (_) {}
     finishEnrollment();
-    const logoutTimer = setTimeout(() => signOut(authInstance).catch(() => {}), 1500);
+    const logoutTimer = setTimeout(() => {
+        localOnly = true;
+        endSession().catch(() => {});
+    }, 1500);
     try {
-        const user = authInstance.currentUser;
-        if (user && user.uid) {
+        if (user && user.uid && !localOnly) {
             const uid = user.uid;
             const tripId = activeTripContext.tripId;
             const orgId = activeTripContext.orgId;
@@ -44,10 +62,10 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
             try {
                 const userSnap = await get(ref(database, `users/${uid}/current_trip`));
                 const currentTripId = userSnap.val();
-                if (currentTripId && currentTripId !== tripId) {
+                if (isCurrent() && !localOnly && currentTripId && currentTripId !== tripId) {
                     const orgSnap = await get(ref(database, `trips_orgs/${currentTripId}`));
                     const currentOrgId = orgSnap.val();
-                    if (currentOrgId) {
+                    if (isCurrent() && !localOnly && currentOrgId) {
                         cleanupPromises.push(
                             update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_app_presence`), { [uid]: null }).catch(() => {}),
                             update(ref(database, `trips_active/${currentOrgId}/${currentTripId}/voice_presence`), { [uid]: null }).catch(() => {}),
@@ -58,7 +76,8 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
                     }
                 }
             } catch (e) {
-                console.warn("[safeSignOut] Error checking user's current trip:", e);
+                if (isAccessDeniedError(e)) localOnly = true;
+                else console.warn("[safeSignOut] Error checking user's current trip:", e);
             }
 
             // Wait for RTDB presence clear to complete while still authenticated
@@ -66,6 +85,7 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
         }
 
         // 3. Stop live location tracking
+        if (authInstance.currentUser && !isCurrent()) return;
         try {
             if (typeof stopLiveLocationTracking === 'function') {
                 await stopLiveLocationTracking();
@@ -75,20 +95,21 @@ export const safeSignOut = async (authInstance = auth, activeTripContext = {}) =
         }
 
         // 4. Unregister push notifications
+        if (authInstance.currentUser && !isCurrent()) return;
         try {
             if (typeof unregisterForPushNotificationsAsync === 'function') {
-                await unregisterForPushNotificationsAsync();
+                await unregisterForPushNotificationsAsync({ localOnly: localOnly || !authInstance.currentUser });
             }
         } catch (e) {
             console.warn("[safeSignOut] Error unregistering push notifications:", e);
         }
 
         // 5. Clear local Firebase credentials (backend handles token revocation)
-        await signOut(authInstance);
+        await endSession();
     } catch (err) {
         console.warn("[safeSignOut] Error during safeSignOut flow:", err);
         // Ensure signOut is executed regardless
-        await signOut(authInstance);
+        await endSession();
     } finally {
         clearTimeout(logoutTimer);
     }

@@ -9,10 +9,11 @@ registerGlobals();
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, StyleSheet, Text, TextInput, Alert, AppState, ActivityIndicator, Platform, TouchableOpacity } from 'react-native';
 import { journeyWidget } from './src/services/journeyWidgetService';
+import { protectedSession } from './src/services/protectedSessionService';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreenNative from 'expo-splash-screen';
 import * as Network from 'expo-network';
-import { isAuthenticationError, isNetworkOffline } from './src/utils/sessionErrors';
+import { isAuthenticationError, isAccessDeniedError, isNetworkOffline } from './src/utils/sessionErrors';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -251,7 +252,7 @@ export default function App() {
                   // Hide protected screens immediately, before network cleanup.
                   if (navigationRef.isReady()) navigationRef.reset({ index: 0, routes: [{ name: 'Welcome' }] });
                   resolveSession('Welcome');
-                  safeSignOut(auth).catch(error => console.warn('Access logout failed:', error));
+                  safeSignOut(auth, { localOnly: true }).catch(error => console.warn('Access logout failed:', error));
                   Alert.alert('Trip Access Ended', 'Your trip has ended or your access has been revoked. Join a valid trip to use the app again.');
                 }, access => {
                   if (!isCurrent()) return;
@@ -263,13 +264,31 @@ export default function App() {
                   }
                 });
 
+                const handleDeviceError = error => {
+                  if (!isCurrent() || isForceSigningOut) return;
+                  // This path belongs to the signed-in user. A denied read or
+                  // claim means device-session monitoring is no longer allowed.
+                  if (isAccessDeniedError(error)) {
+                    isForceSigningOut = true;
+                    resolveSession('Welcome');
+                    if (navigationRef.isReady()) {
+                      navigationRef.reset({ index: 0, routes: [{ name: 'Welcome' }] });
+                    }
+                    safeSignOut(auth, { localOnly: true }).catch(err => {
+                      console.warn('[App] Device session sign out failed:', err);
+                    });
+                    Alert.alert('Session Ended', 'Your session is no longer authorized. Please sign in again.');
+                    return;
+                  }
+                  console.warn('[App] Device session unavailable:', error);
+                  handleSessionError(error, user);
+                };
+
                 // RTDB writes stay pending offline. Never block authentication
                 // restoration on their server acknowledgement.
                 if (deviceClaimedFor !== user.uid) {
                   deviceClaimedFor = user.uid;
-                  set(deviceRef, currentDeviceId).catch(error => {
-                    if (isCurrent()) handleSessionError(error, user);
-                  });
+                  set(deviceRef, currentDeviceId).catch(handleDeviceError);
                 }
 
                 unsubscribeDevice = onValue(deviceRef, (snapshot) => {
@@ -300,9 +319,7 @@ export default function App() {
                       setAppIsReady(true);
                     });
                   }
-                }, (err) => {
-                  console.log("[App] deviceRef error:", err?.message);
-                });
+                }, handleDeviceError);
 
                 registerForPushNotificationsAsync(user);
 
@@ -366,7 +383,7 @@ export default function App() {
 
                         AsyncStorage.multiRemove(['mfa_lock']).catch(() => {});
 
-                        safeSignOut(auth).catch(err => {
+                        safeSignOut(auth, { localOnly: true }).catch(err => {
                           console.warn("Participant auto sign out failed:", err);
                         }).finally(() => {
                           resolveSession("Welcome");
@@ -412,8 +429,13 @@ export default function App() {
 
 
                   } catch (error) {
-                    console.warn("[App] Error in user data listener:", error);
-                    if (isCurrent()) handleSessionError(error, user);
+                    // Token refresh can reject after Firebase has already
+                    // signed out or another session has replaced this listener.
+                    if (!isCurrent()) return;
+                    if (!isAuthenticationError(error)) {
+                      console.warn("[App] Error in user data listener:", error);
+                    }
+                    handleSessionError(error, user);
                   } finally {
                     refreshing = false;
                     if (refreshAgain && isCurrent()) {
@@ -481,6 +503,14 @@ export default function App() {
     };
 
     prepare();
+    const unsubscribeSession = protectedSession.subscribe(() => {
+      if (!protectedSession.isBlocked()) return;
+      generation++;
+      retrySession = () => {};
+      if (unsubscribeAccess) { unsubscribeAccess(); unsubscribeAccess = null; }
+      if (unsubscribeDevice) { unsubscribeDevice(); unsubscribeDevice = null; }
+      if (unsubscribeUser) { unsubscribeUser(); unsubscribeUser = null; }
+    });
 
     // S15: Runtime deep link listener (warm start while app is open)
     const handleRuntimeDeepLink = (event) => {
@@ -503,6 +533,7 @@ export default function App() {
 
     return () => {
         disposed = true;
+        unsubscribeSession();
         generation++;
         clearInterval(retryTimer);
         networkSubscription.remove();

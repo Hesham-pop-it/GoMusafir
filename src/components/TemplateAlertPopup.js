@@ -18,6 +18,7 @@ import { ref, onValue, get, update, query, limitToLast } from 'firebase/database
 import { auth, database } from '../config/firebase';
 import { isViewingConversation, isGroupChatRoute } from '../utils/messagingNotificationTarget';
 import { onAuthStateChanged } from 'firebase/auth';
+import { protectedSession } from '../services/protectedSessionService';
 import { Colors } from '../constants/Colors';
 import { Typography } from '../constants/Typography';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -271,15 +272,18 @@ export default function TemplateAlertPopup() {
 
     // Main Listeners Setup
     useEffect(() => {
-        if (!user) return;
+        if (!user || protectedSession.isBlocked()) return;
 
         const uid = user.uid;
+        let disposed = false;
+        const isCurrent = () => !disposed && auth.currentUser === user && !protectedSession.isBlocked();
         mountTimeRef.current = Date.now();
 
         // 1. Global User-level Notifications Listener
         let isGlobalInitialLoad = true;
         const userNotifRef = ref(database, `users/${uid}/notifications`);
         const unsubUserNotifs = onVisibleValue(userNotifRef, null, (snap) => {
+            if (!isCurrent()) return;
             if (!snap.exists()) {
                 isGlobalInitialLoad = false;
                 return;
@@ -346,16 +350,17 @@ export default function TemplateAlertPopup() {
                 showBanner(newestGlobalNotif);
             }
         }, (err) => {
+            if (!isCurrent()) return;
             console.log("[TemplateAlertPopup] userNotifs error:", { code: err?.code, message: err?.message });
         });
 
         // 2. Trip-level Notifications & Chat Listeners Management
         const tripListenersMap = new Map();
-        let disposed = false;
         let revision = 0;
 
         const userRefPath = ref(database, `users/${uid}`);
         const unsubUserData = onVisibleValue(userRefPath, null, async (snapshot) => {
+            if (!isCurrent()) return;
             const currentRevision = ++revision;
             const userData = snapshot.val() || {};
             const joinedTrips = userData.joined_trips || {};
@@ -392,7 +397,7 @@ export default function TemplateAlertPopup() {
                 }
             }
 
-            if (disposed || currentRevision !== revision) return;
+            if (!isCurrent() || currentRevision !== revision) return;
 
             // Remove listeners for trips that are no longer active
             for (const [tId, listenerObj] of tripListenersMap.entries()) {
@@ -416,6 +421,7 @@ export default function TemplateAlertPopup() {
                     stopMessages = null;
                 };
                 const handleError = (source, err) => {
+                    if (!isCurrent()) return;
                     if (['functions/permission-denied', 'functions/unauthenticated'].includes(err?.code)) {
                         stopChat();
                     }
@@ -430,6 +436,7 @@ export default function TemplateAlertPopup() {
                 // Trip-level Notifications
                 const notifRef = ref(database, `trips_active/${orgId}/${tripId}/notifications/${uid}`);
                 const unsubNotif = onVisibleValue(notifRef, tripId, (notifSnapshot) => {
+                    if (!isCurrent() || stopped) return;
                     if (!notifSnapshot.exists()) {
                         isTripNotifInitialLoad = false;
                         return;
@@ -527,6 +534,7 @@ export default function TemplateAlertPopup() {
                 // Direct Trip Chat Listener (ensures instant in-app popups even if cloud functions are delayed)
                 const chatRef = query(ref(database, `trips_active/${orgId}/${tripId}/chat`), limitToLast(5));
                 const unsubChat = onVisibleValue(chatRef, tripId, (chatSnapshot) => {
+                    if (!isCurrent() || stopped) return;
                     if (!chatSnapshot.exists()) {
                         isTripChatInitialLoad = false;
                         return;
@@ -596,7 +604,7 @@ export default function TemplateAlertPopup() {
                 };
                 // Watch eligibility separately: old memberships are retained after a trip ends.
                 const unsubscribeTrip = onValue(ref(database, `orgs/${orgId}/trips/${tripId}`), snap => {
-                    if (stopped || disposed) return;
+                    if (stopped || !isCurrent()) return;
                     const trip = snap.val();
                     clearTimeout(expiryTimer);
                     if (trip?.status !== 'active' || !Number.isFinite(trip.end_date) || trip.end_date <= Date.now()) {
@@ -605,7 +613,7 @@ export default function TemplateAlertPopup() {
                     }
                     if (!stopMessages) stopMessages = startMessages();
                     const checkExpiry = () => {
-                        if (stopped || disposed) return;
+                        if (stopped || !isCurrent()) return;
                         const remaining = trip.end_date - Date.now();
                         if (remaining <= 0) stopChat();
                         else expiryTimer = setTimeout(checkExpiry, Math.min(remaining, 2147483647));
@@ -613,6 +621,7 @@ export default function TemplateAlertPopup() {
                     checkExpiry();
                 }, err => {
                     stopChat();
+                    if (!isCurrent()) return;
                     console.log('[TemplateAlertPopup] trip eligibility unavailable:', {
                         tripId, orgId, code: err?.code,
                     });
@@ -624,10 +633,11 @@ export default function TemplateAlertPopup() {
                 } });
             }
         }, (err) => {
+            if (!isCurrent()) return;
             console.log("[TemplateAlertPopup] user listener error:", { code: err?.code, message: err?.message });
         });
 
-        return () => {
+        const cleanup = () => {
             disposed = true;
             revision++;
             unsubUserNotifs();
@@ -636,6 +646,13 @@ export default function TemplateAlertPopup() {
                 listenerObj.stop();
             }
             tripListenersMap.clear();
+        };
+        const unsubscribeSession = protectedSession.subscribe(() => {
+            if (protectedSession.isBlocked()) cleanup();
+        });
+        return () => {
+            unsubscribeSession();
+            cleanup();
         };
     }, [user, showBanner]);
 
