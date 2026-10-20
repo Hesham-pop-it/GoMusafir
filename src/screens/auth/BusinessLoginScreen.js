@@ -20,6 +20,7 @@ import Svg, { Path, G, Defs, ClipPath, Rect } from 'react-native-svg';
 import { responsiveFontSize } from '../../utils/responsive';
 import GlowBackground from '../../components/GlowBackground';
 import { Typography } from '../../constants/Typography';
+import { useLanguage } from '../../context/LanguageContext';
 import { auth, database, functions } from '../../config/firebase';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { ref, get, set } from 'firebase/database';
@@ -29,6 +30,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BusinessLoginScreen = () => {
     const navigation = useNavigation();
+    const { t } = useLanguage();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -89,6 +91,18 @@ const BusinessLoginScreen = () => {
                 Alert.alert("Email Not Verified", "Please verify your email address before logging in.");
                 setIsLoading(false);
                 return;
+            }
+
+            // An owner whose organisation is scheduled for deletion can only restore it.
+            try {
+                const status = await httpsCallable(functions, 'getDeletionStatus')();
+                if (status.data?.organization?.is_owner) {
+                    setIsLoading(false);
+                    navigation.navigate('RestoreOrganization');
+                    return;
+                }
+            } catch (statusErr) {
+                console.log("[BusinessLogin] Deletion status unavailable:", statusErr?.code);
             }
 
             // RBAC: Check if user has business/staff access
@@ -160,7 +174,7 @@ const BusinessLoginScreen = () => {
                     message = "Please enter a valid email address.";
                     break;
                 case 'auth/user-disabled':
-                    message = "This user account has been disabled.";
+                    message = t('sign_in_deletion_pending');
                     break;
                 case 'auth/user-not-found':
                     message = "No account found with this email.";

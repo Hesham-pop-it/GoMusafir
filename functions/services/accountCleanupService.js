@@ -22,8 +22,10 @@ const DELETED_USER_ID = "deleted_user";
 const ORG_PURGE_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 const MEDIA_FIELDS = ["image_url", "media_url", "audio_url", "video_url", "thumbnail_url"];
 const CHUNK = 400;
+// Per-user direct messaging nodes under trips_active/{org}/{trip}/, keyed by the user's uid.
+const MESSAGING_NODES = ["inbox", "dm_private", "blocks", "message_settings", "team_read", "team", "team_meta"];
 
-function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
+function createAccountCleanup({ db, bucket, auth, now = () => Date.now(), revokeSessions = null }) {
   const val = async (path) => {
     const snap = await db.ref(path).get();
     return snap.exists() ? snap.val() : null;
@@ -136,6 +138,11 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
       [`trips_participants/${tripId}/${uid}`]: null,
       [`users/${uid}/joined_trips/${tripId}`]: null,
     };
+    // Direct messages and staff chat: the user's own branches go, and so does the
+    // admin report access of the threads they were part of.
+    MESSAGING_NODES.forEach((node) => { updates[`${base}/${node}/${uid}`] = null; });
+    const inbox = (await val(`${base}/inbox/${uid}`)) || {};
+    Object.keys(inbox).forEach((threadId) => { updates[`${base}/report_access/${threadId}`] = null; });
     // Permissions other users granted to or requested from this user.
     const perms = (await val(`${base}/location_permissions`)) || {};
     Object.keys(perms).forEach((target) => {
@@ -208,15 +215,69 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
     return (await val(`users/${uid}/staff_org_id`)) === orgId;
   }
 
-  // ── Organisation soft delete (shared by deleteOrganization / deleteMyAccount) ──
-  async function markOrganizationDeleted(orgId, timestamp) {
-    await db.ref(`orgs/${orgId}/metadata/deleted_at`).set(timestamp);
+  // ── Organisation soft delete (deleteOrganization) ───────────────────────────
+  // Marks the organisation as deleted and queues it. database.rules.json, the access
+  // checks, sign-in and pushes all read metadata/deleted_at. org_deletions is the
+  // server-only queue (indexed by purge_after) that the purge job reads, so the job
+  // never scans the orgs tree.
+  async function markOrganizationDeleted(orgId, { at = now(), by = null, purgeAfter = null, tokenHash = null } = {}) {
+    const due = purgeAfter || at + ORG_PURGE_GRACE_MS;
+    await flush({
+      [`orgs/${orgId}/metadata/deleted_at`]: at,
+      [`orgs/${orgId}/metadata/purge_after`]: due,
+      [`org_deletions/${orgId}`]: { deleted_at: at, purge_after: due, deleted_by: by, token_hash: tokenHash },
+    });
+    return { deleted_at: at, purge_after: due };
+  }
+
+  // Undo the soft delete while the grace period lasts.
+  async function restoreOrganization(orgId) {
+    await flush({
+      [`orgs/${orgId}/metadata/deleted_at`]: null,
+      [`orgs/${orgId}/metadata/purge_after`]: null,
+      [`orgs/${orgId}/metadata/deleted_by`]: null,
+      [`org_deletions/${orgId}`]: null,
+    });
+  }
+
+  // Everybody whose access depends on this organisation: its staff and the participants of its trips.
+  async function organizationMembers(orgId) {
+    const members = new Set(Object.keys((await val(`orgs/${orgId}/staff`)) || {}));
+    const tripIds = new Set([
+      ...Object.keys((await val(`orgs/${orgId}/trips`)) || {}),
+      ...Object.keys((await val(`trips_active/${orgId}`)) || {}),
+    ]);
+    for (const tripId of tripIds) {
+      Object.keys((await val(`trips_participants/${tripId}`)) || {}).forEach((uid) => members.add(uid));
+    }
+    return [...members];
+  }
+
+  // Revoke the sessions of the given users, a few at a time. A failure for one user is logged
+  // and does not stop the others (the access checks refuse the organisation anyway).
+  async function revokeMany(uids) {
+    if (!revokeSessions) return { revoked: 0, failed: 0 };
+    let revoked = 0; let failed = 0;
+    for (let i = 0; i < uids.length; i += 10) {
+      const results = await Promise.allSettled(uids.slice(i, i + 10).map((uid) => revokeSessions(uid)));
+      results.forEach((r) => { if (r.status === "fulfilled") revoked++; else { failed++; console.error("Session revoke failed", r.reason && r.reason.message); } });
+    }
+    return { revoked, failed };
   }
 
   // ── Organisation purge (after the grace period) ─────────────────────────────
   // Deletes trips, chat, media, staff list and participant links. KEEPS payments,
   // prepaid seats, checkout sessions, consents, metadata (incl. Stripe id) and logs.
   async function purgeOrganization(orgId) {
+    // Re-check at the moment of the purge: a restore or a changed date since the queue read wins.
+    const queued = await val(`org_deletions/${orgId}`);
+    const deletedAt = await val(`orgs/${orgId}/metadata/deleted_at`);
+    if (!queued || !(queued.purge_after <= now()) || typeof deletedAt !== "number") {
+      console.log("Organisation purge skipped", { orgId, reason: "not-due-or-restored" });
+      return { skipped: true };
+    }
+    // Participants lose access before their trips disappear.
+    await revokeMany(await organizationMembers(orgId));
     const tripIds = new Set([
       ...Object.keys((await val(`orgs/${orgId}/trips`)) || {}),
       ...Object.keys((await val(`trips_active/${orgId}`)) || {}),
@@ -248,32 +309,41 @@ function createAccountCleanup({ db, bucket, auth, now = () => Date.now() }) {
       [`orgs/${orgId}/staff`]: null,
       [`orgs/${orgId}/dashboard_stats`]: null,
       [`orgs/${orgId}/metadata/purged_at`]: now(),
+      [`org_deletions/${orgId}`]: null,
     });
     return { trips: tripIds.size, staff: Object.keys(staff).length };
   }
 
-  // Orgs whose deleted_at is older than the grace period and that are not purged yet.
-  async function findOrganizationsDueForPurge({ graceMs = ORG_PURGE_GRACE_MS } = {}) {
-    const snap = await db.ref("orgs").orderByChild("metadata/deleted_at").startAt(1).get();
+  // Organisations whose purge_after has passed. Bounded: an indexed query on the small
+  // org_deletions queue, at most `limit` entries per run. Entries that no longer match
+  // the organisation (restored or already purged) are dropped (not in a dry run, which only reads).
+  async function findOrganizationsDueForPurge({ limit = 50, dryRun = false } = {}) {
+    const snap = await db.ref("org_deletions").orderByChild("purge_after").endAt(now()).limitToFirst(limit).get();
     const due = [];
     if (!snap.exists()) return due;
-    const cutoff = now() - graceMs;
-    snap.forEach((child) => {
-      const meta = (child.val() || {}).metadata || {};
-      if (typeof meta.deleted_at === "number" && meta.deleted_at <= cutoff && !meta.purged_at) due.push(child.key);
-    });
+    const ids = [];
+    snap.forEach((child) => { ids.push(child.key); });
+    for (const orgId of ids) {
+      const meta = (await val(`orgs/${orgId}/metadata`)) || {};
+      if (typeof meta.deleted_at !== "number" || meta.purged_at) {
+        if (dryRun) console.log("Dry run: would drop stale org_deletions entry", { orgId });
+        else await flush({ [`org_deletions/${orgId}`]: null });
+        continue;
+      }
+      due.push(orgId);
+    }
     return due;
   }
 
   return {
     deleteTripData, deleteTripMedia, anonymiseChat, removeUserFromTrip, removeUserFromOrg,
     removeUserCompletely, hasMembershipsOutsideOrg, userBelongsToOrg, markOrganizationDeleted,
-    purgeOrganization, findOrganizationsDueForPurge,
+    restoreOrganization, organizationMembers, revokeMany, purgeOrganization, findOrganizationsDueForPurge,
   };
 }
 
-async function runOrganizationPurge(cleanup, { enabled, graceMs = ORG_PURGE_GRACE_MS } = {}) {
-  const due = await cleanup.findOrganizationsDueForPurge({ graceMs });
+async function runOrganizationPurge(cleanup, { enabled, limit = 50 } = {}) {
+  const due = await cleanup.findOrganizationsDueForPurge({ limit, dryRun: !enabled });
   const result = { due, purged: [], failed: [], dryRun: !enabled };
   if (!enabled) return result;
   for (const orgId of due) {
@@ -293,12 +363,13 @@ let shared;
 function getAccountCleanup() {
   if (!shared) {
     const { admin, db, auth } = require("../admin");
-    shared = createAccountCleanup({ db, auth, bucket: admin.storage().bucket() });
+    const { revokeUserSessions } = require("./participantAccessService");
+    shared = createAccountCleanup({ db, auth, bucket: admin.storage().bucket(), revokeSessions: revokeUserSessions });
   }
   return shared;
 }
 
 module.exports = {
   createAccountCleanup, getAccountCleanup, runOrganizationPurge,
-  DELETED_USER_NAME, DELETED_USER_ID, ORG_PURGE_GRACE_MS,
+  DELETED_USER_NAME, DELETED_USER_ID, ORG_PURGE_GRACE_MS, MESSAGING_NODES,
 };

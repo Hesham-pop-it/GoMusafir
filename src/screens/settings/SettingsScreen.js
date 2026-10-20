@@ -22,7 +22,6 @@ import { ref, onValue, set } from 'firebase/database';
 import { Alert } from 'react-native';
 import { unregisterForPushNotificationsAsync } from '../../services/notificationService';
 import { safeSignOut } from '../../utils/authUtils';
-import { completeAccountDeletion } from '../../utils/accountDeletion';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MyLiveActivity } from '../../components/Widget';
 
@@ -110,10 +109,9 @@ const SettingsScreen = ({ navigation }) => {
                 setDeleteVisible(false);
                 await safeSignOut(auth);
             } else {
-                const deleteMyAccount = httpsCallable(functions, 'deleteMyAccount');
-                await deleteMyAccount();
+                // The warning and re-authentication happen on their own screens.
                 setDeleteVisible(false);
-                await completeAccountDeletion(auth, navigation);
+                navigation.navigate(userRole === 'admin' ? 'DeleteOrganization' : 'DeleteAccount');
             }
         } catch (error) {
             setDeleteVisible(false);

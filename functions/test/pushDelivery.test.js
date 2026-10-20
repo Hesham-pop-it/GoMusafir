@@ -4,14 +4,14 @@ const Module = require('node:module');
 const path = require('node:path');
 
 // Loads notificationService with a fake database and a fake FCM.
-function load(users) {
+function load(users, records = {}) {
   const sent = [], singles = [], removed = [];
   const val = v => ({ exists: () => v != null, val: () => v });
   const db = { ref: p => ({
     get: async () => {
       const [, uid, field] = p.split('/');
       if (p.startsWith('users/')) return val(field === 'fcmToken' ? users[uid]?.token : users[uid]?.[field]);
-      return val(null);
+      return val(records[p] ?? null);
     },
     remove: async () => { removed.push(p); },
     set: async () => {}, push: () => ({ key: 'k', set: async () => {} }),
@@ -21,15 +21,34 @@ function load(users) {
     sendEachForMulticast: async m => { sent.push(m); return { responses: m.tokens.map(t => t.startsWith('dead') ? { success: false, error: { code: 'messaging/registration-token-not-registered' } } : { success: true }) }; },
   };
   const target = path.resolve(__dirname, '../services/notificationService.js');
+  const gate = require('../services/pushGate').createPushGate({ db });
   const originalLoad = Module._load;
   Module._load = function (request, parent, ...rest) {
     if (parent && parent.filename === target && request === '../admin') return { admin: { messaging: () => messaging }, db };
+    if (parent && parent.filename === target && request === './pushGate') return { getPushGate: () => gate };
     return originalLoad.call(this, request, parent, ...rest);
   };
   delete require.cache[target];
   try { return { service: require(target), sent, singles, removed }; } finally { Module._load = originalLoad; }
 }
 const people = n => Object.fromEntries(Array.from({ length: n }, (_, i) => [`u${i}`, { token: `t${i}` }]));
+
+test('deletion blocks single and multicast pushes using organization or trip context', async () => {
+  const f = load({ a: { token: 'ta' }, b: { token: 'tb' } }, {
+    'account_deletions/a': { at: 1 },
+    'orgs/deleted/metadata/deleted_at': 1,
+    'trips_orgs/trip': 'deleted',
+  });
+  await f.service.sendPushNotification('a', 'Title', 'Body');
+  await f.service.sendPushNotification('b', 'Title', 'Body', { orgId: 'deleted' });
+  await f.service.sendPushNotification('b', 'Title', 'Body', { tripId: 'trip' });
+  await f.service.sendPushToMany(['a', 'b'], 'Title', 'Body', { tripId: 'trip' });
+  await f.service.sendPushToMany(['a', 'b'], 'Title', 'Body', {}, { orgId: 'deleted' });
+  assert.equal(f.singles.length, 0);
+  assert.equal(f.sent.length, 0);
+  await f.service.sendPushToMany(['a', 'b'], 'Title', 'Body');
+  assert.deepEqual(f.sent.map(m => m.tokens), [['tb']]);
+});
 
 test('a thousand recipients go out in calls of at most 500 tokens, never as a topic', async () => {
   const f = load(people(1200));

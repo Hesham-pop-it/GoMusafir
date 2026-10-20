@@ -32,6 +32,9 @@ import BusinessVerificationScreen from '../screens/auth/BusinessVerificationScre
 import JourneyTeamScreen from '../screens/team/JourneyTeamScreen';
 import InviteMemberScreen from '../screens/team/InviteMemberScreen';
 import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
+import DeleteAccountScreen from '../screens/settings/DeleteAccountScreen';
+import DeleteOrganizationScreen from '../screens/settings/DeleteOrganizationScreen';
+import RestoreOrganizationScreen from '../screens/settings/RestoreOrganizationScreen';
 import HelpSupportScreen from '../screens/support/HelpSupportScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
 import ForgotPasswordVerifyScreen from '../screens/auth/ForgotPasswordVerifyScreen';
@@ -72,6 +75,8 @@ const ProtectedLiveLocationScreen = withProtectedSession(LiveLocationScreen);
 const ProtectedJourneyTeamScreen = withProtectedSession(JourneyTeamScreen);
 const ProtectedInviteMemberScreen = withProtectedSession(InviteMemberScreen);
 const ProtectedChangePasswordScreen = withProtectedSession(ChangePasswordScreen);
+const ProtectedDeleteAccountScreen = withProtectedSession(DeleteAccountScreen);
+const ProtectedDeleteOrganizationScreen = withProtectedSession(DeleteOrganizationScreen);
 const ProtectedParticipantsScreen = withProtectedSession(ParticipantsScreen);
 const ProtectedTripParticipantsScreen = withProtectedSession(TripParticipantsScreen);
 const ProtectedEditParticipantScreen = withProtectedSession(EditParticipantScreen);
@@ -413,6 +418,9 @@ export default function RootNavigator({ initialRouteName = "Welcome" }) {
                     <Stack.Screen name="JourneyTeam" component={ProtectedJourneyTeamScreen} />
                     <Stack.Screen name="InviteMember" component={ProtectedInviteMemberScreen} />
                     <Stack.Screen name="ChangePassword" component={ProtectedChangePasswordScreen} />
+                    <Stack.Screen name="DeleteAccount" component={ProtectedDeleteAccountScreen} />
+                    <Stack.Screen name="DeleteOrganization" component={ProtectedDeleteOrganizationScreen} />
+                    <Stack.Screen name="RestoreOrganization" component={RestoreOrganizationScreen} />
                     <Stack.Screen name="HelpSupport" component={HelpSupportScreen} />
                     <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
                     <Stack.Screen name="ForgotPasswordVerify" component={ForgotPasswordVerifyScreen} />

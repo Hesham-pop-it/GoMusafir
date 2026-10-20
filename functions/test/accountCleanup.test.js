@@ -163,6 +163,7 @@ test('deleteTripData removes trip records and media, keeps a cover shared with a
 });
 test('purgeOrganization removes trips and staff but keeps payments, Stripe id and logs', async () => {
   const { db, auth, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 40 * DAY);
   await svc.purgeOrganization('org1');
   const d = db.dump();
   assert.equal(d.orgs.org1.trips, undefined);
@@ -177,20 +178,86 @@ test('purgeOrganization removes trips and staff but keeps payments, Stripe id an
   assert.ok(auth.calls.some(c => c[0] === 'revoke' && c[1] === 'c1'));
   assert.ok(!auth.calls.some(c => c[0] === 'delete'), 'accounts are kept');
 });
-test('findOrganizationsDueForPurge honours the 30 day grace period and skips purged orgs', async () => {
+const markDeleted = async (svc, db, orgId, at) => {
+  await svc.markOrganizationDeleted(orgId, { at, by: 'owner', tokenHash: 'h' });
+  assert.equal((await db.ref(`orgs/${orgId}/metadata/deleted_at`).get()).val(), at);
+};
+test('markOrganizationDeleted sets the three metadata fields and queues the organisation', async () => {
   const { db, svc } = setup();
-  await db.ref('orgs/org1/metadata/deleted_at').set(NOW - 29 * DAY);
-  await db.ref('orgs/org2/metadata/deleted_at').set(NOW - 31 * DAY);
+  const out = await svc.markOrganizationDeleted('org1', { at: NOW, by: 'owner', tokenHash: 'abc' });
+  const d = db.dump();
+  assert.deepEqual(out, { deleted_at: NOW, purge_after: NOW + 30 * DAY });
+  assert.equal(d.orgs.org1.metadata.deleted_at, NOW);
+  assert.equal(d.orgs.org1.metadata.purge_after, NOW + 30 * DAY);
+  assert.equal(d.orgs.org1.metadata.deleted_by, undefined);
+  assert.equal(d.orgs.org1.metadata.stripe_customer_id, 'cus_1');
+  assert.deepEqual(d.org_deletions.org1, { deleted_at: NOW, purge_after: NOW + 30 * DAY, deleted_by: 'owner', token_hash: 'abc' });
+});
+test('restoreOrganization clears the marks and the queue entry and keeps all data', async () => {
+  const { db, svc } = setup();
+  await svc.markOrganizationDeleted('org1', { at: NOW, by: 'owner' });
+  await svc.restoreOrganization('org1');
+  const d = db.dump();
+  assert.equal(d.org_deletions, undefined);
+  assert.equal(d.orgs.org1.metadata.deleted_at, undefined);
+  assert.equal(d.orgs.org1.metadata.purge_after, undefined);
+  assert.equal(d.orgs.org1.metadata.stripe_customer_id, 'cus_1');
+  assert.ok(d.orgs.org1.trips.t1);
+});
+test('findOrganizationsDueForPurge uses the queue, honours the 30 day grace period and drops stale entries', async () => {
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 29 * DAY);
+  await markDeleted(svc, db, 'org2', NOW - 31 * DAY);
   assert.deepEqual(await svc.findOrganizationsDueForPurge(), ['org2']);
-  await db.ref('orgs/org1/metadata/deleted_at').set(NOW - 30 * DAY);
+  await db.ref('org_deletions/org1/purge_after').set(NOW);
   assert.deepEqual((await svc.findOrganizationsDueForPurge()).sort(), ['org1', 'org2']);
+  // purged or restored organisations leave the queue
   await db.ref('orgs/org2/metadata/purged_at').set(NOW);
-  assert.deepEqual(await svc.findOrganizationsDueForPurge(), ['org1']);
+  await db.ref('orgs/org1/metadata/deleted_at').remove();
+  assert.deepEqual(await svc.findOrganizationsDueForPurge(), []);
+  assert.equal(db.dump().org_deletions, undefined);
   assert.equal(ORG_PURGE_GRACE_MS, 30 * DAY);
 });
+test('findOrganizationsDueForPurge is bounded by the limit', async () => {
+  const { db, svc } = setup();
+  for (let i = 0; i < 5; i++) {
+    await db.ref(`orgs/bulk${i}/metadata/deleted_at`).set(NOW - 40 * DAY);
+    await db.ref(`org_deletions/bulk${i}`).set({ purge_after: NOW - (10 - i) * DAY });
+  }
+  assert.deepEqual(await svc.findOrganizationsDueForPurge({ limit: 2 }), ['bulk0', 'bulk1']);
+});
+test('purgeOrganization revokes the sessions of staff and participants first and leaves the queue', async () => {
+  const db = createFakeDb(seed()); const bucket = createFakeBucket(); const auth = createFakeAuth({ c1: {}, owner: {}, p1: {} });
+  const revoked = [];
+  const svc = createAccountCleanup({ db, bucket, auth, now: () => NOW, revokeSessions: async uid => revoked.push(uid) });
+  await svc.markOrganizationDeleted('org1', { at: NOW - 40 * DAY, by: 'owner' });
+  await svc.purgeOrganization('org1');
+  assert.deepEqual(revoked.sort(), ['c1', 'owner', 'p1', 'shared']);
+  assert.equal(db.dump().org_deletions, undefined);
+  assert.equal(db.dump().orgs.org1.metadata.stripe_customer_id, 'cus_1');
+});
+test('purgeOrganization does nothing unless the queue entry is due and the organisation is marked deleted', async () => {
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org1', NOW - 5 * DAY);
+  assert.deepEqual(await svc.purgeOrganization('org1'), { skipped: true });
+  await svc.purgeOrganization('org2');
+  assert.ok(db.dump().orgs.org2.trips, 'never queued');
+  await db.ref('org_deletions/org1/purge_after').set(NOW - 1);
+  await db.ref('orgs/org1/metadata/deleted_at').remove();
+  assert.deepEqual(await svc.purgeOrganization('org1'), { skipped: true });
+  assert.ok(db.dump().orgs.org1.trips.t1, 'restored meanwhile');
+});
+test('the dry run only reads: stale queue entries are kept', async () => {
+  const { db, svc } = setup();
+  await db.ref('org_deletions/gone').set({ purge_after: NOW - DAY });
+  await runOrganizationPurge(svc, { enabled: false });
+  assert.ok(db.dump().org_deletions.gone);
+  await runOrganizationPurge(svc, { enabled: true });
+  assert.equal(db.dump().org_deletions, undefined);
+});
 test('the purge job does nothing unless explicitly enabled', async () => {
-    const { db, svc } = setup();
-  await db.ref('orgs/org2/metadata/deleted_at').set(NOW - 40 * DAY);
+  const { db, svc } = setup();
+  await markDeleted(svc, db, 'org2', NOW - 40 * DAY);
   const dry = await runOrganizationPurge(svc, { enabled: false });
   assert.deepEqual(dry.due, ['org2']);
   assert.deepEqual(dry.purged, []);
@@ -203,4 +270,25 @@ test('cleanup code never references Stripe deletion or payment nodes', () => {
   const source = fs.readFileSync(path.join(__dirname, '../services/accountCleanupService.js'), 'utf8')
     .split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
   assert.ok(!/deleteStripeCustomer|stripe_customer_id|payments|invoice|prepaid_seats/.test(source));
+});
+test('removeUserCompletely clears the direct message and staff chat branches and report access of the user', async () => {
+  const { db, svc } = setup();
+  const base = 'trips_active/org1/t1';
+  await db.ref(`${base}/inbox/p1/thr1`).set({ last: 1 });
+  await db.ref(`${base}/inbox/shared/thr1`).set({ last: 1 });
+  await db.ref(`${base}/dm_private/p1/x`).set({ text: 'secret' });
+  await db.ref(`${base}/blocks/p1/shared`).set(true);
+  await db.ref(`${base}/message_settings/p1`).set({ muted: true });
+  await db.ref(`${base}/team/p1/m`).set({ text: 'to staff' });
+  await db.ref(`${base}/team_meta/p1`).set({ n: 1 });
+  await db.ref(`${base}/team_read/c1/p1`).set(1);
+  await db.ref(`${base}/team_read/p1/c1`).set(1);
+  await db.ref(`${base}/report_access/thr1`).set({ admin: true });
+  await svc.removeUserCompletely('p1');
+  const t1 = db.dump().trips_active.org1.t1;
+  for (const node of ['dm_private', 'blocks', 'message_settings', 'team', 'team_meta']) assert.equal(t1[node], undefined, node);
+  assert.equal(t1.inbox.p1, undefined);
+  assert.ok(t1.inbox.shared, 'the other person keeps their own branch');
+  assert.equal(t1.report_access, undefined);
+  assert.equal(t1.team_read.p1, undefined);
 });

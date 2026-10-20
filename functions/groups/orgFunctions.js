@@ -15,7 +15,7 @@ const crypto = require("crypto");
 const { sendEmail } = require("../services/emailService");
 const { sendPushNotification } = require("../services/notificationService");
 const { createStripeCustomer } = require("../services/stripeService");
-const { getAccountCleanup } = require("../services/accountCleanupService");
+const { getDeletionService } = require("../services/deletionService");
 
 // ── Create Organization (Phase 1 — website calls this after OTP) ──────────────
 // S1: Email must be verified before this can complete (enforced by creating the
@@ -193,33 +193,23 @@ exports.updateMemberRole = onCall({ region: "europe-west1" }, async (request) =>
   return { success: true };
 });
 
-// ── Delete Organization (Admin + Step-up MFA required) ───────────────────────
-// S3: Step-up MFA check — caller must have re-authenticated recently.
-exports.deleteOrganization = onCall({ region: "europe-west1" }, async (request) => {
+// ── Delete Organization (owner only; a request, not the deletion) ────────────
+// The owner must be the admin in the staff record, type the organisation name (confirmName),
+// have signed in again in the last 5 minutes, and have no active or upcoming journeys (the
+// error then lists them). The organisation is deactivated at once (deleted_at, purge_after,
+// deleted_by: refused by the access checks, the database rules, sign-in and pushes) and
+// purged 30 days later by purgeDeletedOrganizations. The owner can restore it until then.
+exports.deleteOrganization = onCall({ region: "europe-west1", secrets: ["SENDGRID_API_KEY"] }, async (request) => {
   verifyAppCheck(request);
   requireRole(request, ["admin"]);
 
-  const callerOrgId = request.auth.token.orgId;
-
-  // S3: Step-up — check that token was issued within the last 5 minutes
-  const authTime = request.auth.token.auth_time * 1000;
-  if (Date.now() - authTime > 5 * 60 * 1000) {
-    throw new HttpsError(
-      "failed-precondition",
-      "Please re-authenticate before deleting your organization."
-    );
-  }
-
-  // Soft-delete: mark org as deleted. Data is purged by purgeDeletedOrganizations only after the 30 day grace period (not enabled by default).
-  await getAccountCleanup().markOrganizationDeleted(callerOrgId, admin.database.ServerValue.TIMESTAMP);
-
-  await writeAuditLog(callerOrgId, {
-    action: "ORG_DELETED",
-    byUid: request.auth.uid,
-    targetId: callerOrgId,
+  return getDeletionService().requestOrganizationDeletion({
+    uid: request.auth.uid,
+    orgId: request.auth.token.orgId,
+    confirmName: request.data && request.data.confirmName,
+    authTime: request.auth.token.auth_time,
+    ip: request.rawRequest?.ip,
   });
-
-  return { success: true };
 });
 
 // ── Invite Team Member (Admin only) ───────────────────────────────────────────

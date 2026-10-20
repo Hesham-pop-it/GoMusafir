@@ -1,4 +1,5 @@
 const { admin, db } = require("../admin");
+const { getPushGate } = require("./pushGate");
 const { notificationSound } = require("./notificationSoundConfig");
 const { loadTerms, visibleUntil, expiryEntry } = require("./notificationTerms");
 
@@ -69,7 +70,12 @@ function buildMessage({ title, body, data, options, soundProfile, ttlMs = null }
 
 // The recipient's token, or null when this push must not reach them (no token,
 // Do Not Disturb, trip muted, or a duplicate inside the debounce window).
-async function recipientToken(uid, options) {
+async function recipientToken(uid, options, data = {}) {
+    // Apply deletion checks to both single and multicast delivery before any writes.
+    if (await getPushGate().blocked(uid, {
+        orgId: options.orgId || data.orgId || null,
+        tripId: options.tripId || data.tripId || null,
+    })) return null;
     const {
         interruptionLevel = "active", // 'active', 'time-sensitive', 'passive', 'critical'
         tripId = null,
@@ -128,7 +134,7 @@ async function sendPushNotification(uid, title, body, data = {}, options = {}) {
 
         const soundProfile = notificationSound(data, { ...options, androidChannelId: requestedChannelId });
 
-        const fcmToken = await recipientToken(uid, options);
+        const fcmToken = await recipientToken(uid, options, data);
         if (!fcmToken) return;
 
         // 4. Construct Advanced Payload (All data values MUST be strings for FCM)
@@ -199,7 +205,7 @@ async function sendPushToMany(uids, title, body, data = {}, options = {}, quietF
         const soundProfile = notificationSound(data, { ...options, androidChannelId: options.androidChannelId });
         const ttlMs = await pushTtlMs(data, options);
         const targets = (await Promise.all(uids.map(async uid => {
-            const token = await recipientToken(uid, options).catch(() => null);
+            const token = await recipientToken(uid, options, data).catch(() => null);
             if (!token) return null;
             return { uid, token, quiet: Boolean(quietFor && await quietFor(uid)) };
         }))).filter(Boolean);

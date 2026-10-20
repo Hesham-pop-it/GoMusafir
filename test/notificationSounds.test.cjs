@@ -20,6 +20,7 @@ test('FCM/APNs select bundled sounds for locked/background delivery and keep sil
     const messages = [];
     const ctx = { module:{exports:{}}, console, require(name) {
         if (name === './notificationSoundConfig') return policy;
+        if (name === './pushGate') return { getPushGate: () => ({ blocked: async () => false }) };
         if (name === './notificationTerms') return require('../functions/services/notificationTerms');
         if (name === './notificationPrivacy') return require('../functions/services/notificationPrivacy');
         assert.equal(name, '../admin');
